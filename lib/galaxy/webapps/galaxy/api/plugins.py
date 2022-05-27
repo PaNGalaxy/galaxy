@@ -1,0 +1,59 @@
+"""
+Plugins resource control over the API.
+"""
+import logging
+
+from galaxy import exceptions
+from galaxy.managers import hdas, histories
+from galaxy.util import asbool
+from galaxy.web import expose_api
+from . import BaseGalaxyAPIController, depends
+
+log = logging.getLogger(__name__)
+
+
+class PluginsController(BaseGalaxyAPIController):
+    """
+    RESTful controller for interactions with plugins.
+    """
+    hda_manager: hdas.HDAManager = depends(hdas.HDAManager)
+    history_manager: histories.HistoryManager = depends(histories.HistoryManager)
+
+    @expose_api
+    def index(self, trans, **kwargs):
+        """
+        GET /api/plugins:
+        """
+        registry = self._get_registry(trans)
+        dataset_id = kwargs.get("dataset_id")
+        if dataset_id is not None:
+            hda = self.hda_manager.get_accessible(self.decode_id(dataset_id), trans.user)
+            return registry.get_visualizations(trans, hda)
+        else:
+            embeddable = asbool(kwargs.get("embeddable"))
+            return registry.get_plugins(embeddable=embeddable)
+
+    @expose_api
+    def show(self, trans, id, **kwargs):
+        """
+        GET /api/plugins/{id}:
+        """
+        registry = self._get_registry(trans)
+        history_id = kwargs.get("history_id")
+        if history_id is not None:
+            history = self.history_manager.get_owned(trans.security.decode_id(history_id), trans.user, current_history=trans.history)
+            result = {"hdas": []}
+            for hda in history.contents_iter(types=["dataset"], deleted=False, visible=True):
+                if registry.get_visualization(trans, id, hda):
+                    result["hdas"].append({
+                        "id": trans.security.encode_id(hda.id),
+                        "name": hda.name
+                    })
+        else:
+            result = registry.get_plugin(id).to_dict()
+        return result
+
+    def _get_registry(self, trans):
+        if not trans.app.visualizations_registry:
+            raise exceptions.MessageException("The visualization registry has not been configured.")
+        return trans.app.visualizations_registry
