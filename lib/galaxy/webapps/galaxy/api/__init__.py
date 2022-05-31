@@ -183,7 +183,13 @@ class GalaxyASGIRequest(GalaxyAbstractRequest):
 
     @property
     def host(self) -> str:
+<<<<<<< HEAD
         return str(self.__request.client.host)
+=======
+        client = self.__request.client
+        assert client is not None
+        return str(client.host)
+>>>>>>> 468d5e0cbbe5a2a5aa76727c5124209da873f167
 
 
 class GalaxyASGIResponse(GalaxyAbstractResponse):
