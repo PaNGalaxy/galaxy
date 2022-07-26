@@ -1,0 +1,54 @@
+stages:
+  - build
+  - build-base
+
+variables:
+  GIT_STRATEGY: clone
+  CONTAINER_GALAXY_URL: "${CI_REGISTRY_IMAGE}/galaxy"
+  CONTAINER_GALAXY_URL_BASE: "${CI_REGISTRY_IMAGE}/galaxy_base"
+
+# This import is for the func_rse_docker_* functions
+before_script:
+  - curl https://code.ornl.gov/rse-deployment/rse-sharables/raw/master/rse-bash-modules.sh -O
+  - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  - source rse-bash-modules.sh
+  - func_rse_docker_cleanup
+
+after_script:
+  - curl https://code.ornl.gov/rse-deployment/rse-sharables/raw/master/rse-bash-modules.sh -O
+  - source rse-bash-modules.sh
+  - func_rse_docker_cleanup
+  - sudo chown -R gitlab-runner .
+
+service-build:
+  stage: build
+  script:
+    - >    
+      docker build
+      -f dockerfiles/Dockerfile 
+      -t galaxy .
+    - docker tag galaxy $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+    - docker tag galaxy $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:latest
+    - docker push $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:latest
+    - docker push $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+build-base-docker:
+  stage: build-base
+  only:
+    - docker-base
+  script:
+    - cp .dockerignore.full .dockerignore
+    - >    
+      docker build
+      -f dockerfiles/Dockerfile.full
+      -t galaxy-base .
+    - docker tag galaxy-base $CONTAINER_GALAXY_URL_BASE:$CI_COMMIT_SHORT_SHA
+    - docker tag galaxy-base $CONTAINER_GALAXY_URL_BASE:latest
+    - docker push $CONTAINER_GALAXY_URL_BASE:latest
+    - docker push $CONTAINER_GALAXY_URL_BASE:$CI_COMMIT_SHORT_SHA
+  tags:
+    - rse-multi-builder
