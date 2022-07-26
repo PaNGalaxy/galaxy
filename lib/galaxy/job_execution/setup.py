@@ -210,6 +210,7 @@ class JobIO(Dictifiable):
             mutable=False,
             dataset_uuid=dataset.dataset.uuid,
             object_store_id=dataset.dataset.object_store_id,
+            remote_dataset=dataset.metadata.get("remote", "0") == "1",
         )
 
     def get_output_basenames(self) -> List[str]:

@@ -166,6 +166,18 @@ class Data(metaclass=DataMeta):
         optional=True,
         no_value="?",
     )
+
+    MetadataElement(
+        name="remote",
+        default="0",
+        desc="remote file flag",
+        multiple=False,
+        readonly=True,
+        optional=False,
+        visible=True,
+        no_value="0",
+    )
+
     # Stores the set of display applications, and viewing methods, supported by this datatype
     supported_display_apps: Dict[str, Any] = {}
     # If False, the peek is regenerated whenever a dataset of this type is copied
