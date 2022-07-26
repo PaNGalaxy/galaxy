@@ -153,7 +153,7 @@ class XmlToolSource(ToolSource):
             inject = environment_variable_el.get("inject")
             if inject:
                 assert not template, "Cannot specify inject and environment variable template."
-                assert inject in ["api_key"]
+                assert inject in ["api_key","oidc_token"]
             if template:
                 assert not inject, "Cannot specify inject and environment variable template."
             definition = {

@@ -635,6 +635,12 @@ class ToolEvaluator:
                 else:
                     environment_variable_template = ""
                 is_template = False
+            elif inject == "oidc_token":
+                if self._user and len(self._user.custos_auth) == 1:
+                    environment_variable_template = self._user.custos_auth[0].refresh_token
+                else:
+                    environment_variable_template = "token-unavailable"
+                is_template = False
             else:
                 is_template = True
             with tempfile.NamedTemporaryFile(dir=directory, prefix="tool_env_", delete=False) as temp:
