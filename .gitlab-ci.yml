@@ -23,6 +23,7 @@ after_script:
 service-build:
   stage: build
   script:
+    - cp .dockerignore.src .dockerignore
     - >    
       docker build
       -f dockerfiles/Dockerfile 
