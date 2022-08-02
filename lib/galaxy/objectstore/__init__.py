@@ -1112,6 +1112,9 @@ def type_to_object_store_class(store, fsmon=False):
         from .pithos import PithosObjectStore
 
         objectstore_class = PithosObjectStore
+    elif store == "rdb":
+        from .rdb import RdbObjectStore
+        objectstore_class = RdbObjectStore
     else:
         raise Exception(f"Unrecognized object store definition: {store}")
     # Disable the Pulsar object store for now until it receives some attention
