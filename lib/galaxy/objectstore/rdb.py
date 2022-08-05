@@ -27,7 +27,7 @@ def _config_xml_error(tag):
 
 
 def _config_dict_error(key):
-    msg = "No {key} key in config dictionary".forma(key=key)
+    msg = "No {key} key in config dictionary".format(key=key)
     raise Exception(msg)
 
 
@@ -38,6 +38,12 @@ def parse_config_xml(config_xml):
             _config_xml_error("cache")
         cache_size = float(c_xml[0].get("size", -1))
         staging_path = c_xml[0].get("path", None)
+
+
+        rdb_xml = config_xml.findall("remote_data_broker_url")
+        if not rdb_xml:
+            _config_xml_error("remote_data_broker_url")
+        rdb_url = rdb_xml[0].get("url", None)
 
         attrs = ("type", "path")
         e_xml = config_xml.findall("extra_dir")
@@ -51,6 +57,7 @@ def parse_config_xml(config_xml):
                 "path": staging_path,
             },
             "extra_dirs": extra_dirs,
+            "remote_data_broker_url": rdb_url,
         }
     except Exception:
         # Toss it back up after logging, we can't continue loading at this point.
@@ -111,9 +118,21 @@ class RdbObjectStore(ConcreteObjectStore):
     """
     store_type = "rdb"
 
+    def to_dict(self):
+        rval = super().to_dict()
+        rval["remote_data_broker_url"] = self.remote_data_broker_url
+        rval["cache"]=dict()
+        rval["cache"]["size"] = self.cache_size
+        rval["cache"]["path"] = self.staging_path
+        return rval
+
     def __init__(self, config, config_dict):
         super().__init__(config, config_dict)
-        self.rdb_broker = RdbBroker(config.remote_data_broker_url)
+        self.remote_data_broker_url = config_dict.get("remote_data_broker_url", None)
+        if self.remote_data_broker_url is None:
+            _config_dict_error("remote_data_broker_url")
+
+        self.rdb_broker = RdbBroker(self.remote_data_broker_url)
         cache_dict = config_dict["cache"]
         if cache_dict is None:
             _config_dict_error("cache")
@@ -196,13 +215,13 @@ class RdbObjectStore(ConcreteObjectStore):
     def _fix_permissions(self, rel_path):
         """Set permissions on rel_path"""
         for basedir, _, files in os.walk(rel_path):
-            umask_fix_perms(basedir, self.config.umask, 0o777, self.config.gid)
+            umask_fix_perms(basedir, self.config.umask, 0o777)
             for filename in files:
                 path = os.path.join(basedir, filename)
                 # Ignore symlinks
                 if os.path.islink(path):
                     continue
-                umask_fix_perms(path, self.config.umask, 0o666, self.config.gid)
+                umask_fix_perms(path, self.config.umask, 0o666)
 
 
     # "interfaces to implement"
@@ -241,12 +260,12 @@ class RdbObjectStore(ConcreteObjectStore):
         if self._in_cache(rel_path):
             if os.path.getsize(self._get_cache_path(rel_path)) == self.rdb_broker.get_size(rel_path):
                 return True
-            log.debug(
-                "Waiting for dataset %s to transfer from OS: %s/%s",
-                rel_path,
-                os.path.getsize(self._get_cache_path(rel_path)),
-                self.rdb_broker.get_size(rel_path),
-            )
+        log.debug(
+            "Waiting for dataset %s to transfer from OS: %s/%s",
+            rel_path,
+            os.path.getsize(self._get_cache_path(rel_path)),
+            self.rdb_broker.get_size(rel_path),
+        )
         return False
 
     def _create(self, obj, **kwargs):
@@ -341,9 +360,11 @@ class RdbObjectStore(ConcreteObjectStore):
             return os.path.abspath(rel_path)
 
         cache_path = self._get_cache_path(rel_path)
-        if self._in_cache(rel_path):
+        if (self._in_cache(rel_path) and dir_only):
             return cache_path
-
+        elif (os.path.exists(self._get_cache_path(rel_path)) and
+              os.path.getsize(self._get_cache_path(rel_path)) == self.rdb_broker.get_size(rel_path)):
+            return cache_path
         # Check if the file exists in persistent storage and, if it does, pull it into cache
         elif self._exists(obj, **kwargs):
             if dir_only:  # Directories do not get pulled into cache
