@@ -39,7 +39,6 @@ def parse_config_xml(config_xml):
         cache_size = float(c_xml[0].get("size", -1))
         staging_path = c_xml[0].get("path", None)
 
-
         rdb_xml = config_xml.findall("remote_data_broker_url")
         if not rdb_xml:
             _config_xml_error("remote_data_broker_url")
@@ -75,6 +74,7 @@ class RdbBroker():
         response = requests.post(self.remote_broker_url + "/upload", json=data)
         if response.status_code != 200:
             raise requests.HTTPError("wrong rdb response ", response.status_code, response.text)
+
     def download(self, key, dest_path):
         token = "none"
         data = {"key": key, "token": token, "output_path": dest_path}
@@ -90,7 +90,7 @@ class RdbBroker():
         if response.status_code != 200:
             return False
         res = response.json()
-        if "exists" in res and res["exists"]==True:
+        if "exists" in res and res["exists"] == True:
             return True
         return False
 
@@ -121,7 +121,7 @@ class RdbObjectStore(ConcreteObjectStore):
     def to_dict(self):
         rval = super().to_dict()
         rval["remote_data_broker_url"] = self.remote_data_broker_url
-        rval["cache"]=dict()
+        rval["cache"] = dict()
         rval["cache"]["size"] = self.cache_size
         rval["cache"]["path"] = self.staging_path
         return rval
@@ -131,6 +131,9 @@ class RdbObjectStore(ConcreteObjectStore):
         self.remote_data_broker_url = config_dict.get("remote_data_broker_url", None)
         if self.remote_data_broker_url is None:
             _config_dict_error("remote_data_broker_url")
+
+        if 'REMOTE_DATA_BROKER_URL' in os.environ:
+            self.remote_data_broker_url = os.environ['REMOTE_DATA_BROKER_URL']
 
         self.rdb_broker = RdbBroker(self.remote_data_broker_url)
         cache_dict = config_dict["cache"]
@@ -199,7 +202,6 @@ class RdbObjectStore(ConcreteObjectStore):
     def _get_cache_path(self, rel_path):
         return os.path.abspath(os.path.join(self.staging_path, rel_path))
 
-
     def _pull_into_cache(self, rel_path):
         log.debug("rdb _pull_into_cache")
         # Ensure the cache directory structure exists (e.g., dataset_#_files/)
@@ -208,7 +210,7 @@ class RdbObjectStore(ConcreteObjectStore):
             os.makedirs(self._get_cache_path(rel_path_dir), exist_ok=True)
         # Now pull in the file
         dest = self._get_cache_path(rel_path)
-        file_ok = self.rdb_broker.download(rel_path,dest)
+        file_ok = self.rdb_broker.download(rel_path, dest)
         self._fix_permissions(self._get_cache_path(rel_path_dir))
         return file_ok
 
@@ -222,7 +224,6 @@ class RdbObjectStore(ConcreteObjectStore):
                 if os.path.islink(path):
                     continue
                 umask_fix_perms(path, self.config.umask, 0o666)
-
 
     # "interfaces to implement"
 
@@ -294,7 +295,7 @@ class RdbObjectStore(ConcreteObjectStore):
             if not dir_only:
                 rel_path = os.path.join(rel_path, alt_name if alt_name else f"dataset_{self._get_object_id(obj)}.dat")
                 open(os.path.join(self.staging_path, rel_path), "w").close()
-                self.rdb_broker.upload(rel_path,self._get_cache_path(rel_path))
+                self.rdb_broker.upload(rel_path, self._get_cache_path(rel_path))
         log.debug("rdb _create")
 
     def _empty(self, obj, **kwargs):
@@ -387,7 +388,11 @@ class RdbObjectStore(ConcreteObjectStore):
                 cache_file = self._get_cache_path(rel_path)
                 try:
                     if source_file != cache_file:
-                        shutil.copy2(source_file, cache_file)
+                        try:
+                            shutil.copy2(source_file, cache_file)
+                        except OSError:
+                            os.makedirs(os.path.dirname(cache_file))
+                            shutil.copy2(source_file, cache_file)
                     self._fix_permissions(cache_file)
                 except OSError:
                     log.exception("Trouble copying source file '%s' to cache '%s'", source_file, cache_file)
