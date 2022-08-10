@@ -106,7 +106,12 @@ class RdbBroker():
         return res["size"]
 
     def delete(self, key):
-        pass
+        token = "none"
+        data = {"key": key, "token": token}
+        response = requests.post(self.remote_broker_url + "/delete", json=data)
+        if response.status_code != 200:
+            log.exception("Could not delete key '%s' from rdb", key)
+            raise requests.HTTPError("error deleting file", response.status_code, response.text)
 
 
 class RdbObjectStore(ConcreteObjectStore):
@@ -320,6 +325,7 @@ class RdbObjectStore(ConcreteObjectStore):
 
     def _delete(self, obj, entire_dir=False, **kwargs):
         log.debug("rdb _delete")
+
         rel_path = self._construct_path(obj, **kwargs)
         extra_dir = kwargs.get("extra_dir", None)
         base_dir = kwargs.get("base_dir", None)
