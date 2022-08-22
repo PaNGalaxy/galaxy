@@ -183,3 +183,6 @@ config/plugins/visualizations/nvd3/nvd3_bar/static/nvd3.js
 # CWL conformance tests
 lib/galaxy_test/api/cwl/test_cwl_conformance_v1_?.py
 test/functional/tools/cwl_tools/v1.?/
+
+
+lib/galaxy/jobs/rules/destinations.py
