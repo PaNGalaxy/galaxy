@@ -60,7 +60,7 @@ reports.ini
 tool_shed_wsgi.ini
 
 # Config files.
-datatypes_conf.xml
+#datatypes_conf.xml
 tool_conf.xml
 external_service_types_conf.xml
 migrated_tools_conf.xml

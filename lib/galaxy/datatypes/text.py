@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 
 import yaml
 
@@ -26,6 +27,7 @@ from galaxy.datatypes.sniff import (
     iter_headers,
 )
 from galaxy.util import (
+    compression_utils,
     nice_size,
     shlex_join,
     string_as_bool,
@@ -442,6 +444,143 @@ class Biom1(Json):
                         setattr(dataset.metadata, m_name, metadata_value)
                     except Exception:
                         log.exception("Something in the metadata detection for biom1 went wrong.")
+
+class Dat(Text):
+    """
+    QClimax .dat files.
+    """
+
+    file_ext = "dat"
+    
+    MetadataElement(name="q_values", default=[], desc="Q Values", readonly=True)
+    
+    def __init__(self, **kwd):
+        Text.__init__(self, **kwd)
+        
+    def _isEnergyTransferBlockHeader(self, line):
+        '''
+        Checks whether a line is the header at the start of the energy transfer block of a QClimax data file.
+
+        @param line: The line of file text to check
+        @return True if the line is the header of an energy transfer block, False otherwise
+        '''
+        
+        return "energy transfer(" in line or "energy transfer (" in line or "$\hbar\omega$" in line or ("energy transfer values" in line and not "of energy transfer values" in line)
+
+
+    def _isQBlockHeader(self, line, energy_transfer_block):
+        '''
+        Checks whether a line fits the profile of the header for a q block. Even if True is returned, it is not a Q block header if it occurs before the start of the Energy Transfer block.
+
+        @param line: The line of file text to check
+        @param energy_transfer_block: Boolean for whether the last parsed line was in the energy transfer block
+        @return True if the line fits the 
+        '''
+
+        return "q(" in line or "q (" in line or "y(" in line or "y (" in line or ("q transfer" in line and not "q transfer values" in line) or (energy_transfer_block and "q" in line and not "number of q" in line)
+
+    def set_meta(self,dataset,**kwd): 
+        dataset.metadata.q_values = []
+        
+        # Flags for which block we're reading
+        energy_transfer_block = False
+        q_block = False
+        
+        # Index of next q value
+        q_index = 0
+        
+        with compression_utils.get_fileobj(dataset.file_name) as in_file:
+            # FIXME: Potential encoding issue can prevent the ability to iterate over lines
+            # causing set_meta process to fail otherwise OK jobs. A better solution than
+            # a silent try/except is desirable.
+            try:
+                for line in in_file:
+                    
+                    # If the line is not a comment, we have reached the end of the header
+                    if line.strip().startswith("#"):
+            
+                        #COnvert the line to lower case
+                        lower_line = line.lower()
+            
+                        # Read the energy transfer
+                        if self._isEnergyTransferBlockHeader(lower_line):
+                            energy_transfer_block = True
+            
+                        # Read the units for Q
+                        elif self._isQBlockHeader(lower_line, energy_transfer_block):
+                            energy_transfer_block = False
+                            q_block = True
+            
+                        # Read a group block declaration
+                        elif "group" in lower_line:
+                            q_block = False
+            
+                    # The q value block consists of single lines of the q values
+                    elif q_block:
+                        
+                        #Add leading 0 so everything is in alphabetical and numerical order
+                        if q_index < 10:
+                            dataset.metadata.q_values.append("Q0" + str(q_index) + "(" + line + ")")
+                        else:
+                            dataset.metadata.q_values.append("Q" + str(q_index) + "(" + line + ")")
+                        q_index += 1
+                        
+            except UnicodeDecodeError:
+                log.error(f'Unable to parse file {dataset.file_name}')
+                return None
+            
+    def sniff(self, filename):
+    
+        # Flags for which blocks we've seen
+        energy_transfer_block = False
+        q_block = False
+        group_block = False
+    
+        with compression_utils.get_fileobj(filename) as in_file:
+            # FIXME: Potential encoding issue can prevent the ability to iterate over lines
+            # causing set_meta process to fail otherwise OK jobs. A better solution than
+            # a silent try/except is desirable.
+            try:
+    
+                for line in in_file:
+    
+                    # If the line is not a comment, we have reached the end of the header
+                    if line.strip().startswith("#"):
+    
+                        #COnvert the line to lower case
+                        lower_line = line.lower()
+    
+                        # Read the energy transfer
+                        if self._isEnergyTransferBlockHeader(lower_line):
+    
+                            energy_transfer_block = True
+    
+                            if q_block and group_block:
+                                break
+    
+                        # Read the units for Q
+                        elif self._isQBlockHeader(lower_line, energy_transfer_block):
+    
+                            q_block = True
+    
+                            if energy_transfer_block and group_block:
+                                break
+    
+                        # Read a group block decleration
+                        elif "group" in lower_line:
+    
+                            group_block = True
+    
+                            if q_block and energy_transfer_block:
+                                break
+    
+            except UnicodeDecodeError:
+               return False
+           
+    
+        
+        return energy_transfer_block and q_block and group_block 
+
 
 
 @build_sniff_from_prefix
