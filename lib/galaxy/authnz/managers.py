@@ -196,6 +196,18 @@ class AuthnzManager:
                 return k.lower()
         return None
 
+    def _get_provider_name(self, user):
+        if len(user.social_auth) == 1:
+            for k, v in BACKENDS_NAME.items():
+                if v == user.social_auth[0].provider:
+                    return k.lower()
+        if len(user.custos_auth) == 1:
+            for k, v in KEYCLOAK_BACKENDS.items():
+                if v == user.custos_auth[0].provider:
+                    return k.lower()
+
+        return None
+
     def _get_authnz_backend(self, provider, idphint=None):
         unified_provider_name = self._unify_provider_name(provider)
         if unified_provider_name in self.oidc_backends_config:
@@ -308,6 +320,21 @@ class AuthnzManager:
             log.warning(msg)
             raise exceptions.ItemAccessibilityException(msg)
         return qres
+
+    def refresh(self, trans, idphint=None):
+        try:
+            provider = self._get_provider_name(trans.user)
+            success, message, backend = self._get_authnz_backend(provider, idphint=idphint)
+            if success is False:
+                return False, message, None
+            refreshed = backend.refresh(trans)
+            if refreshed:
+                log.debug(f"Refreshed user token via `{provider}` identity provider")
+            return True
+        except Exception:
+            msg = f"An error occurred when refreshing user token on `{provider}` identity provider"
+            log.exception(msg)
+            return False
 
     def authenticate(self, provider, trans, idphint=None):
         """

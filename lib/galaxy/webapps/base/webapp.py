@@ -309,6 +309,10 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
         else:
             # This is a web request, get or create session.
             self._ensure_valid_session(session_cookie)
+
+        if self.user and (self.user.social_auth or self.user.custos_auth):
+            self.app.authnz_manager.refresh(self)
+
         if self.galaxy_session:
             # When we've authenticated by session, we have to check the
             # following.

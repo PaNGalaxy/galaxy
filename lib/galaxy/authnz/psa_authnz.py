@@ -1,6 +1,9 @@
 import json
 
 import requests
+
+import time
+
 from social_core.actions import (
     do_auth,
     do_complete,
@@ -142,6 +145,15 @@ class PSAAuthnz(IdentityProvider):
     def _login_user(self, backend, user, social_user):
         self.config["user"] = user
 
+    def refresh(self,trans):
+        social = trans.user.social_auth[0]
+        if social.extra_data['auth_time'] + social.extra_data['expires']/2 <= int(time.time()):
+            on_the_fly_config(trans.sa_session)
+            strategy = Strategy(trans.request, trans.session, Storage, self.config)
+            social.refresh_token(strategy)
+            return True
+        return False
+
     def authenticate(self, trans):
         on_the_fly_config(trans.sa_session)
         strategy = Strategy(trans.request, trans.session, Storage, self.config)
@@ -170,6 +182,7 @@ class PSAAuthnz(IdentityProvider):
             user=trans.user,
             state=state_token,
         )
+
         return redirect_url, self.config.get("user", None)
 
     def disconnect(self, provider, trans, disconnect_redirect_url=None, association_id=None):

@@ -67,6 +67,10 @@ class CustosAuthnz(IdentityProvider):
     def _decode_token_no_signature(self, token):
         return jwt.decode(token, audience=self.config["client_id"], options={"verify_signature": False})
 
+    def refresh(self, trans):
+        raise NotImplementedError()
+
+
     def authenticate(self, trans, idphint=None):
         base_authorize_url = self.config["authorization_endpoint"]
         scopes = ["openid", "email", "profile"]
