@@ -25,8 +25,7 @@ from ..mode import Mode
 
 from .file import SSHFile
 from .error_tools import convert_sshfs_errors
-
-token = ""
+-
 
 class SSHFS(FS):
     """A SSH filesystem using SFTP.
@@ -105,6 +104,7 @@ class SSHFS(FS):
             config_path='~/.ssh/config',
             exec_timeout=None,
             policy=None,
+            id_token,
             **kwargs
     ):  # noqa: D102
         super(SSHFS, self).__init__()
@@ -119,39 +119,29 @@ class SSHFS(FS):
         self._user = user = user or config.get('user')
         self._host = host = config.get('hostname')
         self._port = port = int(config.get('port', port))
-        self._client = client = paramiko.SSHClient(ts)
+        self._token = id_token
         self._timeout = timeout
         self._exec_timeout = timeout if exec_timeout is None else exec_timeout
+        self._transport = None
 
         _policy = paramiko.AutoAddPolicy() if policy is None else policy
 
         try:
-            # TODO: add more options
-            client.load_system_host_keys()
-            client.set_missing_host_key_policy(_policy)
-            argdict = {
-                "pkey": pkey,
-                "key_filename": keyfile,
-                "look_for_keys": True if (pkey and keyfile) is None else False,
-                "compress": compress,
-                "timeout": timeout
-            }
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((host, port))
+            self._transport = paramiko.Transport(sock)
+            # self._transport.default_window_size = 4294967294 # 2147483647
+            # self._transport.packetizer.REKEY_BYTES = pow(2, 40)
+            # self._transport.packetizer.REKEY_PACKETS = pow(2, 40)
+            
 
-            argdict.update(kwargs)
-
-            client.connect(
-                socket.gethostbyname(host), port, user, passwd,
-                **argdict
-            )
-
-            global token 
-            token = passwd
-
-            client.get_transport().auth_interactive(user, interaction_handler)
+        
+            self._transport.start_client(timeout=timeout)
+            self._transport.auth_interactive(username, self.interaction_handler)
 
             if keepalive > 0:
-                client.get_transport().set_keepalive(keepalive)
-            self._sftp = client.open_sftp()
+                self._transport.set_keepalive(keepalive)
+           self._sftp = paramiko.SFTPClient.from_transport(self._transport)
 
         except (paramiko.ssh_exception.SSHException,            # protocol errors
                 paramiko.ssh_exception.NoValidConnectionsError,  # connexion errors
@@ -163,32 +153,33 @@ class SSHFS(FS):
     if six.PY2:
 
         def close(self):  # noqa: D102
-            self._client.close()
+            self._transport.close()
             super(SSHFS, self).close()
 
     else:
 
         def close(self): # noqa: D102
-            self._client.close()
+            self._transport.close()
             super().close()
 
-    def interaction_handler(_title, _instructions, prompt_list):
-        global token
+    def interaction_handler(self, _title, _instructions, prompt_list):
         resp = []
+        token = self._token
         for pr in prompt_list:
-        if pr[0].strip() == "Next:":
-            if len(token) == 0:
-                resp.append('token_end')
-            elif len(token) > MAX_PASSWD_STR_LENGTH:
-                resp.append(token[0:MAX_PASSWD_STR_LENGTH])
-                token = token[MAX_PASSWD_STR_LENGTH:]
-            else:
-                resp.append(token)
-                token = ''
-        else:
-            if len(token) > MAX_PASSWD_STR_LENGTH:
-                resp.append(token[0:MAX_PASSWD_STR_LENGTH])
-                token = token[MAX_PASSWD_STR_LENGTH:]
+            if pr[0].strip() == "Password:":
+                if len(token) > MAX_LENGTH:
+                    resp.append(token[0:MAX_LENGTH])
+                    token = token[MAX_LENGTH:]
+            elif pr[0].strip() == "Next:":
+                if len(token) == 0:
+                    resp.append('token_end')
+                elif len(token) > MAX_LENGTH:
+                    resp.append(token[0:MAX_LENGTH])
+                    token = token[MAX_LENGTH:]
+                else:
+                    resp.append(token)
+                    token = ''
+        self._token = token
         return tuple(resp)
 
     def getinfo(self, path, namespaces=None):  # noqa: D102
@@ -354,7 +345,7 @@ class SSHFS(FS):
             elif self.isdir(_path):
                 raise errors.FileExpected(path)
             with convert_sshfs_errors('openbin', path):
-                _sftp = self._client.open_sftp()
+                _sftp = self._sftp
                 handle = _sftp.open(
                     _path,
                     mode=_mode.to_platform_bin(),
@@ -538,15 +529,15 @@ class SSHFS(FS):
                 return locale.split(b'.')[-1].decode('ascii').lower()
         return None
 
-    def _exec_command(self, cmd):
-        """Run a command on the remote SSH server.
+    # def _exec_command(self, cmd):
+    #     """Run a command on the remote SSH server.
 
-        Returns:
-            bytes: the output of the command, if it didn't fail
-            None: if the error pipe of the command was not empty
-        """
-        _, out, err = self._client.exec_command(cmd, timeout=self._exec_timeout)
-        return out.read().strip() if not err.read().strip() else None
+    #     Returns:
+    #         bytes: the output of the command, if it didn't fail
+    #         None: if the error pipe of the command was not empty
+    #     """
+    #     _, out, err = self._client.exec_command(cmd, timeout=self._exec_timeout)
+    #     return out.read().strip() if not err.read().strip() else None
 
     def _make_raw_info(self, name, stat_result, namespaces):
         """Create an `Info` object from a stat result.
