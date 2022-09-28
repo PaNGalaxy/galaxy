@@ -5,6 +5,7 @@ from __future__ import unicode_literals
 from __future__ import absolute_import
 
 import itertools
+import logging
 import os
 import stat
 import socket
@@ -14,18 +15,20 @@ import six
 import paramiko
 from property_cached import threaded_cached_property as cached_property
 
-from .. import errors
-from ..base import FS
-from ..info import Info
-from ..enums import ResourceType
-from ..path import basename, dirname
-from ..permissions import Permissions
-from ..osfs import OSFS
-from ..mode import Mode
+from fs import errors
+from fs.base import FS
+from fs.info import Info
+from fs.enums import ResourceType
+from fs.path import basename, dirname
+from fs.permissions import Permissions
+from fs.osfs import OSFS
+from fs.mode import Mode
 
 from .file import SSHFile
 from .error_tools import convert_sshfs_errors
--
+
+log = logging.getLogger(__name__)
+MAX_LENGTH = 511
 
 class SSHFS(FS):
     """A SSH filesystem using SFTP.
@@ -94,6 +97,7 @@ class SSHFS(FS):
     def __init__(
             self,
             host,
+            id_token,
             user=None,
             passwd=None,
             pkey=None,
@@ -104,7 +108,6 @@ class SSHFS(FS):
             config_path='~/.ssh/config',
             exec_timeout=None,
             policy=None,
-            id_token,
             **kwargs
     ):  # noqa: D102
         super(SSHFS, self).__init__()
@@ -129,19 +132,13 @@ class SSHFS(FS):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((host, port))
-            self._transport = paramiko.Transport(sock)
-            # self._transport.default_window_size = 4294967294 # 2147483647
-            # self._transport.packetizer.REKEY_BYTES = pow(2, 40)
-            # self._transport.packetizer.REKEY_PACKETS = pow(2, 40)
-            
-
-        
+            self._transport = paramiko.Transport(sock)  
             self._transport.start_client(timeout=timeout)
-            self._transport.auth_interactive(username, self.interaction_handler)
+            self._transport.auth_interactive(user, self.interaction_handler)
 
             if keepalive > 0:
                 self._transport.set_keepalive(keepalive)
-           self._sftp = paramiko.SFTPClient.from_transport(self._transport)
+            self._sftp = paramiko.SFTPClient.from_transport(self._transport)
 
         except (paramiko.ssh_exception.SSHException,            # protocol errors
                 paramiko.ssh_exception.NoValidConnectionsError,  # connexion errors
@@ -167,19 +164,18 @@ class SSHFS(FS):
         token = self._token
         for pr in prompt_list:
             if pr[0].strip() == "Password:":
-                if len(token) > MAX_LENGTH:
-                    resp.append(token[0:MAX_LENGTH])
-                    token = token[MAX_LENGTH:]
+                if len(self._token) > MAX_LENGTH:
+                    resp.append(self._token[0:MAX_LENGTH])
+                    self._token = self._token[MAX_LENGTH:]
             elif pr[0].strip() == "Next:":
-                if len(token) == 0:
+                if len(self._token) == 0:
                     resp.append('token_end')
-                elif len(token) > MAX_LENGTH:
-                    resp.append(token[0:MAX_LENGTH])
-                    token = token[MAX_LENGTH:]
+                elif len(self._token) > MAX_LENGTH:
+                    resp.append(self._token[0:MAX_LENGTH])
+                    self._token = self._token[MAX_LENGTH:]
                 else:
                     resp.append(token)
-                    token = ''
-        self._token = token
+                    self._token = ''
         return tuple(resp)
 
     def getinfo(self, path, namespaces=None):  # noqa: D102
@@ -501,7 +497,8 @@ class SSHFS(FS):
         try:
             uname_sys = self._exec_command("uname -s")
             sysinfo = self._exec_command("sysinfo")
-        except paramiko.ssh_exception.SSHException:
+        # except paramiko.ssh_exception.SSHException:
+        except:
             return "unknown"
         if uname_sys is not None:
             if uname_sys == b"FreeBSD":
