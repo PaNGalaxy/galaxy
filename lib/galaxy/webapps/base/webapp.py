@@ -311,7 +311,9 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             self._ensure_valid_session(session_cookie)
 
         if self.user and (self.user.social_auth or self.user.custos_auth):
-            self.app.authnz_manager.refresh(self)
+            success = self.app.authnz_manager.refresh(self)
+            if not success:
+                self.handle_user_logout()
 
         if self.galaxy_session:
             # When we've authenticated by session, we have to check the
