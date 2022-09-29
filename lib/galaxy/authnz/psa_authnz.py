@@ -147,7 +147,7 @@ class PSAAuthnz(IdentityProvider):
 
     def refresh(self,trans):
         social = trans.user.social_auth[0]
-        if social.extra_data['auth_time'] + social.extra_data['expires']/2 <= int(time.time()):
+        if int(social.extra_data['auth_time']) + int(social.extra_data['expires'])/2 <= int(time.time()):
             on_the_fly_config(trans.sa_session)
             strategy = Strategy(trans.request, trans.session, Storage, self.config)
             social.refresh_token(strategy)

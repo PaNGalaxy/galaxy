@@ -326,13 +326,15 @@ class AuthnzManager:
             provider = self._get_provider_name(trans.user)
             success, message, backend = self._get_authnz_backend(provider, idphint=idphint)
             if success is False:
-                return False, message, None
+                msg = f"An error occurred when refreshing user token on `{provider}` identity provider: {message}"
+                log.error(msg)
+                return False
             refreshed = backend.refresh(trans)
             if refreshed:
                 log.debug(f"Refreshed user token via `{provider}` identity provider")
             return True
-        except Exception:
-            msg = f"An error occurred when refreshing user token on `{provider}` identity provider"
+        except Exception as e:
+            msg = f"An error occurred when refreshing user token on `{provider}` identity provider: {e}"
             log.exception(msg)
             return False
 
