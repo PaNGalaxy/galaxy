@@ -22,7 +22,7 @@ class SshOidcFilesSource(PyFilesystem2FilesSource):
         props['id_token'] = user_context.trans.user.oidc_id_token
         user = jwt.decode(props['id_token'], options={"verify_signature": False})[username_in_token]
         props['user'] = re.match(username_template, user).group(0)
-
+        props ['keepalive'] = 0
         handle = SSHFS(**props)
         if path:
             handle = handle.opendir(path)
