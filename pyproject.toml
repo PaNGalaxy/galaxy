@@ -98,6 +98,7 @@ SQLAlchemy = ">=1.4.25,<2"
 sqlalchemy-migrate = "*"  # required to support tool shed
 sqlitedict = "*"
 sqlparse = "*"
+fs-sshfs = "*"
 starlette = "*"
 starlette-context = "*"
 svgwrite = "*"
