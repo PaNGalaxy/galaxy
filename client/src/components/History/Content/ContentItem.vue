@@ -180,7 +180,7 @@ export default {
             }
             return {
                 display: `datasets/${id}/display/?preview=True`,
-                edit: `datasets/edit?dataset_id=${id}`,
+                edit: `datasets1/edit?dataset_id=${id}`,
                 showDetails: `datasets/${id}/details`,
                 reportError: `datasets/error?dataset_id=${id}`,
                 rerun: `tool_runner/rerun?id=${id}`,
@@ -197,7 +197,8 @@ export default {
             }
         },
         onDisplay() {
-            iframeAdd({ path: this.itemUrls.display, title: this.name });
+//            iframeAdd({ path: this.itemUrls.display, title: this.name });
+            backboneRoute(this.itemUrls.display);
         },
         onDragStart(evt) {
             evt.dataTransfer.dropEffect = "move";
