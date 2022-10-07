@@ -47,6 +47,7 @@ import VisualizationsList from "components/Visualizations/Index";
 import QueryStringParsing from "utils/query-string-parsing";
 import DatasetError from "components/DatasetInformation/DatasetError";
 import DatasetAttributes from "components/DatasetInformation/DatasetAttributes";
+import DatasetDisplay from "components/DatasetInformation/DatasetDisplay";
 import Citations from "components/Citation/Citations";
 import DisplayStructure from "components/DisplayStructured";
 import { CloudAuth } from "components/User/CloudAuth";
@@ -107,7 +108,8 @@ export const getAnalysisRouter = (Galaxy) => {
             "(/)datasets(/)list(/)": "show_datasets",
             "(/)jobs(/)(:job_id)(/)view": "show_job",
             "(/)custom_builds": "show_custom_builds",
-            "(/)datasets/edit": "show_dataset_edit_attributes",
+            "(/)datasets1/edit": "show_dataset_edit_attributes",
+            "(/)datasets/display": "show_dataset_display",
             "(/)collection(/)edit(/)(:collection_id)": "show_collection_edit_attributes",
             "(/)datasets/error": "show_dataset_error",
             "(/)datasets(/)(:dataset_id)/details": "show_dataset_details",
@@ -428,6 +430,16 @@ export const getAnalysisRouter = (Galaxy) => {
             const datasetId = params.dataset_id;
             if (datasetId) {
                 this._display_vue_helper(DatasetAttributes, { datasetId: datasetId });
+            } else {
+                // can happen with faulty navigating, reloading datasets/edit
+                this._loadCenterIframe("welcome");
+            }
+        },
+
+        show_dataset_display: function (params) {
+            const datasetId = params.dataset_id;
+            if (datasetId) {
+                this._display_vue_helper(DatasetDisplay, { datasetId: datasetId });
             } else {
                 // can happen with faulty navigating, reloading datasets/edit
                 this._loadCenterIframe("welcome");
