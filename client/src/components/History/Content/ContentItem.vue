@@ -179,8 +179,8 @@ export default {
                 };
             }
             return {
-                display: `datasets/${id}/display/?preview=True`,
-                edit: `datasets1/edit?dataset_id=${id}`,
+                display: `datasets/display?dataset_id=${id}`,
+                edit: `datasets/edit?dataset_id=${id}`,
                 showDetails: `datasets/${id}/details`,
                 reportError: `datasets/error?dataset_id=${id}`,
                 rerun: `tool_runner/rerun?id=${id}`,

@@ -4917,4 +4917,16 @@
 :Type: str
 
 
+~~~~~~~~~~~~~~~~~~~~~~~
+``file_view_threshold``
+~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    When trying to view files larger than threshold (in bytes), a
+    confirmation page will be shown instead. Use 0 (default) to
+    disable that
+:Default: ``0``
+:Type: int
+
+
 
