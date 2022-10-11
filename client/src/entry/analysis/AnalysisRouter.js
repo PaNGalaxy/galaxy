@@ -108,7 +108,7 @@ export const getAnalysisRouter = (Galaxy) => {
             "(/)datasets(/)list(/)": "show_datasets",
             "(/)jobs(/)(:job_id)(/)view": "show_job",
             "(/)custom_builds": "show_custom_builds",
-            "(/)datasets1/edit": "show_dataset_edit_attributes",
+            "(/)datasets/edit": "show_dataset_edit_attributes",
             "(/)datasets/display": "show_dataset_display",
             "(/)collection(/)edit(/)(:collection_id)": "show_collection_edit_attributes",
             "(/)datasets/error": "show_dataset_error",
