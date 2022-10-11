@@ -197,7 +197,6 @@ export default {
             }
         },
         onDisplay() {
-//            iframeAdd({ path: this.itemUrls.display, title: this.name });
             backboneRoute(this.itemUrls.display);
         },
         onDragStart(evt) {

@@ -441,7 +441,6 @@ export const getAnalysisRouter = (Galaxy) => {
             if (datasetId) {
                 this._display_vue_helper(DatasetDisplay, { datasetId: datasetId });
             } else {
-                // can happen with faulty navigating, reloading datasets/edit
                 this._loadCenterIframe("welcome");
             }
         },
