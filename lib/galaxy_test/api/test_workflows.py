@@ -16,6 +16,7 @@ from typing import (
 from uuid import uuid4
 
 import pytest
+import yaml
 from requests import (
     delete,
     get,
@@ -41,6 +42,7 @@ from galaxy_test.base.workflow_fixtures import (
     WORKFLOW_ONE_STEP_DEFAULT,
     WORKFLOW_OPTIONAL_FALSE_INPUT_COLLECTION,
     WORKFLOW_OPTIONAL_FALSE_INPUT_DATA,
+    WORKFLOW_OPTIONAL_INPUT_DELAYED_SCHEDULING,
     WORKFLOW_OPTIONAL_TRUE_INPUT_COLLECTION,
     WORKFLOW_OPTIONAL_TRUE_INPUT_DATA,
     WORKFLOW_PARAMETER_INPUT_INTEGER_DEFAULT,
@@ -1798,6 +1800,34 @@ steps:
                 history_id=history_id,
             )
 
+    @skip_without_tool("column_param_list")
+    def test_comma_separated_columns_with_trailing_newline(self):
+        # Tests that workflows with weird tool state continue to run.
+        # In this case the newline may have been added by the workflow editor
+        # text field that is used for data_column parameters
+        with self.dataset_populator.test_history() as history_id:
+            job_summary = self._run_workflow(
+                """class: GalaxyWorkflow
+steps:
+  empty_output:
+    tool_id: empty_output
+    outputs:
+      out_file1:
+        change_datatype: tabular
+  column_param_list:
+    tool_id: column_param_list
+    in:
+      input1: empty_output/out_file1
+    state:
+      col: '2,3\n'
+      col_names: 'B\n'
+""",
+                history_id=history_id,
+            )
+            job = self.dataset_populator.get_job_details(job_summary.jobs[0]["id"], full=True).json()
+            assert "col 2,3" in job["command_line"]
+            assert 'echo "col_names B" >>' in job["command_line"]
+
     @skip_without_tool("column_param")
     def test_runtime_data_column_parameter(self):
         with self.dataset_populator.test_history() as history_id:
@@ -3143,6 +3173,40 @@ input1:
             )
             content = self.dataset_populator.get_history_dataset_content(history_id)
             assert "No input selected" in content
+
+    def test_run_with_optional_data_unspecified_survives_delayed_step(self):
+        with self.dataset_populator.test_history() as history_id:
+            self._run_workflow(
+                WORKFLOW_OPTIONAL_INPUT_DELAYED_SCHEDULING,
+                history_id=history_id,
+                wait=True,
+                assert_ok=True,
+            )
+
+    def test_run_subworkflow_with_optional_data_unspecified(self):
+        with self.dataset_populator.test_history() as history_id:
+            subworkflow = yaml.safe_load(
+                """
+class: GalaxyWorkflow
+inputs:
+  required: data
+steps:
+  nested_workflow:
+    in:
+      required: required
+test_data:
+  required:
+    value: 1.bed
+    type: File
+"""
+            )
+            subworkflow["steps"]["nested_workflow"]["run"] = yaml.safe_load(WORKFLOW_OPTIONAL_INPUT_DELAYED_SCHEDULING)
+            self._run_workflow(
+                subworkflow,
+                history_id=history_id,
+                wait=True,
+                assert_ok=True,
+            )
 
     def test_run_with_non_optional_data_unspecified_fails_invocation(self):
         with self.dataset_populator.test_history() as history_id:

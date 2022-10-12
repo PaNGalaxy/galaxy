@@ -20,6 +20,7 @@ from fastapi import (
     Query,
     Request,
 )
+from pydantic.error_wrappers import ValidationError
 from starlette import status
 from starlette.responses import (
     Response,
@@ -57,6 +58,7 @@ from galaxy.schema.schema import (
     UpdateHistoryContentsPayload,
     WriteStoreToPayload,
 )
+from galaxy.web.framework.decorators import validation_error_to_message_exception
 from galaxy.webapps.galaxy.api.common import (
     get_filter_query_params,
     get_update_permission_payload,
@@ -150,10 +152,13 @@ def parse_index_query_params(
 ) -> HistoryContentsIndexParams:
     """Parses query parameters for the history contents `index` operation
     and returns a model containing the values in the correct type."""
-    return HistoryContentsIndexParams(
-        v=v,
-        dataset_details=parse_dataset_details(dataset_details),
-    )
+    try:
+        return HistoryContentsIndexParams(
+            v=v,
+            dataset_details=parse_dataset_details(dataset_details),
+        )
+    except ValidationError as e:
+        raise validation_error_to_message_exception(e)
 
 
 def get_legacy_index_query_params(
@@ -237,20 +242,23 @@ def parse_legacy_index_query_params(
     else:
         dataset_details = parse_dataset_details(details)
 
-    return LegacyHistoryContentsIndexParams(
-        types=content_types,
-        ids=id_list,
-        deleted=deleted,
-        visible=visible,
-        dataset_details=dataset_details,
-    )
+    try:
+        return LegacyHistoryContentsIndexParams(
+            types=content_types,
+            ids=id_list,
+            deleted=deleted,
+            visible=visible,
+            dataset_details=dataset_details,
+        )
+    except ValidationError as e:
+        raise validation_error_to_message_exception(e)
 
 
 def parse_dataset_details(details: Optional[str]):
     """Parses the different values that the `dataset_details` parameter
     can have from a string."""
     dataset_details: Optional[DatasetDetailsType] = None
-    if details and details != "all":
+    if details is not None and details != "all":
         dataset_details = set(util.listify(details))
     else:  # either None or 'all'
         dataset_details = details  # type: ignore
@@ -828,7 +836,7 @@ class FastAPIHistoryContents:
         serialization_params: SerializationParams = Depends(query_serialization_params),
     ) -> HistoryContentsResult:
         """
-        **Warning**: For internal use to support the scroller functionality.
+        .. warning:: For internal use to support the scroller functionality.
 
         This endpoint provides random access to a large history without having
         to know exactly how many pages are in the final query. Pick a target HID
@@ -839,23 +847,30 @@ class FastAPIHistoryContents:
         The `direction` determines what items are selected:
 
         a) item counts:
-        - total matches-up:   hid < {hid}
-        - total matches-down: hid > {hid}
-        - total matches:      total matches-up + total matches-down + 1 (+1 for hid == {hid})
-        - displayed matches-up:   hid <= {hid} (hid == {hid} is included)
-        - displayed matches-down: hid > {hid}
-        - displayed matches:      displayed matches-up + displayed matches-down
+
+           - total matches-up:   hid < {hid}
+           - total matches-down: hid > {hid}
+           - total matches:      total matches-up + total matches-down + 1 (+1 for hid == {hid})
+           - displayed matches-up:   hid <= {hid} (hid == {hid} is included)
+           - displayed matches-down: hid > {hid}
+           - displayed matches:      displayed matches-up + displayed matches-down
 
         b) {limit} history items:
-        - if direction == before: hid <= {hid}
-        - if direction == after:  hid > {hid}
-        - if direction == near:   "near" {hid}, so that |before| <= limit // 2, |after| <= limit // 2 + 1.
 
-        **Note**: This endpoint uses slightly different filter params syntax. Instead of using `q`/`qv` parameters
-                  it uses the following syntax for query parameters:
-                    ?[field]-[operator]=[value]
-                  Example:
-                    ?update_time-gt=2015-01-29
+           - if direction == "before": hid <= {hid}
+           - if direction == "after":  hid > {hid}
+           - if direction == "near":   "near" {hid}, so that
+             n. items before <= limit // 2,
+             n. items after <= limit // 2 + 1.
+
+        .. note:: This endpoint uses slightly different filter params syntax. Instead of using `q`/`qv` parameters,
+            it uses the following syntax for query parameters::
+
+                ?[field]-[operator]=[value]
+
+            Example::
+
+                ?update_time-gt=2015-01-29
         """
 
         # Needed to parse arbitrary query parameter names for the filters.

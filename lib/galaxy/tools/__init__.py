@@ -234,20 +234,20 @@ IMPLICITLY_REQUIRED_TOOL_FILES: Dict[str, Dict] = {
     # "foobar": {"required": REQUIRE_FULL_DIRECTORY}
     # if no version is specified, all versions without explicit RequiredFiles will be selected
     "circos": {"required": REQUIRE_FULL_DIRECTORY},
-    "cp_image_math": {"required": {"includes": [{"path": "cp_common_functions.py", "path_type": "literal"}]}},
-    "enumerate_charges": {"required": {"includes": [{"path": "site_substructures.smarts", "path_type": "literal"}]}},
+    "cp_image_math": {"required": {"includes": [{"path": "*.py", "path_type": "glob"}]}},
+    "enumerate_charges": {"required": REQUIRE_FULL_DIRECTORY},
     "fasta_compute_length": {"required": {"includes": [{"path": "utils/*", "path_type": "glob"}]}},
     "fasta_concatenate0": {"required": {"includes": [{"path": "utils/*", "path_type": "glob"}]}},
     "filter_tabular": {"required": {"includes": [{"path": "*.py", "path_type": "glob"}]}},
     "flanking_features_1": {"required": {"includes": [{"path": "utils/*", "path_type": "glob"}]}},
     "gops_intersect_1": {"required": {"includes": [{"path": "utils/*", "path_type": "glob"}]}},
     "gops_subtract_1": {"required": {"includes": [{"path": "utils/*", "path_type": "glob"}]}},
-    "maxquant": {"required": {"includes": [{"path": "mqparam.py", "path_type": "literal"}]}},
-    "maxquant_mqpar": {"required": {"includes": [{"path": "mqparam.py", "path_type": "literal"}]}},
+    "maxquant": {"required": {"includes": [{"path": "*.py", "path_type": "glob"}]}},
+    "maxquant_mqpar": {"required": {"includes": [{"path": "*.py", "path_type": "glob"}]}},
     "query_tabular": {"required": {"includes": [{"path": "*.py", "path_type": "glob"}]}},
     "shasta": {"required": {"includes": [{"path": "configs/*", "path_type": "glob"}]}},
     "sqlite_to_tabular": {"required": {"includes": [{"path": "*.py", "path_type": "glob"}]}},
-    "sucos_max_score": {"required": {"includes": [{"path": "utils.py", "path_type": "literal"}]}},
+    "sucos_max_score": {"required": {"includes": [{"path": "*.py", "path_type": "glob"}]}},
 }
 
 
@@ -262,7 +262,7 @@ WORKFLOW_SAFE_TOOL_VERSION_UPDATES = {
     "__BUILD_LIST__": safe_update(packaging.version.parse("1.0.0"), packaging.version.parse("1.1.0")),
     "__APPLY_RULES__": safe_update(packaging.version.parse("1.0.0"), packaging.version.parse("1.1.0")),
     "__EXTRACT_DATASET__": safe_update(packaging.version.parse("1.0.0"), packaging.version.parse("1.0.1")),
-    "Grep1": safe_update(packaging.version.parse("1.0.1"), packaging.version.parse("1.0.3")),
+    "Grep1": safe_update(packaging.version.parse("1.0.1"), packaging.version.parse("1.0.4")),
     "Show beginning1": safe_update(packaging.version.parse("1.0.0"), packaging.version.parse("1.0.1")),
     "Show tail1": safe_update(packaging.version.parse("1.0.0"), packaging.version.parse("1.0.1")),
     "sort1": safe_update(packaging.version.parse("1.1.0"), packaging.version.parse("1.2.0")),
@@ -1190,7 +1190,7 @@ class Tool(Dictifiable):
         if getattr(self, "tool_shed", None):
             tool_dir = Path(self.tool_dir)
             for repo_dir in itertools.chain([tool_dir], tool_dir.parents):
-                if repo_dir.name == self.repository_name:
+                if repo_dir.name == self.repository_name and repo_dir.parent.name == self.installed_changeset_revision:
                     return str(repo_dir)
             else:
                 log.error(f"Problem finding repository dir for tool '{self.id}'")

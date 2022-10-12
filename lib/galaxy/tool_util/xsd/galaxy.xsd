@@ -1853,7 +1853,7 @@ provides a demonstration of using this tag.
 </test>
 ```
 
-Note that this tool uses ``assign_primary_output="true"`` for ``<discover_data_sets>``. Hence, the content of the first discovered dataset (which is the first in the alphabetically sorted list of discovered designations) is checked directly in the ``<output>`` tag of the test.
+Note that this tool uses ``assign_primary_output="true"`` for ``<discover_datasets>``. Hence, the content of the first discovered dataset (which is the first in the alphabetically sorted list of discovered designations) is checked directly in the ``<output>`` tag of the test.
 ]]></xs:documentation>
     </xs:annotation>
     <xs:complexContent>
@@ -3987,7 +3987,7 @@ exclusively use ``filter``s to populate options.
 * ``from_dataset`` - The options for the select list are dynamically obtained
   from input dataset selected for the tool from the current history.
 * ``from_file`` - The options for the select list are dynamically obtained from
-  a file. This mechanis is discourage in favor of the more generic
+  a file. This mechanism is discouraged in favor of the more generic
   ``from_data_table``.
 * ``from_parameter`` - The options for the select list are dynamically obtained
   from a parameter.
@@ -4063,6 +4063,10 @@ Starting from Galaxy v21.01, ``meta_file_key`` can be used together with
 medadata file that the ``meta_file_key`` implies, instead of the dataset
 itself.
 
+Note that in any case only the first mega byte of the referred dataset (or file)
+is considered. Lines starting with ``#`` are ignored. By using the ``startswith``
+attribute also lines starting with other strings can be ignored.
+
 ```xml
 <param name="input" type="data" format="maf" label="MAF File"/>
 <param name="species" type="select" optional="False" label="Select species for the input dataset" multiple="True">
@@ -4137,7 +4141,7 @@ used to generate dynamic options.
     </xs:sequence>
     <xs:attribute name="from_dataset" type="xs:string">
       <xs:annotation>
-        <xs:documentation xml:lang="en">Determine options from the dataset given in the referred input parameter. If 'meta_file_key' is given, the options are determined from the data in the metadata file of the input.</xs:documentation>
+        <xs:documentation xml:lang="en">Determine options from (the first MB of) the dataset given in the referred input parameter. If 'meta_file_key' is given, the options are determined from (the first MB of) the data in the metadata file of the input.</xs:documentation>
       </xs:annotation>
     </xs:attribute>
     <xs:attribute name="from_file" type="xs:string">
@@ -4167,12 +4171,17 @@ used to generate dynamic options.
     </xs:attribute>
     <xs:attribute name="startswith" type="xs:string">
       <xs:annotation>
-        <xs:documentation xml:lang="en">Ignore lines starting with the given character.</xs:documentation>
+        <xs:documentation xml:lang="en">Keep only lines starting with the given string.</xs:documentation>
       </xs:annotation>
     </xs:attribute>
     <xs:attribute name="meta_file_key" type="xs:string">
       <xs:annotation>
         <xs:documentation xml:lang="en">Works with from_dataset only. See [docs](#from-dataset)</xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+    <xs:attribute name="separator" type="xs:string">
+      <xs:annotation>
+        <xs:documentation xml:lang="en">Split tabular data with this character (default is tab)</xs:documentation>
       </xs:annotation>
     </xs:attribute>
   </xs:complexType>
@@ -4406,7 +4415,7 @@ if ``type`` is ``dataset_metadata_in_file``. File should be present Galaxy's
         <xs:attribute name="metadata_name" type="xs:string">
           <xs:annotation>
             <xs:documentation xml:lang="en">Target metadata attribute name for
-``dataset_metadata_in_data_table``, ``dataset_metadata_not_in_data_table`` and ``dataset_metadata_in_file`` options.</xs:documentation>
+``dataset_metadata_in_data_table``, ``dataset_metadata_not_in_data_table``, ``dataset_metadata_in_file`` and ``dataset_metadata_in_range`` options.</xs:documentation>
           </xs:annotation>
         </xs:attribute>
         <xs:attribute name="metadata_column" type="xs:string">
@@ -6986,7 +6995,7 @@ and ``contains``. In addtion there is ``sim_size`` which is discouraged in fafou
       <xs:documentation xml:lang="en">Number of bytes alowing for suffix (k|K|M|G|P|E)i? </xs:documentation>
     </xs:annotation>
     <xs:restriction base="xs:string">
-      <xs:pattern value="[1-9][0-9]*([kKMGTPE]i?)?"></xs:pattern>
+      <xs:pattern value="(0|[1-9][0-9]*)([kKMGTPE]i?)?"></xs:pattern>
     </xs:restriction>
   </xs:simpleType>
   <xs:complexType name="EdamTopics">
