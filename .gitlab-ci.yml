@@ -1,6 +1,7 @@
 stages:
   - build
   - build-base
+  - test
 
 variables:
   GIT_STRATEGY: clone
@@ -32,6 +33,58 @@ service-build:
     - docker tag galaxy $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:latest
     - docker push $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:latest
     - docker push $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+client-tests:
+  stage: test
+  script:
+    - >    
+      docker run
+      --entrypoint=""
+      $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+      bash -c ". .venv/bin/activate && cd client && yarn run jest"
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+api-tests:
+  stage: test
+  script:
+    - >    
+      docker run
+      --entrypoint=""
+      $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+      bash -c "./run_tests.sh -api"
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+unit-tests:
+  stage: test
+  script:
+    - >    
+      docker run
+      --entrypoint=""
+      $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+      bash -c "./run_tests.sh -unit"
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+integration-tests:
+  stage: test
+  script:
+    - >    
+      docker run
+      --entrypoint=""
+      $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+      bash -c "./run_tests.sh -integration"
   tags:
     - rse-multi-builder
   except:
