@@ -35,6 +35,7 @@ from galaxy.exceptions import (
 from galaxy.managers import context
 from galaxy.managers.session import GalaxySessionManager
 from galaxy.managers.users import UserManager
+from galaxy.model import User
 from galaxy.util import (
     asbool,
     safe_makedirs,
@@ -310,7 +311,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             # This is a web request, get or create session.
             self._ensure_valid_session(session_cookie)
 
-        if self.user and (self.user.social_auth or self.user.custos_auth):
+        if isinstance(self.user,User) and (self.user.social_auth or self.user.custos_auth):
             success = self.app.authnz_manager.refresh(self)
             if not success:
                 self.handle_user_logout()
