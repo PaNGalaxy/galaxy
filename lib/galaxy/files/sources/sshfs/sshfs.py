@@ -423,11 +423,6 @@ class SSHFS(FS):
         Note that the file object ``file`` will *not* be closed by this
         method. Take care to close it after this method completes
         (ideally with a context manager).
-
-        Example:
-            >>> with open('starwars.mov', 'wb') as write_file:
-            ...     my_fs.download('/movies/starwars.mov', write_file)
-
         """
         _path = self.validatepath(path)
         with self._lock:
@@ -466,10 +461,6 @@ class SSHFS(FS):
         Note that the file object ``file`` will *not* be closed by this
         method. Take care to close it after this method completes
         (ideally with a context manager).
-
-        Example:
-            >>> with open('~/movies/starwars.mov', 'rb') as read_file:
-            ...     my_fs.upload('starwars.mov', read_file)
 
         """
         _path = self.validatepath(path)
