@@ -13,6 +13,19 @@
             @onRefactor="onRefactor"
             @onShow="hideModal" />
         <MessagesModal :title="messageTitle" :message="messageBody" :error="messageIsError" @onHidden="resetMessage" />
+        <b-modal
+            v-model="showSaveAsModal"
+            title="Save As a New Workflow"
+            ok-title="Save"
+            cancel-title="Cancel"
+            @ok="doSaveAs">
+            <b-form-group label="Name">
+                <b-form-input v-model="saveAsName" />
+            </b-form-group>
+            <b-form-group label="Annotation">
+                <b-form-textarea v-model="saveAsAnnotation" />
+            </b-form-group>
+        </b-modal>
         <MarkdownEditor
             v-if="!isCanvas"
             :markdown-text="markdownText"
@@ -122,15 +135,31 @@
                                     v-if="hasActiveNodeTool"
                                     :key="activeNodeId"
                                     :get-manager="getManager"
-                                    :get-node="getNode"
+                                    :node-id="activeNodeId"
+                                    :node-annotation="activeNodeAnnotation"
+                                    :node-label="activeNodeLabel"
+                                    :node-inputs="activeNodeInputs"
+                                    :node-outputs="activeNodeOutputs"
+                                    :node-active-outputs="activeNodeActiveOutputs"
+                                    :config-form="activeNodeConfigForm"
                                     :datatypes="datatypes"
+                                    :post-job-actions="postJobActions"
+                                    @onChangePostJobActions="onChangePostJobActions"
                                     @onAnnotation="onAnnotation"
                                     @onLabel="onLabel"
                                     @onSetData="onSetData" />
                                 <FormDefault
                                     v-else-if="hasActiveNodeDefault"
+                                    :node-name="activeNodeName"
+                                    :node-id="activeNodeId"
+                                    :node-content-id="activeNodeContentId"
+                                    :node-annotation="activeNodeAnnotation"
+                                    :node-label="activeNodeLabel"
+                                    :node-type="activeNodeType"
+                                    :node-outputs="activeNodeOutputs"
+                                    :node-active-outputs="activeNodeActiveOutputs"
+                                    :config-form="activeNodeConfigForm"
                                     :get-manager="getManager"
-                                    :get-node="getNode"
                                     :datatypes="datatypes"
                                     @onAnnotation="onAnnotation"
                                     @onLabel="onLabel"
@@ -175,12 +204,13 @@
 </template>
 
 <script>
+import axios from "axios";
 import { LastQueue } from "utils/promise-queue";
 import { getDatatypesMapper } from "components/Datatypes";
-import { fromSimple } from "./modules/model";
+import { fromSimple, toSimple } from "./modules/model";
 import { getModule, getVersions, saveWorkflow, loadWorkflow } from "./modules/services";
 import { getUntypedWorkflowParameters } from "./modules/parameters";
-import { getStateUpgradeMessages, copyIntoWorkflow, saveAs } from "./modules/utilities";
+import { getStateUpgradeMessages } from "./modules/utilities";
 import WorkflowCanvas from "./modules/canvas";
 import WorkflowOptions from "./Options";
 import FormDefault from "./Forms/FormDefault";
@@ -273,6 +303,9 @@ export default {
             showInPanel: "attributes",
             isWheeled: false,
             canvasManager: null,
+            saveAsName: null,
+            saveAsAnnotation: null,
+            showSaveAsModal: false,
         };
     },
     computed: {
@@ -282,8 +315,38 @@ export default {
         showLint() {
             return this.showInPanel == "lint";
         },
+        postJobActions() {
+            return this.activeNode.postJobActions;
+        },
         activeNodeId() {
             return this.activeNode && this.activeNode.id;
+        },
+        activeNodeName() {
+            return this.activeNode?.name;
+        },
+        activeNodeContentId() {
+            return this.activeNode && this.activeNode.contentId;
+        },
+        activeNodeLabel() {
+            return this.activeNode?.label;
+        },
+        activeNodeAnnotation() {
+            return this.activeNode?.annotation;
+        },
+        activeNodeConfigForm() {
+            return this.activeNode?.config_form;
+        },
+        activeNodeInputs() {
+            return this.activeNode?.inputs;
+        },
+        activeNodeOutputs() {
+            return this.activeNode?.outputs;
+        },
+        activeNodeActiveOutputs() {
+            return this.activeNode?.activeOutputs;
+        },
+        activeNodeType() {
+            return this.activeNode?.type;
         },
         hasActiveNodeDefault() {
             return this.activeNode && this.activeNode.type != "tool";
@@ -419,6 +482,10 @@ export default {
         onChange() {
             this.hasChanges = true;
         },
+        onChangePostJobActions(nodeId, postJobActions) {
+            Vue.set(this.nodes[nodeId], "postJobActions", postJobActions);
+            this.onChange();
+        },
         onRemove(node) {
             delete this.nodes[node.id];
             Vue.delete(this.steps, node.id);
@@ -456,18 +523,58 @@ export default {
         onInsertWorkflow(workflow_id, workflow_name) {
             this._insertStep(workflow_id, workflow_name, "subworkflow");
         },
-        onInsertWorkflowSteps(workflow_id, step_count) {
+        copyIntoWorkflow(id = null) {
+            // Load workflow definition
+            this.onWorkflowMessage("Importing workflow", "progress");
+            loadWorkflow(this, id, null, true).then((data) => {
+                // Determine if any parameters were 'upgraded' and provide message
+                const insertedStateMessages = getStateUpgradeMessages(data);
+                this.onInsertedStateMessages(insertedStateMessages);
+            });
+        },
+        async onInsertWorkflowSteps(workflowId, stepCount) {
             if (!this.isCanvas) {
                 this.isCanvas = true;
                 return;
             }
-            copyIntoWorkflow(this, workflow_id, step_count);
+            if (stepCount < 10) {
+                this.copyIntoWorkflow(workflowId);
+            } else {
+                const confirmed = await this.$bvModal.msgBoxConfirm(
+                    `Warning this will add ${stepCount} new steps into your current workflow.  You may want to consider using a subworkflow instead.`
+                );
+                if (confirmed) {
+                    this.copyIntoWorkflow(workflowId);
+                }
+            }
         },
         onDownload() {
             window.location = `${getAppRoot()}api/workflows/${this.id}/download?format=json-download`;
         },
+        doSaveAs() {
+            const rename_name = this.saveAsName ?? `SavedAs_${this.name}`;
+            const rename_annotation = this.saveAsAnnotation ?? "";
+
+            // This is an old web controller endpoint that wants form data posted...
+            const formData = new FormData();
+            formData.append("workflow_name", rename_name);
+            formData.append("workflow_annotation", rename_annotation);
+            formData.append("from_tool_form", true);
+            formData.append("workflow_data", JSON.stringify(toSimple(this)));
+
+            axios
+                .post(`${getAppRoot()}workflow/save_workflow_as`, formData)
+                .then((response) => {
+                    this.onWorkflowMessage("Workflow saved as", "success");
+                    this.hideModal();
+                    this.onNavigate(`${getAppRoot()}workflow/editor?id=${response.data}`, true);
+                })
+                .catch((response) => {
+                    this.onWorkflowError("Saving workflow failed, please contact an administrator.");
+                });
+        },
         onSaveAs() {
-            saveAs(this);
+            this.showSaveAsModal = true;
         },
         onLayout() {
             this.canvasManager.drawOverview();

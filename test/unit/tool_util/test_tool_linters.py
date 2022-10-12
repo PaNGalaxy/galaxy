@@ -361,40 +361,40 @@ INPUTS_VALIDATOR_CORRECT = """
 <tool>
     <inputs>
         <param name="data_param" type="data" format="data">
-            <validator type="metadata" check="md1,md2" skip="md3,md4" message="cutom validation message" negate="true"/>
-            <validator type="unspecified_build" message="cutom validation message" negate="true"/>
-            <validator type="dataset_ok_validator" message="cutom validation message" negate="true"/>
-            <validator type="dataset_metadata_in_range" min="0" max="100" exclude_min="true" exclude_max="true" message="cutom validation message" negate="true"/>
-            <validator type="dataset_metadata_in_file" filename="file.tsv" metadata_column="3" split=","  message="cutom validation message" negate="true"/>
-            <validator type="dataset_metadata_in_data_table" table_name="datatable_name" metadata_column="3" message="cutom validation message" negate="true"/>
+            <validator type="metadata" check="md1,md2" skip="md3,md4" message="custom validation message" negate="true"/>
+            <validator type="unspecified_build" message="custom validation message" negate="true"/>
+            <validator type="dataset_ok_validator" message="custom validation message" negate="true"/>
+            <validator type="dataset_metadata_in_range" metadata_name="sequences" min="0" max="100" exclude_min="true" exclude_max="true" message="custom validation message" negate="true"/>
+            <validator type="dataset_metadata_in_file" filename="file.tsv" metadata_column="3" split="," metadata_name="dbkey" message="custom validation message" negate="true"/>
+            <validator type="dataset_metadata_in_data_table" table_name="datatable_name" metadata_column="3" metadata_name="dbkey" message="custom validation message" negate="true"/>
         </param>
         <param name="collection_param" type="collection">
-            <validator type="metadata" check="md1,md2" skip="md3,md4" message="cutom validation message"/>
-            <validator type="unspecified_build" message="cutom validation message"/>
-            <validator type="dataset_ok_validator" message="cutom validation message"/>
-            <validator type="dataset_metadata_in_range" min="0" max="100" exclude_min="true" exclude_max="true" message="cutom validation message"/>
-            <validator type="dataset_metadata_in_file" filename="file.tsv" metadata_column="3" split=","  message="cutom validation message"/>
-            <validator type="dataset_metadata_in_data_table" table_name="datatable_name" metadata_column="3" message="cutom validation message"/>
+            <validator type="metadata" check="md1,md2" skip="md3,md4" message="custom validation message"/>
+            <validator type="unspecified_build" message="custom validation message"/>
+            <validator type="dataset_ok_validator" message="custom validation message"/>
+            <validator type="dataset_metadata_in_range" metadata_name="sequences" min="0" max="100" exclude_min="true" exclude_max="true" message="custom validation message"/>
+            <validator type="dataset_metadata_in_file" filename="file.tsv" metadata_column="3" split="," metadata_name="dbkey" message="custom validation message"/>
+            <validator type="dataset_metadata_in_data_table" table_name="datatable_name" metadata_column="3" metadata_name="dbkey" message="custom validation message"/>
         </param>
         <param name="text_param" type="text">
             <validator type="regex">reg.xp</validator>
-            <validator type="length" min="0" max="100" message="cutom validation message"/>
-            <validator type="empty_field" message="cutom validation message"/>
-            <validator type="value_in_data_table" table_name="datatable_name" metadata_column="3" message="cutom validation message"/>
-            <validator type="expression" message="cutom validation message">somepythonexpression</validator>
+            <validator type="length" min="0" max="100" message="custom validation message"/>
+            <validator type="empty_field" message="custom validation message"/>
+            <validator type="value_in_data_table" table_name="datatable_name" metadata_column="3" message="custom validation message"/>
+            <validator type="expression" message="custom validation message">somepythonexpression</validator>
         </param>
         <param name="select_param" type="select">
             <options from_data_table="bowtie2_indexes"/>
             <validator type="no_options" negate="true"/>
             <validator type="regex" negate="true">reg.xp</validator>
-            <validator type="length" min="0" max="100" message="cutom validation message" negate="true"/>
-            <validator type="empty_field" message="cutom validation message" negate="true"/>
-            <validator type="value_in_data_table" table_name="datatable_name" metadata_column="3" message="cutom validation message" negate="true"/>
-            <validator type="expression" message="cutom validation message" negate="true">somepythonexpression</validator>
+            <validator type="length" min="0" max="100" message="custom validation message" negate="true"/>
+            <validator type="empty_field" message="custom validation message" negate="true"/>
+            <validator type="value_in_data_table" table_name="datatable_name" metadata_column="3" message="custom validation message" negate="true"/>
+            <validator type="expression" message="custom validation message" negate="true">somepythonexpression</validator>
         </param>
         <param name="int_param" type="integer">
             <validator type="in_range" min="0" max="100" exclude_min="true" exclude_max="true" negate="true"/>
-            <validator type="expression" message="cutom validation message">somepythonexpression</validator>
+            <validator type="expression" message="custom validation message">somepythonexpression</validator>
         </param>
     </inputs>
 </tool>
@@ -686,11 +686,18 @@ TESTS_DISCOVER_OUTPUTS = """
     <tests>
         <!-- this should be fine -->
         <test>
-            <output name="data_name" count="2">
-                <discovered_data/>
+            <output name="data_name">
+                <discovered_dataset/>
             </output>
             <output_collection name="collection_name">
-                <element count="2">
+                <element count="2"/>
+            </output_collection>
+        </test>
+        <!-- this should be fine as well -->
+        <test>
+            <output name="data_name" count="2"/>
+            <output_collection name="collection_name">
+                <element>
                     <element/>
                 </element>
             </output_collection>
@@ -1492,19 +1499,19 @@ def test_tests_discover_outputs(lint_ctx):
     tool_source = get_xml_tool_source(TESTS_DISCOVER_OUTPUTS)
     run_lint(lint_ctx, tests.lint_tsts, tool_source)
     assert (
-        "Test 2: test output 'data_name' must have a 'count' attribute and/or 'discovered_datasets' children"
+        "Test 3: test output 'data_name' must have a 'count' attribute and/or 'discovered_dataset' children"
         in lint_ctx.error_messages
     )
     assert (
-        "Test 2: test collection 'collection_name' must have a 'count' attribute or 'element' children"
-        in lint_ctx.error_messages
-    )
-    assert (
-        "Test 2: test collection 'collection_name' must contain nested 'element' tags and/or element childen with a 'count' attribute"
+        "Test 3: test collection 'collection_name' must have a 'count' attribute or 'element' children"
         in lint_ctx.error_messages
     )
     assert (
         "Test 3: test collection 'collection_name' must contain nested 'element' tags and/or element childen with a 'count' attribute"
+        in lint_ctx.error_messages
+    )
+    assert (
+        "Test 4: test collection 'collection_name' must contain nested 'element' tags and/or element childen with a 'count' attribute"
         in lint_ctx.error_messages
     )
     assert not lint_ctx.warn_messages
