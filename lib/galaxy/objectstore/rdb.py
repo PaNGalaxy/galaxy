@@ -208,7 +208,7 @@ class RdbObjectStore(ConcreteObjectStore):
         return os.path.abspath(os.path.join(self.staging_path, rel_path))
 
     def _pull_into_cache(self, rel_path):
-        log.debug("rdb _pull_into_cache")
+        log.debug("rdb _pull_into_cache: " + rel_path)
         # Ensure the cache directory structure exists (e.g., dataset_#_files/)
         rel_path_dir = os.path.dirname(rel_path)
         if not os.path.exists(self._get_cache_path(rel_path_dir)):
@@ -233,8 +233,8 @@ class RdbObjectStore(ConcreteObjectStore):
     # "interfaces to implement"
 
     def _exists(self, obj, **kwargs):
-        log.debug("rdb _exists")
         rel_path = self._construct_path(obj, **kwargs)
+        log.debug("rdb _exists: " + rel_path)
 
         dir_only = kwargs.get("dir_only", False)
         base_dir = kwargs.get("base_dir", None)
@@ -301,7 +301,7 @@ class RdbObjectStore(ConcreteObjectStore):
                 rel_path = os.path.join(rel_path, alt_name if alt_name else f"dataset_{self._get_object_id(obj)}.dat")
                 open(os.path.join(self.staging_path, rel_path), "w").close()
                 self.rdb_broker.upload(rel_path, self._get_cache_path(rel_path))
-        log.debug("rdb _create")
+            log.debug("rdb _create: " + rel_path)
 
     def _empty(self, obj, **kwargs):
         log.debug("rdb _empty")
@@ -311,8 +311,9 @@ class RdbObjectStore(ConcreteObjectStore):
             raise ObjectNotFound(f"objectstore.empty, object does not exist: {obj}, kwargs: {kwargs}")
 
     def _size(self, obj, **kwargs):
-        log.debug("rdb _size")
         rel_path = self._construct_path(obj, **kwargs)
+        log.debug("rdb _size: " + rel_path)
+
         if self._in_cache(rel_path):
             try:
                 return os.path.getsize(self._get_cache_path(rel_path))
@@ -324,13 +325,13 @@ class RdbObjectStore(ConcreteObjectStore):
         return 0
 
     def _delete(self, obj, entire_dir=False, **kwargs):
-        log.debug("rdb _delete")
-
         rel_path = self._construct_path(obj, **kwargs)
         extra_dir = kwargs.get("extra_dir", None)
         base_dir = kwargs.get("base_dir", None)
         dir_only = kwargs.get("dir_only", False)
         obj_dir = kwargs.get("obj_dir", False)
+        log.debug("rdb _delete: " + rel_path)
+
         try:
             # Remove temporary data in JOB_WORK directory
             if base_dir and dir_only and obj_dir:
@@ -352,8 +353,8 @@ class RdbObjectStore(ConcreteObjectStore):
         return False
 
     def _get_data(self, obj, start=0, count=-1, **kwargs):
-        log.debug("rdb _get_data")
         rel_path = self._construct_path(obj, **kwargs)
+        log.debug("rdb _get_data: " + rel_path)
         # Check cache first and get file if not there
         if not self._in_cache(rel_path):
             self._pull_into_cache(rel_path)
@@ -364,25 +365,34 @@ class RdbObjectStore(ConcreteObjectStore):
         data_file.close()
         return content
 
-    def _get_filename(self, obj, **kwargs):
-        log.debug("rdb _get_filename")
+    def _update_cache(self, obj, **kwargs):
         base_dir = kwargs.get("base_dir", None)
         dir_only = kwargs.get("dir_only", False)
-        obj_dir = kwargs.get("obj_dir", False)
         rel_path = self._construct_path(obj, **kwargs)
+        log.debug("rdb _update_cache: " + rel_path)
 
         # for JOB_WORK directory
         if base_dir and dir_only:
             return os.path.abspath(rel_path)
 
         cache_path = self._get_cache_path(rel_path)
-        if (self._in_cache(rel_path) and dir_only):
+        in_cache = self._in_cache(rel_path)
+        size_in_cache = 0
+        if in_cache:
+            size_in_cache = os.path.getsize(self._get_cache_path(rel_path))
+
+        # return path if we do not need to update cache
+        if in_cache and dir_only:
             return cache_path
-        elif (os.path.exists(self._get_cache_path(rel_path)) and
-              os.path.getsize(self._get_cache_path(rel_path)) == self.rdb_broker.get_size(rel_path)):
-            return cache_path
+        # something is already in cache
+        elif in_cache:
+            size_in_rdb = self.rdb_broker.get_size(rel_path)
+            # same size as in  rdb, or empty file in rdb - do not pull
+            if size_in_cache == size_in_rdb or size_in_rdb == 0:
+                return cache_path
+
         # Check if the file exists in persistent storage and, if it does, pull it into cache
-        elif self._exists(obj, **kwargs):
+        if self._exists(obj, **kwargs):
             if dir_only:  # Directories do not get pulled into cache
                 return cache_path
             else:
@@ -390,12 +400,25 @@ class RdbObjectStore(ConcreteObjectStore):
                     return cache_path
         raise ObjectNotFound(f"objectstore.get_filename, no cache_path: {obj}, kwargs: {kwargs}")
 
+    def _get_filename(self, obj, **kwargs):
+        base_dir = kwargs.get("base_dir", None)
+        dir_only = kwargs.get("dir_only", False)
+        rel_path = self._construct_path(obj, **kwargs)
+        log.debug("rdb _get_filename: " + rel_path)
+
+        # for JOB_WORK directory
+        if base_dir and dir_only:
+            return os.path.abspath(rel_path)
+
+        return self._get_cache_path(rel_path)
+
     def _update_from_file(self, obj, file_name=None, create=False, **kwargs):
-        log.debug("rdb _update_from_file")
         if create:
             self._create(obj, **kwargs)
         if self._exists(obj, **kwargs):
             rel_path = self._construct_path(obj, **kwargs)
+            log.debug("rdb _update_from_file:" + rel_path)
+
             # Choose whether to use the dataset file itself or an alternate file
             if file_name:
                 source_file = os.path.abspath(file_name)

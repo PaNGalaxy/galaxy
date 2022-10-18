@@ -502,6 +502,10 @@ class Data(metaclass=DataMeta):
         # Prevent IE8 from sniffing content type since we're explicit about it.  This prevents intentionally text/plain
         # content from being rendered in the browser
         headers["X-Content-Type-Options"] = "nosniff"
+
+        if data.dataset.object_store:
+            data.dataset.object_store.update_cache(data.dataset)
+
         if isinstance(data, str):
             return smart_str(data), headers
         if filename and filename != "index":
