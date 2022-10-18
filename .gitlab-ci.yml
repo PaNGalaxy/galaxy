@@ -77,19 +77,6 @@ unit-tests:
   except:
       - docker-base
 
-integration-tests:
-  stage: test
-  script:
-    - >    
-      docker run
-      --entrypoint=""
-      $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
-      bash -c "./run_tests.sh -integration"
-  tags:
-    - rse-multi-builder
-  except:
-      - docker-base
-
 build-base-docker:
   stage: build-base
   only:
