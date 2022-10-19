@@ -24,7 +24,6 @@ class DatasetPath:
         mutable=True,
         dataset_uuid=None,
         object_store_id=None,
-        remote_dataset=False,
     ):
         self.dataset_id = dataset_id
         self.dataset_uuid = dataset_uuid
@@ -34,7 +33,6 @@ class DatasetPath:
         self.false_extra_files_path = false_extra_files_path
         self.false_metadata_path = false_metadata_path
         self.mutable = mutable
-        self.remote_dataset = remote_dataset
 
     def __str__(self):
         if self.false_path is None:
@@ -55,7 +53,6 @@ class DatasetPath:
                 false_extra_files_path=false_extra_files_path,
                 false_metadata_path=false_metadata_path,
                 mutable=self.mutable,
-                remote_dataset = self.remote_dataset,
             )
         return dataset_path
 

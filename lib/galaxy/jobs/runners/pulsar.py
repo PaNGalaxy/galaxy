@@ -350,7 +350,6 @@ class PulsarJobRunner(AsynchronousJobRunner):
                         "dataset_id": input_dataset_wrapper.dataset_id,
                         "dataset_uuid": str(input_dataset_wrapper.dataset_uuid),
                         "object_store_id": input_dataset_wrapper.object_store_id,
-                        "remote_dataset": input_dataset_wrapper.remote_dataset,
                     }
                     client_inputs_list.append(
                         ClientInput(path, CLIENT_INPUT_PATH_TYPES.INPUT_PATH, object_store_ref=object_store_ref)
@@ -1054,8 +1053,6 @@ class PulsarComputeEnvironment(ComputeEnvironment):
         return remote_path
 
     def output_path_rewrite(self, dataset):
-        remote = '{"remote":"1"}'
-        dataset.metadata.from_JSON_dict(json_dict=remote)
         local_output_path_rewrite = self.local_path_config.output_path_rewrite(dataset)
         if local_output_path_rewrite is not None:
             local_output_path = local_output_path_rewrite
