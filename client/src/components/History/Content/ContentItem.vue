@@ -179,7 +179,7 @@ export default {
                 };
             }
             return {
-                display: `datasets/display?dataset_id=${id}`,
+                display: `datasets/${id}/display/?preview=True`,
                 edit: `datasets/edit?dataset_id=${id}`,
                 showDetails: `datasets/${id}/details`,
                 reportError: `datasets/error?dataset_id=${id}`,
@@ -197,7 +197,7 @@ export default {
             }
         },
         onDisplay() {
-            backboneRoute(this.itemUrls.display);
+            iframeAdd({ path: this.itemUrls.display, title: this.name });
         },
         onDragStart(evt) {
             evt.dataTransfer.dropEffect = "move";
