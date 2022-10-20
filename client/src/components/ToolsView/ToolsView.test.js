@@ -71,6 +71,8 @@ describe("ToolsView/ToolsView.vue", () => {
 
         await infoButton.trigger("click");
         await flushPromises();
+        // test fails on slow VM without a second call, not clear why, similar? issues here  https://github.com/mswjs/msw/issues/1163
+        await flushPromises();
         expect(infoButton.attributes("aria-expanded") === "true").toBeTruthy();
         expect(citation.element).toBeVisible();
     });
