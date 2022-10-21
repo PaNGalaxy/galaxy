@@ -2490,8 +2490,8 @@ galaxy:
   # URL of the remote data broker
   #remote_data_broker_url: http://localhost:8090
 
-  # When trying to view files larger than threshold (in bytes), a
+  # When trying to download files larger than threshold (in bytes), a
   # confirmation page will be shown instead. Use 0 (default) to disable
   # that
-  #file_view_threshold: 0
+  #file_download_threshold: 0
 

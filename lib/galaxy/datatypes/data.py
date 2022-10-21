@@ -255,7 +255,7 @@ class Data(metaclass=DataMeta):
             if not check and len(skip) == 0 and dataset.metadata.spec[key].get("optional"):
                 continue  # we skip check for optional and nonrequested values here
             if not dataset.metadata.element_is_set(key) and (
-                check or dataset.metadata.spec[key].check_required_metadata
+                    check or dataset.metadata.spec[key].check_required_metadata
             ):
                 # FIXME: Optional metadata isn't always properly annotated,
                 # so skip check if check_required_metadata is false on the datatype that defined the metadata element.
@@ -408,7 +408,7 @@ class Data(metaclass=DataMeta):
             file_paths.append(dataset.file_name)
         return zip(file_paths, rel_paths)
 
-    def display_data(self, trans, data, preview=False, filename=None, to_ext=None, **kwd):
+    def display_data(self, trans, data, preview=False, filename=None, to_ext=None, warn_on_large_file=None, **kwd):
         """
         Displays data in central pane if preview is `True`, else handles download.
 
@@ -434,7 +434,7 @@ class Data(metaclass=DataMeta):
             if os.path.exists(file_path):
                 if os.path.isdir(file_path):
                     with tempfile.NamedTemporaryFile(
-                        mode="w", delete=False, dir=trans.app.config.new_file_path, prefix="gx_html_autocreate_"
+                            mode="w", delete=False, dir=trans.app.config.new_file_path, prefix="gx_html_autocreate_"
                     ) as tmp_fh:
                         tmp_file_name = tmp_fh.name
                         dir_items = sorted(os.listdir(file_path))
@@ -478,11 +478,27 @@ class Data(metaclass=DataMeta):
             text,
         )
 
-        if to_ext or isinstance(data.datatype, binary.Binary):  # Saving the file, or binary file
+        if not os.path.exists(data.file_name):
+            raise ObjectNotFound(f"File Not Found ({data.file_name}).")
+
+        file_size = os.stat(data.file_name).st_size
+        warn_on_large_file = util.string_as_bool(warn_on_large_file) and (trans.app.config.file_download_threshold>0)
+        if to_ext and warn_on_large_file and file_size > trans.app.config.file_download_threshold:  # Warning on saving large file
+            headers["content-type"] = "text/html"
+            return (
+                trans.fill_template_mako(
+                    "/dataset/large_file_download_warning.mako",
+                    data=data,
+                    file_size=util.nice_size(file_size),
+                ),
+                headers,
+            )
+
+        if to_ext:  # Saving the file
             if data.extension in composite_extensions:
                 return self._archive_composite_dataset(trans, data, headers, do_action=kwd.get("do_action", "zip"))
             else:
-                headers["Content-Length"] = str(os.stat(data.file_name).st_size)
+                headers["Content-Length"] = str(file_size)
                 filename = self._download_filename(
                     data,
                     to_ext,
@@ -495,22 +511,39 @@ class Data(metaclass=DataMeta):
                 ] = "application/octet-stream"  # force octet-stream so Safari doesn't append mime extensions to filename
                 headers["Content-Disposition"] = f'attachment; filename="{filename}"'
                 return open(data.file_name, "rb"), headers
-        if not os.path.exists(data.file_name):
-            raise ObjectNotFound(f"File Not Found ({data.file_name}).")
+
         max_peek_size = DEFAULT_MAX_PEEK_SIZE  # 1 MB
         if isinstance(data.datatype, text.Html):
             max_peek_size = 10000000  # 10 MB for html
+        elif isinstance(data.datatype, binary.Binary):
+            max_peek_size = 100000  # 100 KB for binary
+
         preview = util.string_as_bool(preview)
-        if not preview or isinstance(data.datatype, images.Image) or os.stat(data.file_name).st_size < max_peek_size:
-            return self._yield_user_file_content(trans, data, data.file_name, headers), headers
-        else:
+
+        if isinstance(data.datatype, binary.Binary):
             headers["content-type"] = "text/html"
             return (
                 trans.fill_template_mako(
-                    "/dataset/large_file.mako", truncated_data=open(data.file_name, "rb").read(max_peek_size), data=data
-                ),
+                    "/dataset/binary_file.mako",
+                    data=data,
+                    file_contents=open(data.file_name, "rb").read(max_peek_size),
+                    file_size=util.nice_size(file_size),
+                    truncated=file_size > max_peek_size,
+                   ),
                 headers,
             )
+
+        if not preview or isinstance(data.datatype, images.Image) or file_size < max_peek_size:
+            return self._yield_user_file_content(trans, data, data.file_name, headers), headers
+
+        # preview large text file
+        headers["content-type"] = "text/html"
+        return (
+            trans.fill_template_mako(
+                "/dataset/large_file.mako", truncated_data=open(data.file_name, "rb").read(max_peek_size), data=data
+            ),
+            headers,
+        )
 
     def display_as_markdown(self, dataset_instance, markdown_format_helpers):
         """Prepare for embedding dataset into a basic Markdown document.
@@ -547,7 +580,7 @@ class Data(metaclass=DataMeta):
             # Check to see if this dataset's parent job is allowlisted
             # We cannot currently trust imported datasets for rendering.
             if not from_dataset.creating_job.imported and from_dataset.creating_job.tool_id.startswith(
-                tuple(trans.app.config.sanitize_allowlist)
+                    tuple(trans.app.config.sanitize_allowlist)
             ):
                 return open(filename, mode="rb")
 
@@ -718,7 +751,7 @@ class Data(metaclass=DataMeta):
         return datatypes_registry.get_converters_by_datatype(original_dataset.ext)
 
     def find_conversion_destination(
-        self, dataset, accepted_formats: List[str], datatypes_registry, **kwd
+            self, dataset, accepted_formats: List[str], datatypes_registry, **kwd
     ) -> Tuple[bool, Optional[str], Optional["DatasetInstance"]]:
         """Returns ( direct_match, converted_ext, existing converted dataset )"""
         return datatypes_registry.find_conversion_destination_for_dataset_by_extensions(
@@ -726,15 +759,15 @@ class Data(metaclass=DataMeta):
         )
 
     def convert_dataset(
-        self,
-        trans,
-        original_dataset,
-        target_type,
-        return_output=False,
-        visible=True,
-        deps=None,
-        target_context=None,
-        history=None,
+            self,
+            trans,
+            original_dataset,
+            target_type,
+            return_output=False,
+            visible=True,
+            deps=None,
+            target_context=None,
+            history=None,
     ):
         """This function adds a job to the queue to convert a dataset to another type. Returns a message about success/failure."""
         converter = trans.app.datatypes_registry.get_converter_by_target_type(original_dataset.ext, target_type)
@@ -773,16 +806,16 @@ class Data(metaclass=DataMeta):
         dataset.clear_associated_files(metadata_safe=True)
 
     def __new_composite_file(
-        self,
-        name,
-        optional=False,
-        mimetype=None,
-        description=None,
-        substitute_name_with_metadata=None,
-        is_binary=False,
-        to_posix_lines=True,
-        space_to_tab=False,
-        **kwds,
+            self,
+            name,
+            optional=False,
+            mimetype=None,
+            description=None,
+            substitute_name_with_metadata=None,
+            is_binary=False,
+            to_posix_lines=True,
+            space_to_tab=False,
+            **kwds,
     ):
         kwds["name"] = name
         kwds["optional"] = optional
@@ -968,7 +1001,7 @@ class Text(Data):
         Count the number of lines of data in dataset,
         skipping all blank lines and comments.
         """
-        CHUNK_SIZE = 2**15  # 32Kb
+        CHUNK_SIZE = 2 ** 15  # 32Kb
         data_lines = 0
         with compression_utils.get_fileobj(dataset.file_name) as in_file:
             # FIXME: Potential encoding issue can prevent the ability to iterate over lines

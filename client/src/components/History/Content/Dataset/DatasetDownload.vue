@@ -14,7 +14,7 @@
         <template v-slot:button-content>
             <span class="fa fa-save" />
         </template>
-        <b-dropdown-item v-localize :href="downloadUrl" @click.prevent.stop="onDownload(downloadUrl)">
+        <b-dropdown-item v-localize :href="downloadUrlWithWarn" @click.prevent.stop="onDownload(downloadUrlWithWarn)">
             Download Dataset
         </b-dropdown-item>
         <b-dropdown-item
@@ -32,8 +32,8 @@
         title="Download"
         size="sm"
         variant="link"
-        :href="downloadUrl"
-        @click.prevent.stop="onDownload(downloadUrl)">
+        :href="downloadUrlWithWarn"
+        @click.prevent.stop="onDownload(downloadUrlWithWarn)">
         <span class="fa fa-save" />
     </b-button>
 </template>
