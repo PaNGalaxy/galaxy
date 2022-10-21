@@ -53,7 +53,7 @@ client-tests:
 
 api-tests:
   stage: test
-  allow_failure: true
+  when: manual
   script:
     - >    
       docker run
