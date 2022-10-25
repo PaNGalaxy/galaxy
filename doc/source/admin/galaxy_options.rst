@@ -4986,4 +4986,16 @@
 :Type: str
 
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``file_download_threshold``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    When trying to download files larger than threshold (in bytes), a
+    confirmation page will be shown instead. Use 0 (default) to
+    disable that
+:Default: ``0``
+:Type: int
+
+
 

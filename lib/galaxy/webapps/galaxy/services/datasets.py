@@ -427,6 +427,7 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
         preview: bool = False,
         filename: Optional[str] = None,
         to_ext: Optional[str] = None,
+        warn_on_large_file: Optional[str] = None,
         raw: bool = False,
         **kwd,
     ):
@@ -451,7 +452,7 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
                     file_path = hda.file_name
                 rval = open(file_path, "rb")
             else:
-                rval, headers = hda.datatype.display_data(trans, hda, preview, filename, to_ext, **kwd)
+                rval, headers = hda.datatype.display_data(trans, hda, preview, filename, to_ext, warn_on_large_file, **kwd)
         except galaxy_exceptions.MessageException:
             raise
         except Exception as e:

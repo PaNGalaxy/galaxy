@@ -3616,3 +3616,10 @@ mapping:
         default: http://localhost:8090
         desc: |
           URL of the remote data broker
+
+      file_download_threshold:
+        type: int
+        default: 0
+        required: false
+        desc: |
+          When trying to download files larger than threshold (in bytes), a confirmation page will be shown instead. Use 0 (default) to disable that

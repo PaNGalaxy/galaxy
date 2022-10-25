@@ -70,7 +70,7 @@
 </template>
 
 <script>
-import { legacyNavigationMixin } from "components/plugins/legacyNavigation";
+import {iframeAdd, legacyNavigationMixin} from "components/plugins/legacyNavigation";
 import { copy as sendToClipboard } from "utils/clipboard";
 import { absPath, prependPath } from "utils/redirect.js";
 import { downloadUrlMixin } from "./mixins.js";
@@ -127,7 +127,7 @@ export default {
             sendToClipboard(absPath(this.downloadUrl), msg);
         },
         onDownload(resource) {
-            window.location.href = resource;
+            iframeAdd({ path: resource, title: this.name });
         },
         onError() {
             this.backboneRoute(this.itemUrls.reportError);
