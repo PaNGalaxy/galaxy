@@ -135,6 +135,7 @@ def _is_binary_file(data):
     from galaxy.datatypes import binary
     return isinstance(data.datatype, binary.Binary)
 
+
 def _should_warn_about_large_file(warn_on_large_file, trans, file_size):
     warn_on_large_file = util.string_as_bool(warn_on_large_file) and (trans.app.config.file_download_threshold > 0)
     return warn_on_large_file and file_size > trans.app.config.file_download_threshold
@@ -160,6 +161,16 @@ def _get_peak_size(data):
     elif isinstance(data.datatype, binary.Binary):
         max_peek_size = 100000  # 100 KB for binary
     return max_peek_size
+
+
+def _get_file_size(data):
+    file_size = int(data.dataset.file_size)
+    if file_size == 0:
+        if data.dataset.object_store:
+            file_size = data.dataset.object_store.size(data.dataset)
+        else:
+            file_size = os.stat(data.file_name).st_size
+    return file_size
 
 
 @p_dataproviders.decorators.has_dataproviders
@@ -503,14 +514,13 @@ class Data(metaclass=DataMeta):
         # content from being rendered in the browser
         headers["X-Content-Type-Options"] = "nosniff"
 
-        if data.dataset.object_store:
-            data.dataset.object_store.update_cache(data.dataset)
-
         if isinstance(data, str):
             return smart_str(data), headers
         if filename and filename != "index":
             # For files in extra_files_path
             extra_dir = data.dataset.extra_files_path_name
+            if data.dataset.object_store:
+                data.dataset.object_store.update_cache(data.dataset, extra_dir=extra_dir, alt_name=filename)
             file_path = trans.app.object_store.get_filename(data.dataset, extra_dir=extra_dir, alt_name=filename)
             if os.path.exists(file_path):
                 if os.path.isdir(file_path):
@@ -552,26 +562,28 @@ class Data(metaclass=DataMeta):
                 raise ObjectNotFound(f"Could not find '{filename}' on the extra files path {file_path}.")
         self._clean_and_set_mime_type(trans, data.get_mime(), headers)
 
-        trans.log_event(f"Display dataset id: {str(data.id)}")
+        downloading = to_ext is not None
+        file_size = _get_file_size(data)
+
+        if downloading and _should_warn_about_large_file(warn_on_large_file, trans, file_size):
+            return _serve_large_file_warning(headers, data, trans, file_size)
+
+        if data.dataset.object_store:
+            data.dataset.object_store.update_cache(data.dataset)
 
         if not os.path.exists(data.file_name):
             raise ObjectNotFound(f"File Not Found ({data.file_name}).")
 
-        file_size = os.stat(data.file_name).st_size
-        downloading = to_ext is not None
-
         if downloading:
-            if _should_warn_about_large_file(warn_on_large_file, trans, file_size):
-                return _serve_large_file_warning(headers, data, trans, file_size)
-            else:
-                return self._serve_file_download(headers, data, trans, to_ext, file_size, **kwd)
+            trans.log_event(f"Download dataset id: {str(data.id)}")
+            return self._serve_file_download(headers, data, trans, to_ext, file_size, **kwd)
         else:  # displaying
+            trans.log_event(f"Display dataset id: {str(data.id)}")
             max_peek_size = _get_peak_size(data)
             if _is_binary_file(data):  # file which format is unknown (to Galaxy), we still try to display this as text
                 return self._serve_binary_file_contents_as_text(trans, data, headers, file_size, max_peek_size)
             else:  # text/html or image
                 return self._serve_file_contents(trans, data, headers, preview, file_size, max_peek_size)
-
 
     def display_as_markdown(self, dataset_instance, markdown_format_helpers):
         """Prepare for embedding dataset into a basic Markdown document.
