@@ -442,11 +442,16 @@ class Data(metaclass=DataMeta):
         if dataset.datatype.composite_type or dataset.extension.endswith("html"):
             main_file = f"{name}.html"
             rel_paths.append(main_file)
+            if dataset.dataset.object_store:
+                dataset.dataset.object_store.update_cache(dataset.dataset)
+
             file_paths.append(dataset.file_name)
             for fpath, rpath in self.__archive_extra_files_path(dataset.extra_files_path):
                 rel_paths.append(os.path.join(name, rpath))
                 file_paths.append(fpath)
         else:
+            if dataset.dataset.object_store:
+                dataset.dataset.object_store.update_cache(dataset.dataset)
             rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}")
             file_paths.append(dataset.file_name)
         return zip(file_paths, rel_paths)

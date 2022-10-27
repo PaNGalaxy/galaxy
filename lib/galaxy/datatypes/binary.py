@@ -530,6 +530,9 @@ class BamNative(CompressedArchive, _BamOrSam):
             return f"Binary bam alignments file ({nice_size(dataset.get_size())})"
 
     def to_archive(self, dataset, name=""):
+        if dataset.dataset.object_store:
+            dataset.dataset.object_store.update_cache(dataset.dataset)
+
         rel_paths = []
         file_paths = []
         rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}")
