@@ -748,6 +748,8 @@ class BaseFastq(Sequence):
         return self.check_first_block(file_prefix)
 
     def display_data(self, trans, dataset, preview=False, filename=None, to_ext=None, **kwd):
+        if dataset.dataset.object_store:
+            dataset.dataset.object_store.update_cache(dataset.dataset)
         headers = kwd.get("headers", {})
         if preview:
             with compression_utils.get_fileobj(dataset.file_name) as fh:
