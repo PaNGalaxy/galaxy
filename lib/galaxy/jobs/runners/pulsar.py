@@ -326,7 +326,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
         job_destination = job_wrapper.job_destination
         self._populate_parameter_defaults(job_destination)
 
-        command_line, client, remote_job_config, compute_environment, remote_container = self.__prepare_job(
+        command_line, command_line_meta, client, remote_job_config, compute_environment, remote_container = self.__prepare_job(
             job_wrapper, job_destination
         )
 
@@ -402,6 +402,8 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 if job_directory_path:
                     config_files.append(job_directory_path)
             tool_directory_required_files = job_wrapper.tool.required_files
+            if command_line_meta:
+                command_line = command_line + "###metadata" + command_line_meta
             client_job_description = ClientJobDescription(
                 command_line=command_line,
                 input_files=input_files,
@@ -449,6 +451,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
     def __prepare_job(self, job_wrapper, job_destination):
         """Build command-line and Pulsar client for this job."""
         command_line = None
+        command_line_meta = None
         client = None
         remote_job_config = None
         compute_environment = None
@@ -499,18 +502,29 @@ class PulsarJobRunner(AsynchronousJobRunner):
                     compute_job_directory=remote_job_directory,
                 )
 
+            pulsar_output = PulsarJobRunner.__remote_output_mode(client) == "pulsar"
+
             # Pulsar handles ``create_tool_working_directory`` and
             # ``include_work_dir_outputs`` details.
             command_line = build_command(
                 self,
                 job_wrapper=job_wrapper,
                 container=container,
-                include_metadata=remote_metadata,
+                include_metadata=remote_metadata and not pulsar_output,
                 create_tool_working_directory=False,
                 include_work_dir_outputs=False,
                 remote_command_params=remote_command_params,
                 remote_job_directory=remote_job_directory,
             )
+            if remote_metadata and pulsar_output:
+                command_line_meta = build_command(
+                    self,
+                    job_wrapper=job_wrapper,
+                    include_metadata=True,
+                    remote_command_params=remote_command_params,
+                    remote_job_directory=remote_job_directory,
+                    metadata_only=True,
+                )
         except UnsupportedPulsarException:
             log.exception("failure running job %d, unsupported Pulsar target", job_wrapper.job_id)
             fail_or_resubmit = True
@@ -527,7 +541,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
             job_state = self._job_state(job_wrapper.get_job(), job_wrapper)
             self.work_queue.put((self.fail_job, job_state))
 
-        return command_line, client, remote_job_config, compute_environment, remote_container
+        return command_line, command_line_meta, client, remote_job_config, compute_environment, remote_container
 
     def __prepare_input_files_locally(self, job_wrapper):
         """Run task splitting commands locally."""
@@ -829,6 +843,13 @@ class PulsarJobRunner(AsynchronousJobRunner):
     def __remote_metadata(pulsar_client):
         remote_metadata = string_as_bool_or_none(pulsar_client.destination_params.get("remote_metadata", False))
         return remote_metadata
+
+    @staticmethod
+    def __remote_output_mode(pulsar_client):
+        remote_output_mode = pulsar_client.destination_params.get("remote_output_mode", "job")
+        if remote_output_mode not in ["pulsar", "job"]:
+            raise Exception(f"Unknown remote_output_mode value encountered {remote_output_mode}")
+        return remote_output_mode
 
     @staticmethod
     def __remote_container_handling(pulsar_client):
