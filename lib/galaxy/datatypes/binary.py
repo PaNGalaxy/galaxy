@@ -530,6 +530,9 @@ class BamNative(CompressedArchive, _BamOrSam):
             return f"Binary bam alignments file ({nice_size(dataset.get_size())})"
 
     def to_archive(self, dataset, name=""):
+        if dataset.dataset.object_store:
+            dataset.dataset.object_store.update_cache(dataset.dataset)
+
         rel_paths = []
         file_paths = []
         rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}")
@@ -613,10 +616,15 @@ class BamNative(CompressedArchive, _BamOrSam):
         headers = kwd.get("headers", {})
         preview = util.string_as_bool(preview)
         if offset is not None:
+            if dataset.dataset.object_store:
+                dataset.dataset.object_store.update_cache(dataset.dataset)
             return self.get_chunk(trans, dataset, offset, ck_size), headers
         elif to_ext or not preview:
             return super().display_data(trans, dataset, preview, filename, to_ext, **kwd)
         else:
+            if dataset.dataset.object_store:
+                dataset.dataset.object_store.update_cache(dataset.dataset)
+
             column_names = dataset.metadata.column_names
             if not column_names:
                 column_names = []
@@ -1950,6 +1958,9 @@ class H5MLM(H5):
         if to_ext or not preview:
             to_ext = to_ext or dataset.extension
             return self._serve_raw(dataset, to_ext, headers, **kwd)
+
+        if dataset.dataset.object_store:
+            dataset.dataset.object_store.update_cache(dataset.dataset)
 
         rval = {}
         try:

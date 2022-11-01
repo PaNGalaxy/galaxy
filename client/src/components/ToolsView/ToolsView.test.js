@@ -11,6 +11,13 @@ import axios from "axios";
 
 jest.mock("app");
 
+const flush = async () => {
+  await flushPromises(); // per vue-test-utils
+  await flushPromises(); // per msw issue #1163
+  await new Promise(resolve => window.setTimeout(resolve, 100)); // for "good measure"/safety
+};
+
+
 describe("ToolsView/ToolsView.vue", () => {
     const localVue = getLocalVue();
 
@@ -70,9 +77,8 @@ describe("ToolsView/ToolsView.vue", () => {
         expect(infoButton.attributes("aria-expanded") === "false").toBeTruthy();
 
         await infoButton.trigger("click");
-        await flushPromises();
-        // test fails on slow VM without a second call, not clear why, similar? issues here  https://github.com/mswjs/msw/issues/1163
-        await flushPromises();
+        // test fails on a slow VM, not clear why. Trying solution from here  https://github.com/mswjs/msw/issues/1163
+        await flush();
         expect(infoButton.attributes("aria-expanded") === "true").toBeTruthy();
         expect(citation.element).toBeVisible();
     });

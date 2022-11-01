@@ -198,6 +198,9 @@ class Ipynb(Json):
     def _display_data_trusted(self, trans, dataset, preview=False, filename=None, to_ext=None, **kwd):
         headers = kwd.get("headers", {})
         preview = string_as_bool(preview)
+        if dataset.dataset.object_store:
+            dataset.dataset.object_store.update_cache(dataset.dataset)
+
         if to_ext or not preview:
             return self._serve_raw(dataset, to_ext, headers, **kwd)
         else:

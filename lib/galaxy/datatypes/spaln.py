@@ -121,6 +121,9 @@ class _SpalnDb(Data):
                 headers=headers,
                 **kwd,
             )
+        if data.dataset.object_store:
+            data.dataset.object_store.update_cache(data.dataset)
+
         if self.file_ext == "spalndbn":
             title = "This is a nucleotide-query spaln database"
         elif self.file_ext == "spalndbp":

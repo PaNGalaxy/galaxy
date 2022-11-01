@@ -359,6 +359,9 @@ class BaseObjectStore(ObjectStore):
     def get_filename(self, obj, **kwargs):
         return self._invoke("get_filename", obj, **kwargs)
 
+    def update_cache(self, obj, **kwargs):
+        return self._invoke("update_cache", obj, **kwargs)
+
     def update_from_file(self, obj, **kwargs):
         return self._invoke("update_from_file", obj, **kwargs)
 
@@ -420,7 +423,8 @@ class ConcreteObjectStore(BaseObjectStore):
 
     def _get_store_by(self, obj):
         return self.store_by
-
+    def _update_cache(self, obj, **kwargs):
+        return self.get_filename(obj, **kwargs)
 
 class DiskObjectStore(ConcreteObjectStore):
     """

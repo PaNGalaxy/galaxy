@@ -261,6 +261,9 @@ class _Isa(data.Data):
         if not preview:
             return super().display_data(trans, dataset, preview, filename, to_ext, **kwd)
 
+        if dataset.dataset.object_store:
+            dataset.dataset.object_store.update_cache(dataset.dataset)
+
         # prepare the preview of the ISA dataset
         investigation = self._get_investigation(dataset)
         if investigation is None:
