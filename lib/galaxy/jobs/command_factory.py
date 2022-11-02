@@ -40,6 +40,7 @@ def build_command(
     remote_command_params=None,
     remote_job_directory=None,
     stream_stdout_stderr=False,
+    metadata_only=False,
 ):
     """
     Compose the sequence of commands necessary to execute a job. This will
@@ -120,6 +121,9 @@ def build_command(
 
     if include_work_dir_outputs:
         __handle_work_dir_outputs(commands_builder, job_wrapper, runner, remote_command_params)
+
+    if metadata_only: # want metadata only, remove previous commands, first command - noop
+        commands_builder = CommandsBuilder(":")
 
     if include_metadata and job_wrapper.requires_setting_metadata:
         commands_builder.append_command(f"cd '{working_directory}'")
