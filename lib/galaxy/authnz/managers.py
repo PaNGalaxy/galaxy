@@ -204,10 +204,8 @@ class AuthnzManager:
                 if v == user.social_auth[0].provider:
                     return k.lower()
         if len(user.custos_auth) == 1:
-            for k, v in KEYCLOAK_BACKENDS.items():
-                if v == user.custos_auth[0].provider:
-                    return k.lower()
-
+            if user.custos_auth[0].provider in KEYCLOAK_BACKENDS:
+                return user.custos_auth[0].provider
         return None
 
     def _get_authnz_backend(self, provider, idphint=None):
@@ -273,7 +271,7 @@ class AuthnzManager:
                 )
                 raise exceptions.AuthenticationFailed(
                     err_msg="An error occurred getting your ID token. {}. If the problem persists, please "
-                    "contact Galaxy admin.".format(msg)
+                            "contact Galaxy admin.".format(msg)
                 )
         return config
 
@@ -336,7 +334,7 @@ class AuthnzManager:
                 log.debug(f"Refreshed user token via `{provider}` identity provider")
             return True
         except Exception as e:
-            msg = f"An error occurred when refreshing user token on `{provider}` identity provider: {e}"
+            msg = f"An error occurred when refreshing user token: {e}"
             log.exception(msg)
             return False
 
