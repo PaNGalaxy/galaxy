@@ -792,6 +792,9 @@ class NestedObjectStore(BaseObjectStore):
         """For the first backend that has this `obj`, get its URL."""
         return self._call_method("_get_object_url", obj, None, False, **kwargs)
 
+    def _update_cache(self, obj, **kwargs):
+        return self._call_method("_update_cache", obj, ObjectNotFound, True, **kwargs)
+
     def _get_concrete_store_name(self, obj):
         return self._call_method("_get_concrete_store_name", obj, None, False)
 
