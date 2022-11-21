@@ -308,14 +308,7 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
             element_identifiers = fields_match.element_identifiers
             designation = fields_match.designation
             visible = fields_match.visible
-            dataset_name = fields_match.name or designation
-            # fix file extension not found via pattern
-            if fields_match.ext:
-                ext = fields_match.ext
-            else:
-                fname, fext = os.path.splitext(dataset_name)
-                if fext != "":
-                    ext = fext[1:]
+            ext = fields_match.ext
             dbkey = fields_match.dbkey
             extra_files = fields_match.extra_files
             # galaxy.tools.parser.output_collection_def.INPUT_DBKEY_TOKEN
@@ -323,7 +316,7 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
                 dbkey = self.input_dbkey
 
             # Create new primary dataset
-
+            dataset_name = fields_match.name or designation
 
             link_data = discovered_file.match.link_data
 

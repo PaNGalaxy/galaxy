@@ -6,6 +6,7 @@ history.
 """
 import logging
 from typing import Dict
+import os
 
 from galaxy import model
 from galaxy.managers import (
@@ -43,6 +44,15 @@ def write_dataset_collection(dataset_collection_instance, archive):
     for name, hda in zip(names, hdas):
         if hda.state != hda.states.OK:
             continue
+        # remove extension from dataset name if it is already in ext field
+        try:
+            file_name, file_extension = os.path.splitext(name)
+            file_extension = file_extension[1:]
+            if file_extension == hda.extension or (file_extension != "" and type(hda.datatype).__name__ == "Data"):
+                name = file_name
+                hda.extension = file_extension
+        except:
+            pass
         for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name):
             archive.write(file_path, relpath)
     return archive
