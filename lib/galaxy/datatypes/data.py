@@ -585,9 +585,9 @@ class Data(metaclass=DataMeta):
         else:  # displaying
             trans.log_event(f"Display dataset id: {str(data.id)}")
             max_peek_size = _get_peak_size(data)
-            if _is_binary_file(data):  # file which format is unknown (to Galaxy), we still try to display this as text
+            if _is_binary_file(data) and preview:  # preview file which format is unknown (to Galaxy), we still try to display this as text
                 return self._serve_binary_file_contents_as_text(trans, data, headers, file_size, max_peek_size)
-            else:  # text/html or image
+            else:  # text/html, or image, or display was called without preview flag
                 return self._serve_file_contents(trans, data, headers, preview, file_size, max_peek_size)
 
     def display_as_markdown(self, dataset_instance, markdown_format_helpers):
