@@ -1122,6 +1122,9 @@ def type_to_object_store_class(store, fsmon=False):
     elif store == "rdb":
         from .rdb import RdbObjectStore
         objectstore_class = RdbObjectStore
+    elif store == "rucio":
+        from .rucio import RucioObjectStore
+        objectstore_class = RucioObjectStore
     else:
         raise Exception(f"Unrecognized object store definition: {store}")
     # Disable the Pulsar object store for now until it receives some attention
