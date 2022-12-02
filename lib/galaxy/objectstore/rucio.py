@@ -21,6 +21,7 @@ from galaxy.util.path import safe_relpath
 from rucio.client import Client
 from rucio.client.uploadclient import UploadClient
 from rucio.client.downloadclient import DownloadClient
+import rucio.common
 
 
 import shutil
@@ -85,6 +86,7 @@ class RucioBroker():
         self.rse_protocol = rse_protocol
         self.scope = "galaxy"
         self.creds: dict = {"username": "user", "password": "changeme"}
+        rucio.common.utils.PREFERRED_CHECKSUM = "md5"
         self.rucio_client = Client(
             rucio_host=rucio_url,
             auth_host=rucio_url,
