@@ -110,6 +110,7 @@ uvloop = "*"
 WebOb = "*"
 Whoosh = "*"
 zipstream-new = "*"
+rucio-clients = "^1.29.10"
 
 [tool.poetry.dev-dependencies]
 ase = ">=3.18.1"
