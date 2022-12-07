@@ -4976,16 +4976,6 @@
 :Type: bool
 
 
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-``remote_data_broker_url``
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-:Description:
-    URL of the remote data broker
-:Default: ``http://localhost:8090``
-:Type: str
-
-
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``file_download_threshold``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

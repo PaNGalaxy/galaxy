@@ -3610,13 +3610,6 @@ mapping:
         required: false
         desc: Display built-in converters in the tool panel.
 
-      remote_data_broker_url:
-        type: str
-        required: false
-        default: http://localhost:8090
-        desc: |
-          URL of the remote data broker
-
       file_download_threshold:
         type: int
         default: 0
