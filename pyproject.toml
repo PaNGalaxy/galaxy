@@ -71,7 +71,7 @@ msal = "*"
 nodeenv = "*"
 nose = "*"
 numpy = "*"
-paramiko = "!=2.9.0, !=2.9.1"  # https://github.com/paramiko/paramiko/issues/1961
+paramiko = ">=2.12.0"
 Parsley = "*"
 Paste = "*"
 pebble = "*"
