@@ -2,7 +2,9 @@
 Base classes for job runner plugins.
 """
 import datetime
+import jwt
 import os
+import re
 import string
 import subprocess
 import sys
@@ -476,6 +478,18 @@ class BaseJobRunner:
     def write_executable_script(self, path: str, contents: str, job_io: JobIO):
         write_script(path, contents, job_io)
 
+    def _get_username_from_token(self,job_wrapper):
+        username_in_token = job_wrapper.job_destination.params.get("set_user_from_token_claim", None)
+        if not username_in_token:
+            return None
+
+        username_template = job_wrapper.job_destination.params.get("user_in_claim_template", ".*")
+        oidc_token, access_token, _ = job_wrapper.get_job().user._oidc_tokens()
+        if not oidc_token:
+            oidc_token = access_token
+        user = jwt.decode(oidc_token, options={"verify_signature": False})[username_in_token]
+        return re.match(username_template, user).group(0)
+
     def _find_container(
         self,
         job_wrapper: "MinimalJobWrapper",
@@ -519,6 +533,10 @@ class BaseJobRunner:
         )
 
         destination_info = job_wrapper.job_destination.params
+        username = self._get_username_from_token(job_wrapper)
+        if username:
+            destination_info['set_host_user'] = username
+
         container = self.app.container_finder.find_container(tool_info, destination_info, job_info)
         if container:
             job_wrapper.set_container(container)

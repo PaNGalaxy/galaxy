@@ -27,6 +27,15 @@ DOCKER_CONTAINER_TYPE = "docker"
 SINGULARITY_CONTAINER_TYPE = "singularity"
 TRAP_KILL_CONTAINER = "trap _on_exit EXIT"
 
+SET_USER_GROUPS_TEMPLATE = r"""
+USERGROUPS=`id -G ${username}`
+GROUPADD=""
+for i in $(echo $USERGROUPS | tr "," "\n")
+do
+    GROUPADD="$GROUPADD --group-add $i"
+done
+"""
+
 LOAD_CACHED_IMAGE_COMMAND_TEMPLATE = r"""
 python << EOF
 from __future__ import print_function
@@ -322,6 +331,19 @@ class DockerContainer(Container, HasDockerLikeVolumes):
             cache_command = docker_util.build_docker_cache_command(self.container_id, **docker_host_props)
         else:
             cache_command = self.__cache_from_file_command(cached_image_file, docker_host_props)
+
+        run_extra_arguments = self.prop("run_extra_arguments", docker_util.DEFAULT_RUN_EXTRA_ARGUMENTS)
+        group_command = ""
+        host_user = self.destination_info.get("set_host_user", None)
+        if host_user:
+            group_command = string.Template(SET_USER_GROUPS_TEMPLATE).safe_substitute(
+                username=host_user
+            )
+            if run_extra_arguments:
+                run_extra_arguments = run_extra_arguments + " $GROUPADD"
+            else:
+                run_extra_arguments = "$GROUPADD"
+
         run_command = docker_util.build_docker_run_command(
             command,
             self.container_id,
@@ -332,7 +354,8 @@ class DockerContainer(Container, HasDockerLikeVolumes):
             net=self.prop("net", None),  # By default, docker instance has networking disabled
             auto_rm=asbool(self.prop("auto_rm", docker_util.DEFAULT_AUTO_REMOVE)),
             set_user=self.prop("set_user", docker_util.DEFAULT_SET_USER),
-            run_extra_arguments=self.prop("run_extra_arguments", docker_util.DEFAULT_RUN_EXTRA_ARGUMENTS),
+            set_user_from_host=host_user,
+            run_extra_arguments=run_extra_arguments,
             guest_ports=self.tool_info.guest_ports,
             container_name=self.container_name,
             **docker_host_props,
@@ -352,6 +375,7 @@ _on_exit() {{
 }}
 {TRAP_KILL_CONTAINER}
 {cache_command}
+{group_command}
 {run_command}"""
 
     def __cache_from_file_command(self, cached_image_file, docker_host_props):
