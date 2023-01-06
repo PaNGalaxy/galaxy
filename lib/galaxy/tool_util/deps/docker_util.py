@@ -97,6 +97,7 @@ def build_docker_run_command(
     sudo_cmd=DEFAULT_SUDO_COMMAND,
     auto_rm=DEFAULT_AUTO_REMOVE,
     set_user=DEFAULT_SET_USER,
+    set_user_from_host=None,
     host=DEFAULT_HOST,
     guest_ports=False,
     container_name=None,
@@ -149,6 +150,9 @@ def build_docker_run_command(
             egid = os.getgid()
 
             user = "%d:%d" % (euid, egid)
+        command_parts.extend(["--user", user])
+    elif set_user_from_host:
+        user = f'`id -u {set_user_from_host}`:`id -g {set_user_from_host}`'
         command_parts.extend(["--user", user])
     full_image = image
     if tag:
