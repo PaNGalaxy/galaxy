@@ -16,6 +16,13 @@ import zipfile
 from json import dumps
 from typing import Optional
 
+from h5grove.content import (
+    DatasetContent,
+    ResolvedEntityContent,
+    create_content
+)
+from h5grove.encoders import encode
+from h5grove.models import LinkResolution
 import h5py
 import numpy as np
 import pysam
@@ -91,6 +98,13 @@ class Binary(data.Data):
     def get_mime(self):
         """Returns the mime type of the datatype"""
         return "application/octet-stream"
+
+    def get_structured_contents(
+        self,
+        dataset,
+        **kwargs
+    ):
+        raise Exception("get_structured_contents is not implemented for this datatype.")
 
 
 class Ab1(Binary):
@@ -1098,6 +1112,38 @@ class H5(Binary):
             return dataset.peek
         except Exception:
             return f"Binary HDF5 file ({nice_size(dataset.get_size())})"
+
+    def get_structured_contents(
+        self,
+        dataset,
+        type=None,     
+        path='/', 
+        dtype='origin',
+        format='json',
+        flatten=False,
+        selection=None, 
+        **kwargs
+    ):
+        """
+        Implements h5grove protocol (https://silx-kit.github.io/h5grove/). 
+        This allows the h5web visualization tool (https://github.com/silx-kit/h5web)
+        to be used directly with Galaxy datasets.
+        """
+        with h5py.File(dataset.file_name, "r") as h5file:
+            content = create_content(h5file, path, LinkResolution.ONLY_VALID)
+            if (type == 'attr'):
+                assert isinstance(content, ResolvedEntityContent)
+                resp = encode(content.attributes(), "json")
+            elif (type == 'meta'):
+                resp = encode(content.metadata(), "json")
+            elif (type == 'stats'):
+                assert isinstance(content, DatasetContent)
+                resp = encode(content.data_stats(selection), "json")
+            else: # default 'data'
+                assert isinstance(content, DatasetContent)
+                resp = encode(content.data(selection, flatten, dtype), format)
+            
+            return resp.content, resp.headers
 
 
 class Loom(H5):

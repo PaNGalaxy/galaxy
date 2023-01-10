@@ -81,6 +81,12 @@ class RequestDataType(str, Enum):
     genome_data = "genome_data"
     in_use_state = "in_use_state"
 
+class DatasetContentType(str, Enum):
+    """For retrieving content from a structured dataset (e.g. HDF5)"""
+    meta = "meta"
+    attr = "attr"
+    stats = "stats"
+    data = "data"
 
 class DatasetStorageDetails(Model):
     object_store_id: Optional[str] = Field(
@@ -568,6 +574,29 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
         if success_count:
             trans.sa_session.flush()
         return DeleteDatasetBatchResult.construct(success_count=success_count, errors=errors)
+
+    def get_structured_contents(
+        self,
+        trans: ProvidesHistoryContext,
+        dataset_id: EncodedDatabaseIdField,
+        content_type: DatasetContentType,
+        **params
+    ):
+        """
+        Retrieves contents of a dataset. It is left to the datatype to decide how
+        to interpret the content types.
+        """
+        decoded_content_id = self.decode_id(dataset_id)
+        headers = {}
+        content: Any = ""
+        try:
+            dataset = self.hda_manager.get_accessible(decoded_content_id, trans.user)
+            content, headers = dataset.datatype.get_structured_contents(dataset, content_type, **params)
+        except galaxy_exceptions.MessageException:
+            raise
+        except Exception as e:
+            raise galaxy_exceptions.InternalServerError(f"Could not get content for dataset: {util.unicodify(e)}")
+        return content, headers
 
     def _get_or_create_converted(self, trans, original: model.DatasetInstance, target_ext: str):
         try:

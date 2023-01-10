@@ -24,6 +24,7 @@ from fastapi import (
 from starlette.responses import (
     FileResponse,
     StreamingResponse,
+    Response,
 )
 
 from galaxy.schema import (
@@ -54,6 +55,7 @@ from galaxy.webapps.galaxy.services.datasets import (
     DeleteDatasetBatchPayload,
     DeleteDatasetBatchResult,
     RequestDataType,
+    DatasetContentType,
 )
 from . import (
     depends,
@@ -328,6 +330,20 @@ class FastAPIDatasets:
         extra_params = get_query_parameters_from_request_excluding(request, exclude_params)
 
         return self.service.show(trans, dataset_id, hda_ldda, serialization_params, data_type, **extra_params)
+
+    @router.get(
+        "/api/datasets/{dataset_id}/{content_type}",
+        summary="Retrieve information about the content of a dataset.",
+    )
+    def get_structured_contents(
+        self,
+        request: Request,
+        trans=DependsOnTrans,
+        dataset_id: EncodedDatabaseIdField = DatasetIDPathParam,
+        content_type: DatasetContentType = DatasetContentType.data
+    ):
+        content, headers = self.service.get_structured_contents(trans, dataset_id, content_type, **request.query_params)
+        return Response(content=content, headers=headers)
 
     @router.delete(
         "/api/datasets",
