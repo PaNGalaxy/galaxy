@@ -19,7 +19,7 @@ from typing import Optional
 from h5grove.content import (
     DatasetContent,
     ResolvedEntityContent,
-    create_content
+    get_content_from_file
 )
 from h5grove.encoders import encode
 from h5grove.models import LinkResolution
@@ -1129,8 +1129,7 @@ class H5(Binary):
         This allows the h5web visualization tool (https://github.com/silx-kit/h5web)
         to be used directly with Galaxy datasets.
         """
-        with h5py.File(dataset.file_name, "r") as h5file:
-            content = create_content(h5file, path, LinkResolution.ONLY_VALID)
+        with get_content_from_file(dataset.file_name, path, self._create_error) as content:
             if (type == 'attr'):
                 assert isinstance(content, ResolvedEntityContent)
                 resp = encode(content.attributes(), "json")
@@ -1145,6 +1144,8 @@ class H5(Binary):
             
             return resp.content, resp.headers
 
+    def _create_error(self, status_code, message):
+        return Exception(status_code, message)
 
 class Loom(H5):
     """
