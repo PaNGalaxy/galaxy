@@ -31,24 +31,19 @@ window.bundleEntries.load = function (options) {
     var settings = options.chart.settings;
     var explorer = settings.get('explorer');
     var url = window.location.origin + "/api/datasets/" + options.dataset.dataset_id;
-    $.ajax( {
-        url     : dataset.download_url,
-        success : function( content ) {
-          reactRender(
-            <StrictMode>
-              <MyApp 
-                url={url} 
-                name={dataset.name} 
-                filepath={dataset.file_name} 
-                explorer={explorer}
-              />
-            </StrictMode>,
-            document.getElementById(options.target)
-          )
-          options.chart.state('ok', 'Chart drawn.');
-          options.process.resolve();
-        }
-    });
+    reactRender(
+      <StrictMode>
+        <MyApp 
+          url={url} 
+          name={dataset.name} 
+          filepath={dataset.file_name} 
+          explorer={explorer}
+        />
+      </StrictMode>,
+      document.getElementById(options.target)
+    )
+    options.chart.state('ok', 'Chart drawn.');
+    options.process.resolve();
 };
 
 export default MyApp;
