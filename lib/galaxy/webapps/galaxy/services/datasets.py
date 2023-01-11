@@ -575,7 +575,7 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
             trans.sa_session.flush()
         return DeleteDatasetBatchResult.construct(success_count=success_count, errors=errors)
 
-    def get_structured_contents(
+    def get_structured_content(
         self,
         trans: ProvidesHistoryContext,
         dataset_id: EncodedDatabaseIdField,
@@ -591,7 +591,7 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
         content: Any = ""
         try:
             dataset = self.hda_manager.get_accessible(decoded_content_id, trans.user)
-            content, headers = dataset.datatype.get_structured_contents(dataset, content_type, **params)
+            content, headers = dataset.datatype.get_structured_content(dataset, content_type, **params)
         except galaxy_exceptions.MessageException:
             raise
         except Exception as e:

@@ -332,17 +332,17 @@ class FastAPIDatasets:
         return self.service.show(trans, dataset_id, hda_ldda, serialization_params, data_type, **extra_params)
 
     @router.get(
-        "/api/datasets/{dataset_id}/{content_type}",
+        "/api/datasets/{dataset_id}/content/{content_type}",
         summary="Retrieve information about the content of a dataset.",
     )
-    def get_structured_contents(
+    def get_structured_content(
         self,
         request: Request,
         trans=DependsOnTrans,
         dataset_id: EncodedDatabaseIdField = DatasetIDPathParam,
         content_type: DatasetContentType = DatasetContentType.data
     ):
-        content, headers = self.service.get_structured_contents(trans, dataset_id, content_type, **request.query_params)
+        content, headers = self.service.get_structured_content(trans, dataset_id, content_type, **request.query_params)
         return Response(content=content, headers=headers)
 
     @router.delete(
