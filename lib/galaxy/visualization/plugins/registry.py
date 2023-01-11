@@ -269,7 +269,7 @@ class VisualizationsRegistry:
             # log.debug( '%s %s: %s, %s, %s, %s', str( target_object ), 'is_object_applicable',
             #           test_type, result_type, test_result, test_fn )
 
-            if test_type == "isinstance":
+            if test_type == "isinstance" or test_type == "not_isinstance":
                 # parse test_result based on result_type (curr: only datatype has to do this)
                 if result_type == "datatype":
                     # convert datatypes to their actual classes (for use with isinstance)
