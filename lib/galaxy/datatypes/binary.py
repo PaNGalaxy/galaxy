@@ -99,12 +99,12 @@ class Binary(data.Data):
         """Returns the mime type of the datatype"""
         return "application/octet-stream"
 
-    def get_structured_contents(
+    def get_structured_content(
         self,
         dataset,
         **kwargs
     ):
-        raise Exception("get_structured_contents is not implemented for this datatype.")
+        raise Exception("get_structured_content is not implemented for this datatype.")
 
 
 class Ab1(Binary):
@@ -1113,7 +1113,7 @@ class H5(Binary):
         except Exception:
             return f"Binary HDF5 file ({nice_size(dataset.get_size())})"
 
-    def get_structured_contents(
+    def get_structured_content(
         self,
         dataset,
         type=None,     
