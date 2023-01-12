@@ -740,21 +740,21 @@ class User(Base, Dictifiable, RepresentById):
             self.disk_usage = func.coalesce(self.table.c.disk_usage, 0) + amount
 
     def _oidc_tokens(self):
-        id_token=None
-        refresh_token=None
-        access_token=None
+        id_token = None
+        refresh_token = None
+        access_token = None
         if self.social_auth:
-            if 'access_token' in self.social_auth[0].extra_data:
-                access_token = self.social_auth[0].extra_data['access_token']
-            if 'refresh_token' in self.social_auth[0].extra_data :
-                refresh_token = self.social_auth[0].extra_data['refresh_token']
-            if 'id_token' in self.social_auth[0].extra_data:
-                id_token = self.social_auth[0].extra_data['id_token']
+            if "access_token" in self.social_auth[0].extra_data:
+                access_token = self.social_auth[0].extra_data["access_token"]
+            if "refresh_token" in self.social_auth[0].extra_data:
+                refresh_token = self.social_auth[0].extra_data["refresh_token"]
+            if "id_token" in self.social_auth[0].extra_data:
+                id_token = self.social_auth[0].extra_data["id_token"]
         if self.custos_auth:
             access_token = self.custos_auth[0].access_token
             refresh_token = self.custos_auth[0].refresh_token
             id_token = self.custos_auth[0].id_token
-        return (id_token,access_token,refresh_token)
+        return (id_token, access_token, refresh_token)
 
     @property
     def oidc_id_token(self):

@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import (
     datetime,
-    timedelta, time,
+    timedelta,
 )
 from urllib.parse import quote
 
@@ -68,7 +68,9 @@ class CustosAuthnz(IdentityProvider):
         return jwt.decode(token, audience=self.config["client_id"], options={"verify_signature": False})
 
     def refresh(self, trans):
-        custos_authnz_token = self._get_custos_authnz_token(trans.sa_session, trans.user.custos_auth[0].external_user_id, self.config["provider"])
+        custos_authnz_token = self._get_custos_authnz_token(
+            trans.sa_session, trans.user.custos_auth[0].external_user_id, self.config["provider"]
+        )
         if custos_authnz_token is None:
             raise exceptions.AuthenticationFailed("cannot find authorized user while refreshing token")
         if (custos_authnz_token.expiration_time - datetime.now()).total_seconds() > 60:
@@ -191,9 +193,9 @@ class CustosAuthnz(IdentityProvider):
                     # interface for when there are multiple auth providers
                     # allowing explicit authenticated association.
                     if (
-                            trans.app.config.enable_oidc
-                            and len(trans.app.config.oidc) == 1
-                            and len(trans.app.auth_manager.authenticators) == 0
+                        trans.app.config.enable_oidc
+                        and len(trans.app.config.oidc) == 1
+                        and len(trans.app.auth_manager.authenticators) == 0
                     ):
                         user = existing_user
                     else:
