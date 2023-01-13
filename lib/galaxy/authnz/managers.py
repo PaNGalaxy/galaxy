@@ -271,7 +271,7 @@ class AuthnzManager:
                 )
                 raise exceptions.AuthenticationFailed(
                     err_msg="An error occurred getting your ID token. {}. If the problem persists, please "
-                            "contact Galaxy admin.".format(msg)
+                    "contact Galaxy admin.".format(msg)
                 )
         return config
 
