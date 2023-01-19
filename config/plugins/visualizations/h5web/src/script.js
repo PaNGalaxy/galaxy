@@ -32,14 +32,12 @@ window.bundleEntries.load = function (options) {
     var explorer = settings.get('explorer');
     var url = window.location.origin + "/api/datasets/" + options.dataset.dataset_id + "/content";
     reactRender(
-      <StrictMode>
-        <MyApp 
-          url={url} 
-          name={dataset.name} 
-          filepath={dataset.file_name} 
-          explorer={explorer}
-        />
-      </StrictMode>,
+      <MyApp 
+        url={url} 
+        name={dataset.name} 
+        filepath={dataset.file_name} 
+        explorer={explorer}
+      />,
       document.getElementById(options.target)
     )
     options.chart.state('ok', 'Chart drawn.');
