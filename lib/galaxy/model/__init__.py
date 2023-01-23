@@ -767,7 +767,7 @@ class User(Base, Dictifiable, RepresentById):
             return id_token, access_token, refresh_token
 
         # no active social auth found, check custos auth
-        auth = self.custos_auth
+        auth = self.get_active_custos_auth()
         if auth:
             access_token = auth.access_token
             refresh_token = auth.refresh_token

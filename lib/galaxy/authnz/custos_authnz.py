@@ -67,8 +67,7 @@ class CustosAuthnz(IdentityProvider):
     def _decode_token_no_signature(self, token):
         return jwt.decode(token, audience=self.config["client_id"], options={"verify_signature": False})
 
-    def refresh(self, trans):
-        custos_authnz_token = trans.user.get_active_custos_auth()
+    def refresh(self, trans, custos_authnz_token):
         if custos_authnz_token is None:
             raise exceptions.AuthenticationFailed("cannot find authorized user while refreshing token")
         if (custos_authnz_token.expiration_time - datetime.now()).total_seconds() > 60:
