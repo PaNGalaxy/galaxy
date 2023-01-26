@@ -171,6 +171,7 @@ class PSAAuthnz(IdentityProvider):
     def refresh(self, trans, user_authnz_token):
         if not user_authnz_token or not user_authnz_token.extra_data:
             return False
+        # refresh tokens if they reached their half lifetime
         if int(user_authnz_token.extra_data["auth_time"]) + int(user_authnz_token.extra_data["expires"]) / 2 <= int(time.time()):
             on_the_fly_config(trans.sa_session)
             if self.config["provider"] == "azure":
