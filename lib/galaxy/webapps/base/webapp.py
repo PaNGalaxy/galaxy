@@ -35,7 +35,6 @@ from galaxy.exceptions import (
 from galaxy.managers import context
 from galaxy.managers.session import GalaxySessionManager
 from galaxy.managers.users import UserManager
-from galaxy.model import User
 
 from galaxy.util import (
     asbool,
@@ -312,7 +311,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             # This is a web request, get or create session.
             self._ensure_valid_session(session_cookie)
 
-        if isinstance(self.user, User):
+        if app.authnz_manager:
             self.app.authnz_manager.refresh_expiring_oidc_tokens(self)
 
         if self.galaxy_session:
