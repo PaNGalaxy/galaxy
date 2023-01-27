@@ -328,9 +328,9 @@ class AuthnzManager:
             return False
 
     def refresh_expiring_oidc_tokens(self, trans):
-        for auth in (trans.user.custos_auth or []):
+        for auth in trans.user.custos_auth or []:
             self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
-        for auth in (trans.user.social_auth or []):
+        for auth in trans.user.social_auth or []:
             self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
 
     def authenticate(self, provider, trans, idphint=None):
