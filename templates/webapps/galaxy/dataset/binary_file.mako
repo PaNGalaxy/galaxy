@@ -4,7 +4,7 @@
 ${ render_deleted_data_message( data ) }
 
 <div class="warningmessagelarge">
-    This is a binary dataset of size ${ file_size }. Preview is not implemented for this filetype. Displaying
+    This is a binary (or unknown to Galaxy) dataset of size ${ file_size }. Preview is not implemented for this filetype. Displaying
     %if truncated:
 first 100KB
     %endif
