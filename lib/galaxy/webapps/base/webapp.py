@@ -311,8 +311,10 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             # This is a web request, get or create session.
             self._ensure_valid_session(session_cookie)
 
-        if app.authnz_manager:
-            self.app.authnz_manager.refresh_expiring_oidc_tokens(self)
+        try:
+            self.app.authnz_manager.refresh_expiring_oidc_tokens(self)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         if self.galaxy_session:
             # When we've authenticated by session, we have to check the
