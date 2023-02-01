@@ -7,7 +7,6 @@ from typing import Optional
 
 import packaging.version
 
-from galaxy.authnz.util import provider_name_to_backend
 from galaxy.tool_util.deps import requirements
 from galaxy.tool_util.parser.util import (
     DEFAULT_DELTA,
@@ -51,10 +50,7 @@ def inject_validates(inject):
         return True
     p = re.compile("^oidc_(id|access|refresh)_token_(.*)$")
     match = p.match(inject)
-    if match and provider_name_to_backend(match.group(2)):
-        return True
-
-    return False
+    return match is not None
 
 
 class XmlToolSource(ToolSource):
