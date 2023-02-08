@@ -2,7 +2,7 @@ import axios from "axios";
 import { getGalaxyInstance } from "app";
 import _l from "utils/localization";
 
-const POST_LOGOUT_URL = "root/login?is_logout_redirect=true";
+const POST_LOGOUT_URL = "root/login";
 
 /**
  * Handles user logout.  Invalidates the current session, checks to see if we
