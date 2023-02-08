@@ -211,7 +211,7 @@ def parse_port_text(port_text):
                 raise Exception(f"Cannot parse host and port from line [{line}]")
             tool, host = line.split(" -> ", 1)
             hostname, port = host.rsplit(":", 1)
-            if hostname == "::":
+            if hostname in ["::", "[::]"]:
                 # Skip unspecified IPv6 address, which is also specified as 0:0:0:0 in another line.
                 # This is brittle of course, but so is parsing the container ports like this.
                 continue
