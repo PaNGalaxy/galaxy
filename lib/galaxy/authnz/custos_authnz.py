@@ -3,9 +3,10 @@ import hashlib
 import json
 import logging
 import os
+import time
 from datetime import (
     datetime,
-    timedelta, time,
+    timedelta,
 )
 from urllib.parse import quote
 
@@ -67,11 +68,12 @@ class CustosAuthnz(IdentityProvider):
     def _decode_token_no_signature(self, token):
         return jwt.decode(token, audience=self.config["client_id"], options={"verify_signature": False})
 
-    def refresh(self, trans):
-        custos_authnz_token = self._get_custos_authnz_token(trans.sa_session, trans.user.custos_auth[0].external_user_id, self.config["provider"])
+    def refresh(self, trans, custos_authnz_token):
         if custos_authnz_token is None:
             raise exceptions.AuthenticationFailed("cannot find authorized user while refreshing token")
-        if (custos_authnz_token.expiration_time - datetime.now()).total_seconds() > 60:
+        id_token_decoded = self._decode_token_no_signature(custos_authnz_token.id_token)
+        # do not refresh tokens if they didn't reach their half lifetime
+        if int(id_token_decoded["iat"]) + int(id_token_decoded["exp"]) > 2 * int(time.time()):
             return False
         log.info(custos_authnz_token.access_token)
         oauth2_session = self._create_oauth2_session()
@@ -191,9 +193,9 @@ class CustosAuthnz(IdentityProvider):
                     # interface for when there are multiple auth providers
                     # allowing explicit authenticated association.
                     if (
-                            trans.app.config.enable_oidc
-                            and len(trans.app.config.oidc) == 1
-                            and len(trans.app.auth_manager.authenticators) == 0
+                        trans.app.config.enable_oidc
+                        and len(trans.app.config.oidc) == 1
+                        and len(trans.app.auth_manager.authenticators) == 0
                     ):
                         user = existing_user
                     else:

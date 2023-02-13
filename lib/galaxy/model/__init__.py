@@ -739,37 +739,39 @@ class User(Base, Dictifiable, RepresentById):
         if amount != 0:
             self.disk_usage = func.coalesce(self.table.c.disk_usage, 0) + amount
 
-    def _oidc_tokens(self):
-        id_token=None
-        refresh_token=None
-        access_token=None
-        if self.social_auth:
-            if 'access_token' in self.social_auth[0].extra_data:
-                access_token = self.social_auth[0].extra_data['access_token']
-            if 'refresh_token' in self.social_auth[0].extra_data :
-                refresh_token = self.social_auth[0].extra_data['refresh_token']
-            if 'id_token' in self.social_auth[0].extra_data:
-                id_token = self.social_auth[0].extra_data['id_token']
-        if self.custos_auth:
-            access_token = self.custos_auth[0].access_token
-            refresh_token = self.custos_auth[0].refresh_token
-            id_token = self.custos_auth[0].id_token
-        return (id_token,access_token,refresh_token)
+    def _get_social_auth(self, provider_backend):
+        if not self.social_auth:
+            return None
+        for auth in self.social_auth:
+            if auth.provider == provider_backend and auth.extra_data:
+                return auth
+        return None
 
-    @property
-    def oidc_id_token(self):
-        id, _, _ = self._oidc_tokens()
-        return id
+    def _get_custos_auth(self, provider_backend):
+        if not self.custos_auth:
+            return None
+        for auth in self.custos_auth:
+            if auth.provider == provider_backend and auth.refresh_token:
+                return auth
+        return None
 
-    @property
-    def oidc_access_token(self):
-        _, access, _ = self._oidc_tokens()
-        return access
+    def get_oidc_tokens(self, provider_backend):
+        tokens = {"id": None, "access": None, "refresh": None}
+        auth = self._get_social_auth(provider_backend)
+        if auth:
+            tokens["access"] = auth.extra_data.get("access_token", None)
+            tokens["refresh"] = auth.extra_data.get("refresh_token", None)
+            tokens["id"] = auth.extra_data.get("id_token", None)
+            return tokens
 
-    @property
-    def oidc_refresh_token(self):
-        _, _, refresh = self._oidc_tokens()
-        return refresh
+        # no social auth found, check custos auth
+        auth = self._get_custos_auth(provider_backend)
+        if auth:
+            tokens["access"] = auth.access_token
+            tokens["refresh"] = auth.refresh_token
+            tokens["id"] = auth.id_token
+
+        return tokens
 
     @property
     def nice_total_disk_usage(self):

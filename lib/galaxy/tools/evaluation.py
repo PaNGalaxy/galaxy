@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import shlex
 import string
 import tempfile
@@ -15,6 +16,7 @@ from typing import (
 )
 
 from galaxy import model
+from galaxy.authnz.util import provider_name_to_backend
 from galaxy.job_execution.compute_environment import ComputeEnvironment
 from galaxy.job_execution.setup import ensure_configs_directory
 from galaxy.model.deferred import (
@@ -96,6 +98,7 @@ DeferrableObjectsT = Union[
 
 class ToolEvaluator:
     """An abstraction linking together a tool and a job runtime to evaluate
+    tool inputs in an isolated, testable manner.
     tool inputs in an isolated, testable manner.
     """
 
@@ -630,27 +633,13 @@ class ToolEvaluator:
             if inject == "api_key":
                 if self._user and isinstance(self.app, BasicSharedApp):
                     from galaxy.managers import api_keys
+
                     environment_variable_template = api_keys.ApiKeyManager(self.app).get_or_create_api_key(self._user)
                 else:
                     environment_variable_template = ""
                 is_template = False
-            elif inject == "oidc_refresh_token":
-                if self._user:
-                    environment_variable_template = self._user.oidc_refresh_token
-                else:
-                    environment_variable_template = "token-unavailable"
-                is_template = False
-            elif inject == "oidc_access_token":
-                if self._user:
-                    environment_variable_template = self._user.oidc_access_token
-                else:
-                    environment_variable_template = "token-unavailable"
-                is_template = False
-            elif inject == "oidc_id_token":
-                if self._user:
-                    environment_variable_template = self._user.oidc_id_token
-                else:
-                    environment_variable_template = "token-unavailable"
+            elif inject and inject.startswith("oidc_"):
+                environment_variable_template = self.get_oidc_token(inject)
                 is_template = False
             else:
                 is_template = True
@@ -681,6 +670,24 @@ class ToolEvaluator:
             for tmp_directory_var in self.tool.tmp_directory_vars:
                 environment_variable = dict(name=tmp_directory_var, value=f'"{tmp_dir}"', raw=True)
                 environment_variables.append(environment_variable)
+
+    def get_oidc_token(self, inject):
+        if not self._user:
+            return "token-unavailable"
+
+        p = re.compile("^oidc_(id|access|refresh)_token_(.*)$")
+        match = p.match(inject)
+        provider_backend = None
+        if match:
+            token_type = match.group(1)
+            provider_backend = provider_name_to_backend(match.group(2))
+        if not match or not provider_backend:
+            return "token-unavailable"
+
+        tokens = self._user.get_oidc_tokens(provider_backend)
+        environment_variable_template = tokens[token_type] or "token-unavailable"
+
+        return environment_variable_template
 
     def _build_param_file(self):
         """

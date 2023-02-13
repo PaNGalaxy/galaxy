@@ -45,6 +45,14 @@ from .stdio import (
 log = logging.getLogger(__name__)
 
 
+def inject_validates(inject):
+    if inject == "api_key":
+        return True
+    p = re.compile("^oidc_(id|access|refresh)_token_(.*)$")
+    match = p.match(inject)
+    return match is not None
+
+
 class XmlToolSource(ToolSource):
     """Responsible for parsing a tool from classic Galaxy representation."""
 
@@ -153,7 +161,7 @@ class XmlToolSource(ToolSource):
             inject = environment_variable_el.get("inject")
             if inject:
                 assert not template, "Cannot specify inject and environment variable template."
-                assert inject in ["api_key","oidc_id_token","oidc_access_token","oidc_refresh_token"]
+                assert inject_validates(inject)
             if template:
                 assert not inject, "Cannot specify inject and environment variable template."
             definition = {

@@ -198,16 +198,6 @@ class AuthnzManager:
                 return k.lower()
         return None
 
-    def _get_provider_name(self, user):
-        if len(user.social_auth) == 1:
-            for k, v in BACKENDS_NAME.items():
-                if v == user.social_auth[0].provider:
-                    return k.lower()
-        if len(user.custos_auth) == 1:
-            if user.custos_auth[0].provider in KEYCLOAK_BACKENDS:
-                return user.custos_auth[0].provider
-        return None
-
     def _get_authnz_backend(self, provider, idphint=None):
         unified_provider_name = self._unify_provider_name(provider)
         if unified_provider_name in self.oidc_backends_config:
@@ -271,7 +261,7 @@ class AuthnzManager:
                 )
                 raise exceptions.AuthenticationFailed(
                     err_msg="An error occurred getting your ID token. {}. If the problem persists, please "
-                            "contact Galaxy admin.".format(msg)
+                    "contact Galaxy admin.".format(msg)
                 )
         return config
 
@@ -321,22 +311,29 @@ class AuthnzManager:
             raise exceptions.ItemAccessibilityException(msg)
         return qres
 
-    def refresh(self, trans, idphint=None):
+    def refresh_expiring_oidc_tokens_for_provider(self, trans, auth):
         try:
-            provider = self._get_provider_name(trans.user)
-            success, message, backend = self._get_authnz_backend(provider, idphint=idphint)
+            success, message, backend = self._get_authnz_backend(auth.provider)
             if success is False:
-                msg = f"An error occurred when refreshing user token on `{provider}` identity provider: {message}"
+                msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
                 log.error(msg)
                 return False
-            refreshed = backend.refresh(trans)
+            refreshed = backend.refresh(trans, auth)
             if refreshed:
-                log.debug(f"Refreshed user token via `{provider}` identity provider")
+                log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
             return True
         except Exception as e:
             msg = f"An error occurred when refreshing user token: {e}"
-            log.exception(msg)
+            log.error(msg)
             return False
+
+    def refresh_expiring_oidc_tokens(self, trans):
+        if not isinstance(trans.user, model.User):
+            return
+        for auth in trans.user.custos_auth or []:
+            self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
+        for auth in trans.user.social_auth or []:
+            self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
 
     def authenticate(self, provider, trans, idphint=None):
         """
