@@ -47,6 +47,7 @@ from galaxy.util import (
 from galaxy.util.custom_logging import get_logger
 from galaxy.util.monitors import Monitors
 from .state_handler_factory import build_state_handlers
+from galaxy.authnz.util import provider_name_to_backend
 
 if typing.TYPE_CHECKING:
     from galaxy.jobs import (
@@ -479,16 +480,22 @@ class BaseJobRunner:
         write_script(path, contents, job_io)
 
     def _get_username_from_token(self,job_wrapper):
-        username_in_token = job_wrapper.job_destination.params.get("set_user_from_token_claim", None)
+        username_in_token = job_wrapper.job_destination.params.get("oidc_user_from_token_claim", None)
         if not username_in_token:
             return None
-
-        username_template = job_wrapper.job_destination.params.get("user_in_claim_template", ".*")
-        oidc_token, access_token, _ = job_wrapper.get_job().user._oidc_tokens()
-        if not oidc_token:
-            oidc_token = access_token
-        user = jwt.decode(oidc_token, options={"verify_signature": False})[username_in_token]
-        return re.match(username_template, user).group(0)
+        try:
+            token_provider = job_wrapper.job_destination.params.get("oidc_token_provider", None)
+            provider_backend = provider_name_to_backend(token_provider)
+            tokens = job_wrapper.get_job().user.get_oidc_tokens(provider_backend)
+            if tokens["id"]:
+                oidc_token = tokens["id"]
+            else:
+                oidc_token = tokens["access"]
+            user = jwt.decode(oidc_token, options={"verify_signature": False})[username_in_token]
+            username_template = job_wrapper.job_destination.params.get("oidc_user_in_claim_template", ".*")
+            return re.match(username_template, user).group(0)
+        except Exception:
+            raise Exception("Failed to get a username for container from OIDC token, contact Galaxy admin.")
 
     def _find_container(
         self,
