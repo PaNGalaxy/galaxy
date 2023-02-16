@@ -514,7 +514,7 @@ class Data(metaclass=DataMeta):
         TOOD: Document alternatives to overridding this method (data
         providers?).
         """
-        headers = kwd.get("headers", {})
+        headers = kwd.pop("headers", {})
         # Prevent IE8 from sniffing content type since we're explicit about it.  This prevents intentionally text/plain
         # content from being rendered in the browser
         headers["X-Content-Type-Options"] = "nosniff"
