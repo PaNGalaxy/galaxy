@@ -164,7 +164,7 @@ def _get_peak_size(data):
 
 
 def _get_file_size(data):
-    file_size = int(data.dataset.file_size)
+    file_size = int(data.dataset.file_size or 0)
     if file_size == 0:
         if data.dataset.object_store:
             file_size = data.dataset.object_store.size(data.dataset)
