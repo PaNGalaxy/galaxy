@@ -60,8 +60,14 @@ class JobTokensAPIController(BaseGalaxyAPIController):
 
         job_id = trans.security.decode_id(encoded_job_id)
         job = trans.sa_session.query(model.Job).get(job_id)
+        secret = "jobs_token"
+        try:
+            for plugin in self.app.job_config.runner_plugins:
+                if plugin["id"] == job.job_runner_name:
+                    secret = plugin["kwds"]["secret"]
+        except:
+            raise exceptions.InternalServerError("Cannot get runner secret")
 
-        secret = job.destination_params.get("destination_secret", "jobs_token")
         job_key = trans.security.encode_id(job_id, kind=secret)
         if not util.safe_str_cmp(kwargs["job_key"], job_key):
             raise exceptions.ItemAccessibilityException("Invalid job_key supplied.")
