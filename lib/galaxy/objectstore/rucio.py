@@ -45,11 +45,6 @@ def parse_config_xml(config_xml):
         cache_size = float(c_xml[0].get("size", -1))
         staging_path = c_xml[0].get("path", None)
 
-        rucio_url = config_xml.findall("rucio")
-        if not rucio_url:
-            _config_xml_error("rucio")
-        rucio_url = rucio_url[0].get("url", None)
-
         attrs = ("type", "path")
         e_xml = config_xml.findall("extra_dir")
         if not e_xml:
@@ -70,7 +65,6 @@ def parse_config_xml(config_xml):
                 "path": staging_path,
             },
             "extra_dirs": extra_dirs,
-            "rucio_url": rucio_url,
             "rucio_preferred_rse_name": rucio_preferred_rse_name,
             "rucio_preferred_rse_protocol": rucio_preferred_rse_protocol,
         }
@@ -81,21 +75,13 @@ def parse_config_xml(config_xml):
 
 
 class RucioBroker():
-    def __init__(self, rucio_url, rse_name, rse_protocol):
+    def __init__(self, rse_name, rse_protocol):
         self.rse_name = rse_name
         self.rse_protocol = rse_protocol
         self.scope = "galaxy"
-        self.creds: dict = {"username": "user", "password": "changeme"}
         rucio.common.utils.PREFERRED_CHECKSUM = "md5"
-        self.rucio_client = Client(
-            rucio_host=rucio_url,
-            auth_host=rucio_url,
-            account="root",
-            auth_type="userpass",
-            creds=self.creds,
-            timeout=None,
-            vo=None,
-        )
+        # rucio config is in a system rucio.cfg file
+        self.rucio_client = Client()
         self.upload_client = UploadClient(_client=self.rucio_client)
         self.download_client = DownloadClient(client=self.rucio_client)
 
@@ -106,8 +92,6 @@ class RucioBroker():
         item = {
             "path": source_path,
             "rse": self.rse_name,
-#            "dataset_scope": self.scope,
-#            "dataset_name": f"{input_path}".replace("/", "AA"),
             "did_scope": self.scope,
             "did_name": key,
             "impl": self.rse_protocol,
@@ -124,7 +108,7 @@ class RucioBroker():
             if self.rse_name in repl:
                 item = {
                     "did": f"{self.scope}:{key}",
-                    "force_scheme": self.rse_protocol,
+                    "impl": self.rse_protocol,
                     "rse": self.rse_name,
                     "base_dir": base_dir,
                     "no_subdir": True,
@@ -138,7 +122,7 @@ class RucioBroker():
 
             items = [item]
             download_client = DownloadClient(client=self.rucio_client)
-            res = download_client.download_dids(items)
+            download_client.download_dids(items)
         except Exception as e:
             log.exception("Cannot download file:" + str(e))
             return False
@@ -181,7 +165,6 @@ class RucioObjectStore(ConcreteObjectStore):
 
     def to_dict(self):
         rval = super().to_dict()
-        rval["rucio_url"] = self.rucio_url
         rval["rucio_preferred_rse_name"] = self.rucio_preferred_rse_name
         rval["rucio_preferred_rse_protocol"] = self.rucio_preferred_rse_protocol
         rval["cache"] = dict()
@@ -191,9 +174,6 @@ class RucioObjectStore(ConcreteObjectStore):
 
     def __init__(self, config, config_dict):
         super().__init__(config, config_dict)
-        self.rucio_url = config_dict.get("rucio_url", None)
-        if self.rucio_url is None:
-            _config_dict_error("rucio_url")
 
         self.rucio_preferred_rse_name = config_dict.get("rucio_preferred_rse_name", None)
         self.rucio_preferred_rse_protocol = config_dict.get("rucio_preferred_rse_protocol", None)
@@ -203,7 +183,7 @@ class RucioObjectStore(ConcreteObjectStore):
         if 'RUCIO_PREFERRED_RSE_PROTOCOL' in os.environ:
             self.rucio_preferred_rse_protocol = os.environ['RUCIO_PREFERRED_RSE_PROTOCOL']
 
-        self.rucio_broker = RucioBroker(self.rucio_url,self.rucio_preferred_rse_name,self.rucio_preferred_rse_protocol)
+        self.rucio_broker = RucioBroker(self.rucio_preferred_rse_name,self.rucio_preferred_rse_protocol)
         cache_dict = config_dict["cache"]
         if cache_dict is None:
             _config_dict_error("cache")
