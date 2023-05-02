@@ -105,7 +105,7 @@ package:
     - >
       docker run
       $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
-      bash -c ". .venv/bin/activate . && pip install build && cd packages/objectstore && make dist && 
+      bash -c ". .venv/bin/activate . && pip install build twine && cd packages/objectstore && make dist && 
       TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python3 -m twine upload --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
       "
   when: manual
