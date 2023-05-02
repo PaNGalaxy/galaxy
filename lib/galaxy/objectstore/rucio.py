@@ -1,7 +1,6 @@
 from ..objectstore import ConcreteObjectStore
 
 import os
-import requests
 
 import logging
 
@@ -51,13 +50,15 @@ def parse_config_xml(config_xml):
             _config_xml_error("extra_dir")
         extra_dirs = [{k: e.get(k) for k in attrs} for e in e_xml]
 
-        e_xml = config_xml.findall("rucio_preferred_rse")
+        e_xml = config_xml.findall("rucio")
         if e_xml:
-            rucio_preferred_rse_name = e_xml[0].get("name", None)
-            rucio_preferred_rse_protocol = e_xml[0].get("protocol", None)
+            rucio_preferred_rse_name = e_xml[0].get("preferred_rse_name", None)
+            rucio_preferred_rse_protocol = e_xml[0].get("preferred_rse_protocol", None)
+            rucio_scope = e_xml[0].get("scope", None)
         else:
             rucio_preferred_rse_name = None
             rucio_preferred_rse_protocol = None
+            rucio_scope = None
 
         return {
             "cache": {
@@ -67,6 +68,7 @@ def parse_config_xml(config_xml):
             "extra_dirs": extra_dirs,
             "rucio_preferred_rse_name": rucio_preferred_rse_name,
             "rucio_preferred_rse_protocol": rucio_preferred_rse_protocol,
+            "rucio_scope": rucio_scope,
         }
     except Exception:
         # Toss it back up after logging, we can't continue loading at this point.
@@ -75,10 +77,10 @@ def parse_config_xml(config_xml):
 
 
 class RucioBroker():
-    def __init__(self, rse_name, rse_protocol):
+    def __init__(self, rse_name, rse_protocol, scope):
         self.rse_name = rse_name
         self.rse_protocol = rse_protocol
-        self.scope = "galaxy"
+        self.scope = scope
         rucio.common.utils.PREFERRED_CHECKSUM = "md5"
         # rucio config is in a system rucio.cfg file
         self.rucio_client = Client()
@@ -167,6 +169,7 @@ class RucioObjectStore(ConcreteObjectStore):
         rval = super().to_dict()
         rval["rucio_preferred_rse_name"] = self.rucio_preferred_rse_name
         rval["rucio_preferred_rse_protocol"] = self.rucio_preferred_rse_protocol
+        rval["rucio_scope"] = self.rucio_scope
         rval["cache"] = dict()
         rval["cache"]["size"] = self.cache_size
         rval["cache"]["path"] = self.staging_path
@@ -177,13 +180,9 @@ class RucioObjectStore(ConcreteObjectStore):
 
         self.rucio_preferred_rse_name = config_dict.get("rucio_preferred_rse_name", None)
         self.rucio_preferred_rse_protocol = config_dict.get("rucio_preferred_rse_protocol", None)
+        self.rucio_scope = config_dict.get("rucio_scope", None)
 
-        if 'RUCIO_PREFERRED_RSE_NAME' in os.environ:
-            self.rucio_preferred_rse_name = os.environ['RUCIO_PREFERRED_RSE_NAME']
-        if 'RUCIO_PREFERRED_RSE_PROTOCOL' in os.environ:
-            self.rucio_preferred_rse_protocol = os.environ['RUCIO_PREFERRED_RSE_PROTOCOL']
-
-        self.rucio_broker = RucioBroker(self.rucio_preferred_rse_name,self.rucio_preferred_rse_protocol)
+        self.rucio_broker = RucioBroker(self.rucio_preferred_rse_name,self.rucio_preferred_rse_protocol,self.rucio_scope)
         cache_dict = config_dict["cache"]
         if cache_dict is None:
             _config_dict_error("cache")
