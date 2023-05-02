@@ -2,6 +2,7 @@ stages:
   - build
   - build-base
   - test
+  - deploy
 
 variables:
   GIT_STRATEGY: clone
@@ -92,5 +93,19 @@ build-base-docker:
     - docker tag galaxy-base $CONTAINER_GALAXY_URL_BASE:latest
     - docker push $CONTAINER_GALAXY_URL_BASE:latest
     - docker push $CONTAINER_GALAXY_URL_BASE:$CI_COMMIT_SHORT_SHA
+  tags:
+    - rse-multi-builder
+
+
+package:
+  stage: deploy
+  script:
+    - >
+      docker run
+      $CONTAINER_GALAXY_URL/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+      bash -c ". .venv/bin/activate . && cd packages/objectstore && make dist && 
+      TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python3 -m twine upload --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
+      "
+  when: manual
   tags:
     - rse-multi-builder
