@@ -261,6 +261,9 @@ class RucioObjectStore(ConcreteObjectStore):
         self._fix_permissions(self._get_cache_path(rel_path_dir))
         return file_ok
 
+    def _fix_file_permissions(self, path):
+        umask_fix_perms(path, self.config.umask, 0o666)
+
     def _fix_permissions(self, rel_path):
         """Set permissions on rel_path"""
         for basedir, _, files in os.walk(rel_path):
@@ -473,7 +476,8 @@ class RucioObjectStore(ConcreteObjectStore):
                     except OSError:
                         os.makedirs(os.path.dirname(cache_file))
                         shutil.copy2(source_file, cache_file)
-                self._fix_permissions(cache_file)
+                self._fix_file_permissions(cache_file)
+                source_file = cache_file
             except OSError:
                 log.exception("Trouble copying source file '%s' to cache '%s'", source_file, cache_file)
         else:
