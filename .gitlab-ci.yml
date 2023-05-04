@@ -55,7 +55,6 @@ client-tests:
 
 api-tests:
   stage: test
-  when: manual
   script:
     - >    
       docker run
@@ -69,7 +68,6 @@ api-tests:
 
 unit-tests:
   stage: test
-  when: manual
   script:
     - >    
       docker run
