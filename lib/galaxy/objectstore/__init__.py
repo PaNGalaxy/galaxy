@@ -1083,6 +1083,11 @@ class HierarchicalObjectStore(NestedObjectStore):
         """Call the primary object store."""
         self.backends[0].create(obj, **kwargs)
 
+    def _update_from_file(self, obj, **kwargs):
+        """Call the primary object store."""
+        self.backends[0].update_from_file(obj, **kwargs)
+
+
 
 def type_to_object_store_class(store, fsmon=False):
     objectstore_class: Type[ObjectStore]
