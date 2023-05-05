@@ -361,10 +361,12 @@ class RucioObjectStore(ConcreteObjectStore):
 
         if self._in_cache(rel_path):
             try:
-                return os.path.getsize(self._get_cache_path(rel_path))
+                size = os.path.getsize(self._get_cache_path(rel_path))
             except OSError as ex:
                 log.info("Could not get size of file '%s' in local cache, will try iRODS. Error: %s", rel_path, ex)
-        elif self._exists(obj, **kwargs):
+            if size != 0:
+                return size
+        if self._exists(obj, **kwargs):
             return self.rucio_broker.get_size(rel_path)
         log.warning("Did not find dataset '%s', returning 0 for size", rel_path)
         return 0
@@ -401,7 +403,7 @@ class RucioObjectStore(ConcreteObjectStore):
         rel_path = self._construct_path(obj, **kwargs)
         log.debug("rucio _get_data: " + rel_path)
         # Check cache first and get file if not there
-        if not self._in_cache(rel_path):
+        if not self._in_cache(rel_path) or os.path.getsize(self._get_cache_path(rel_path)) == 0:
             self._pull_into_cache(rel_path)
         # Read the file content from cache
         data_file = open(self._get_cache_path(rel_path))
