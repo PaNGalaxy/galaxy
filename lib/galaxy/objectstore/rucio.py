@@ -89,8 +89,6 @@ class RucioBroker():
 
     def upload(self, key, source_path):
         key = os.path.basename(key)
-        if os.path.getsize(source_path) == 0:
-            return
         item = {
             "path": source_path,
             "rse": self.rse_name,
@@ -344,8 +342,8 @@ class RucioObjectStore(ConcreteObjectStore):
 
             if not dir_only:
                 rel_path = os.path.join(rel_path, alt_name if alt_name else f"dataset_{self._get_object_id(obj)}.dat")
+                # need this line to set the dataset filename, not sure how this is done - filesystem is monitored?
                 open(os.path.join(self.staging_path, rel_path), "w").close()
-                self.rucio_broker.upload(rel_path, self._get_cache_path(rel_path))
             log.debug("rucio _create: " + rel_path)
 
     def _empty(self, obj, **kwargs):
