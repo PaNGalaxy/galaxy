@@ -1,6 +1,7 @@
 import json
 import logging
 import typing
+from pathlib import Path
 from datetime import (
     date,
     datetime,
@@ -236,6 +237,17 @@ class JobManager:
                 if not self.dataset_manager.is_accessible(data_assoc.dataset.dataset, trans.user):
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
+        if job.state == job.states.RUNNING:
+            try:
+                stdout_path = Path(".").parent.parent.parent.parent.parent / "database/jobs_directory/000" / str(
+                    job.id) / "outputs/tool_stdout"
+                stdout_file = open(stdout_path, "r")
+                # stderr_file = open("../../../../../database/jobs_directory/000/" + str(job.id) + "/outputs/tool_stderr")
+                job.job_stdout = stdout_file.read()
+                job.tool_stdout = job.job_stdout
+                # job.stderr = stderr_file.read()
+            except:
+                log.error("Could not load std out")
         return job
 
     def stop(self, job, message=None):
