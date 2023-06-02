@@ -55,7 +55,7 @@ def write_dataset_collection(dataset_collection_instance, archive, trans):
         except:
             pass
         for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name, trans=trans):
-            archive.write(file_path, relpath, trans)
+            archive.write(file_path, relpath)
     return archive
 
 
