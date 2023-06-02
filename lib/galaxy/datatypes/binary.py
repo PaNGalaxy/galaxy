@@ -543,9 +543,9 @@ class BamNative(CompressedArchive, _BamOrSam):
         except Exception:
             return f"Binary bam alignments file ({nice_size(dataset.get_size())})"
 
-    def to_archive(self, dataset, name=""):
+    def to_archive(self, dataset, name="", trans=None):
         if dataset.dataset.object_store:
-            dataset.dataset.object_store.update_cache(dataset.dataset)
+            dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
 
         rel_paths = []
         file_paths = []
@@ -631,13 +631,13 @@ class BamNative(CompressedArchive, _BamOrSam):
         preview = util.string_as_bool(preview)
         if offset is not None:
             if dataset.dataset.object_store:
-                dataset.dataset.object_store.update_cache(dataset.dataset)
+                dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
             return self.get_chunk(trans, dataset, offset, ck_size), headers
         elif to_ext or not preview:
             return super().display_data(trans, dataset, preview, filename, to_ext, **kwd)
         else:
             if dataset.dataset.object_store:
-                dataset.dataset.object_store.update_cache(dataset.dataset)
+                dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
 
             column_names = dataset.metadata.column_names
             if not column_names:
@@ -2007,7 +2007,7 @@ class H5MLM(H5):
             return self._serve_raw(dataset, to_ext, headers, **kwd)
 
         if dataset.dataset.object_store:
-            dataset.dataset.object_store.update_cache(dataset.dataset)
+            dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
 
         rval = {}
         try:

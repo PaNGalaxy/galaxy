@@ -211,7 +211,7 @@ class _BlastDb(Data):
             )
 
         if data.dataset.object_store:
-            data.dataset.object_store.update_cache(data.dataset)
+            data.dataset.object_store.update_cache(data.dataset, trans=trans)
 
         if self.file_ext == "blastdbn":
             title = "This is a nucleotide BLAST database"

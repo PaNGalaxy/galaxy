@@ -199,7 +199,7 @@ class Ipynb(Json):
         headers = kwd.get("headers", {})
         preview = string_as_bool(preview)
         if dataset.dataset.object_store:
-            dataset.dataset.object_store.update_cache(dataset.dataset)
+            dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
 
         if to_ext or not preview:
             return self._serve_raw(dataset, to_ext, headers, **kwd)

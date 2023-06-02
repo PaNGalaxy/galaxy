@@ -28,18 +28,19 @@ from galaxy.util.zipstream import ZipstreamWrapper
 log = logging.getLogger(__name__)
 
 
-def stream_dataset_collection(dataset_collection_instance, upstream_mod_zip=False, upstream_gzip=False):
+def stream_dataset_collection(dataset_collection_instance, upstream_mod_zip=False,
+                              upstream_gzip=False, trans=None):
     archive_name = f"{dataset_collection_instance.hid}: {dataset_collection_instance.name}"
     archive = ZipstreamWrapper(
         archive_name=archive_name,
         upstream_mod_zip=upstream_mod_zip,
         upstream_gzip=upstream_gzip,
     )
-    write_dataset_collection(dataset_collection_instance, archive)
+    write_dataset_collection(dataset_collection_instance, archive, trans)
     return archive
 
 
-def write_dataset_collection(dataset_collection_instance, archive):
+def write_dataset_collection(dataset_collection_instance, archive, trans):
     names, hdas = get_hda_and_element_identifiers(dataset_collection_instance)
     for name, hda in zip(names, hdas):
         if hda.state != hda.states.OK:
@@ -53,8 +54,8 @@ def write_dataset_collection(dataset_collection_instance, archive):
                 hda.extension = file_extension
         except:
             pass
-        for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name):
-            archive.write(file_path, relpath)
+        for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name, trans=trans):
+            archive.write(file_path, relpath, trans)
     return archive
 
 

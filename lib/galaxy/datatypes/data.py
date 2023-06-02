@@ -429,7 +429,7 @@ class Data(metaclass=DataMeta):
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
         return open(dataset.file_name, mode="rb"), headers
 
-    def to_archive(self, dataset, name=""):
+    def to_archive(self, dataset, name="", trans=None):
         """
         Collect archive paths and file handles that need to be exported when archiving `dataset`.
 
@@ -443,7 +443,7 @@ class Data(metaclass=DataMeta):
             main_file = f"{name}.html"
             rel_paths.append(main_file)
             if dataset.dataset.object_store:
-                dataset.dataset.object_store.update_cache(dataset.dataset)
+                dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
 
             file_paths.append(dataset.file_name)
             for fpath, rpath in self.__archive_extra_files_path(dataset.extra_files_path):
@@ -451,7 +451,7 @@ class Data(metaclass=DataMeta):
                 file_paths.append(fpath)
         else:
             if dataset.dataset.object_store:
-                dataset.dataset.object_store.update_cache(dataset.dataset)
+                dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
             rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}")
             file_paths.append(dataset.file_name)
         return zip(file_paths, rel_paths)
@@ -525,7 +525,8 @@ class Data(metaclass=DataMeta):
             # For files in extra_files_path
             extra_dir = data.dataset.extra_files_path_name
             if data.dataset.object_store:
-                data.dataset.object_store.update_cache(data.dataset, extra_dir=extra_dir, alt_name=filename)
+                data.dataset.object_store.update_cache(data.dataset, extra_dir=extra_dir, alt_name=filename,
+                                                       trans=trans)
             file_path = trans.app.object_store.get_filename(data.dataset, extra_dir=extra_dir, alt_name=filename)
             if os.path.exists(file_path):
                 if os.path.isdir(file_path):
@@ -574,7 +575,7 @@ class Data(metaclass=DataMeta):
             return _serve_large_file_warning(headers, data, trans, file_size)
 
         if data.dataset.object_store:
-            data.dataset.object_store.update_cache(data.dataset)
+            data.dataset.object_store.update_cache(data.dataset, trans=trans)
 
         if not os.path.exists(data.file_name):
             raise ObjectNotFound(f"File Not Found ({data.file_name}).")
@@ -585,7 +586,8 @@ class Data(metaclass=DataMeta):
         else:  # displaying
             trans.log_event(f"Display dataset id: {str(data.id)}")
             max_peek_size = _get_peak_size(data)
-            if _is_binary_file(data) and preview:  # preview file which format is unknown (to Galaxy), we still try to display this as text
+            if _is_binary_file(
+                    data) and preview:  # preview file which format is unknown (to Galaxy), we still try to display this as text
                 return self._serve_binary_file_contents_as_text(trans, data, headers, file_size, max_peek_size)
             else:  # text/html, or image, or display was called without preview flag
                 return self._serve_file_contents(trans, data, headers, preview, file_size, max_peek_size)
