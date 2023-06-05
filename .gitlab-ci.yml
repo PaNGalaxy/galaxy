@@ -1,8 +1,8 @@
 stages:
   - build
   - build-base
-  - test
   - deploy
+  - test
 
 variables:
   GIT_STRATEGY: clone
