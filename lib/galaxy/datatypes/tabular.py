@@ -123,7 +123,7 @@ class TabularData(data.Text):
 
     def display_data(self, trans, dataset, preview=False, filename=None, to_ext=None, offset=None, ck_size=None, **kwd):
         if dataset.dataset.object_store:
-            dataset.dataset.object_store.update_cache(dataset.dataset)
+            dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
         headers = kwd.get("headers", {})
         preview = util.string_as_bool(preview)
         if offset is not None:
