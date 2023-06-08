@@ -35,6 +35,7 @@ import rucio.common
 
 import shutil
 
+
 log = logging.getLogger(__name__)
 
 
@@ -202,7 +203,7 @@ def parse_config_xml(config_xml):
             _config_xml_error("extra_dir")
         extra_dirs = [{k: e.get(k) for k in attrs} for e in e_xml]
 
-        attrs = ("rse", "scheme")
+        attrs = ("rse", "scheme", "ignore_checksum")
         e_xml = config_xml.findall("rucio_download_scheme")
         rucio_download_schemes = []
         if e_xml:
@@ -313,6 +314,7 @@ class RucioBroker():
                         "force_scheme": rse_scheme['scheme'],
                         "rse": rse_scheme['rse'],
                         "base_dir": base_dir,
+                        "ignore_checksum": string_as_bool(rse_scheme['ignore_checksum']),
                         "no_subdir": True,
                     }
                     break
