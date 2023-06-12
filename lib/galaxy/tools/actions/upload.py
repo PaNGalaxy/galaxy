@@ -41,6 +41,24 @@ class BaseUploadToolAction(ToolAction):
         return rval
 
 
+class RegisterToolAction(BaseUploadToolAction):
+    produces_real_jobs = True
+
+    def execute(self, tool, trans, incoming=None, history=None, **kwargs):
+        outputs = []
+        for item in incoming.get("series", []):
+            name = item.get("input", None)
+            file_type = "_sniff_"
+            dbkey = "?"
+            uploaded_dataset = Bunch(type="file", name=name, file_type=file_type, dbkey=dbkey)
+            tag_list = []
+            data = upload_common.new_upload(
+                trans, "", uploaded_dataset, library_bunch=None, history=history, tag_list=tag_list
+            )
+            outputs.append(data)
+        return self._create_job(trans, incoming, tool, None, outputs, history=history)
+
+
 class UploadToolAction(BaseUploadToolAction):
     def _setup_job(self, tool, trans, incoming, dataset_upload_inputs, history):
         check_timer = ExecutionTimer()
