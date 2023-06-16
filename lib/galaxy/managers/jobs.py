@@ -60,6 +60,7 @@ from galaxy.util.search import (
 
 log = logging.getLogger(__name__)
 
+STDOUT_PAGE_SIZE_CHARS = 5000
 
 class JobLock(BaseModel):
     active: bool = Field(title="Job lock status", description="If active, jobs will not dispatch")
@@ -220,7 +221,7 @@ class JobManager:
         )
         return self.job_lock()
 
-    def get_accessible_job(self, trans, decoded_job_id):
+    def get_accessible_job(self, trans, decoded_job_id, stdout_page=0):
         job = trans.sa_session.query(trans.app.model.Job).filter(trans.app.model.Job.id == decoded_job_id).first()
         if job is None:
             raise ObjectNotFound()
@@ -237,17 +238,20 @@ class JobManager:
                 if not self.dataset_manager.is_accessible(data_assoc.dataset.dataset, trans.user):
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
-        if job.state == job.states.RUNNING:
+        if job.state == job.states.RUNNING and stdout_page != 0:
             try:
                 stdout_path = Path(".").parent.parent.parent.parent.parent / "database/jobs_directory/000" / str(
                     job.id) / "outputs/tool_stdout"
-                stdout_file = open(stdout_path, "r")
-                # stderr_file = open("../../../../../database/jobs_directory/000/" + str(job.id) + "/outputs/tool_stderr")
-                job.job_stdout = stdout_file.read()
+                stdout_file = open(stdout_path, "rb")
+                if stdout_page < 0:
+                    stdout_file.seek((stdout_page) * STDOUT_PAGE_SIZE_CHARS, 2)
+                    job.job_stdout = stdout_file.read(STDOUT_PAGE_SIZE_CHARS).decode("utf-8")
+                else:
+                    stdout_file.seek((stdout_page - 1) * STDOUT_PAGE_SIZE_CHARS)
+                    job.job_stdout = stdout_file.read(STDOUT_PAGE_SIZE_CHARS).decode("utf-8")
                 job.tool_stdout = job.job_stdout
-                # job.stderr = stderr_file.read()
-            except:
-                log.error("Could not load std out")
+            except Exception as e:
+                log.error("Could not read STDOUT: %s", e)
         return job
 
     def stop(self, job, message=None):

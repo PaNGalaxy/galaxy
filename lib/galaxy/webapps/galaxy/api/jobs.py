@@ -178,6 +178,7 @@ class FastAPIJobs:
         id: EncodedDatabaseIdField,
         trans: ProvidesUserContext = DependsOnTrans,
         full: Optional[bool] = False,
+        stdout_page: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Return dictionary containing description of job data
@@ -186,7 +187,7 @@ class FastAPIJobs:
         - id: ID of job to return
         - full: Return extra information ?
         """
-        return self.service.show(trans, id, bool(full))
+        return self.service.show(trans, id, bool(full), int(stdout_page) if stdout_page else 0)
 
     @router.get("/api/jobs")
     def index(
