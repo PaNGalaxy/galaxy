@@ -238,17 +238,13 @@ class JobManager:
                 if not self.dataset_manager.is_accessible(data_assoc.dataset.dataset, trans.user):
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
-        if job.state == job.states.RUNNING and stdout_page != 0:
+        if job.state == job.states.RUNNING and stdout_page > 0:
             try:
                 stdout_path = Path(".").parent.parent.parent.parent.parent / "database/jobs_directory/000" / str(
                     job.id) / "outputs/tool_stdout"
-                stdout_file = open(stdout_path, "rb")
-                if stdout_page < 0:
-                    stdout_file.seek((stdout_page) * STDOUT_PAGE_SIZE_CHARS, 2)
-                    job.job_stdout = stdout_file.read(STDOUT_PAGE_SIZE_CHARS).decode("utf-8")
-                else:
-                    stdout_file.seek((stdout_page - 1) * STDOUT_PAGE_SIZE_CHARS)
-                    job.job_stdout = stdout_file.read(STDOUT_PAGE_SIZE_CHARS).decode("utf-8")
+                stdout_file = open(stdout_path, "r")
+                stdout_file.seek((stdout_page - 1) * STDOUT_PAGE_SIZE_CHARS)
+                job.job_stdout = stdout_file.read(STDOUT_PAGE_SIZE_CHARS)
                 job.tool_stdout = job.job_stdout
             except Exception as e:
                 log.error("Could not read STDOUT: %s", e)
