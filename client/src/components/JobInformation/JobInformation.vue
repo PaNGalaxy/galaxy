@@ -1,6 +1,6 @@
 <template>
     <div>
-        <job-details-provider auto-refresh :jobId="job_id" @update:result="updateJob" />
+        <job-details-provider auto-refresh :jobId="job_id" :page_start=stdout_start :page_end=stdout_end @update:result="updateJob" />
         <h3>Job Information</h3>
         <table id="job-information" class="tabletip info_data_table">
             <tbody>
@@ -103,6 +103,11 @@ export default {
     data() {
         return {
             job: null,
+            stdout_start: 1,
+            stdout_end: 3,
+            stdout_page_length: 5000,
+            stdout_live: true,
+            stdout_old: false,
         };
     },
     computed: {
@@ -115,12 +120,39 @@ export default {
             return this.job && !JOB_STATES_MODEL.NON_TERMINAL_STATES.includes(this.job.state);
         },
     },
+    updated() {
+        try {
+            const stdout_block = document.querySelector("#stdout").querySelector(".code");
+            if (stdout_block.scrollTop <= .25 * stdout_block.scrollHeight) {
+                this.stdout_live = false;
+                this.stdout_old = true;
+            } else if (stdout_block.scrollTop >= .75 * stdout_block.scrollHeight) {
+                this.stdout_live = true;
+                this.stdout_old = false;
+            } else {
+                this.stdout_live = false;
+                this.stdout_old = false;
+            }
+        } catch(exception) {
+            console.log("Can not find code div.");
+        }
+    },
     methods: {
         getAppRoot() {
             return getAppRoot();
         },
         updateJob(job) {
             this.job = job;
+            if (this.job.tool_stdout.length >= this.stdout_page_length * 3 && this.stdout_live) {
+                this.stdout_start += 1;
+                this.stdout_end += 1;
+            }
+            if (!this.stdout_live && this.stdout_old) {
+                this.stdout_start = this.stdout_start > 1 ? this.stdout_start - 1: 1;
+                this.stdout_end = this.stdout_end > 3 ? this.stdout_end - 1: 3;
+            }
+
+
         },
     },
 };

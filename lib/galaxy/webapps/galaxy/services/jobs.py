@@ -48,10 +48,11 @@ class JobsService:
         trans: ProvidesUserContext,
         id: EncodedDatabaseIdField,
         full: bool = False,
-        stdout_page: int = 0,
+        stdout_start: int = 0,
+        stdout_end: int = 0,
     ) -> Dict[str, Any]:
         id = trans.app.security.decode_id(id)
-        job = self.job_manager.get_accessible_job(trans, id, stdout_page)
+        job = self.job_manager.get_accessible_job(trans, id, stdout_start, stdout_end)
         return view_show_job(trans, job, bool(full))
 
     def index(
