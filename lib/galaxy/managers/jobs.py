@@ -238,6 +238,7 @@ class JobManager:
                 if not self.dataset_manager.is_accessible(data_assoc.dataset.dataset, trans.user):
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
+        
         if job.state == job.states.RUNNING and stdout_start > 0:
             try:
                 stdout_path = Path(".").parent.parent.parent.parent.parent / "database/jobs_directory/000" / str(
