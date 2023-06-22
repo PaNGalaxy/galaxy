@@ -1,6 +1,6 @@
 <template>
     <div>
-        <job-details-provider auto-refresh :jobId="job_id" :page_start=stdout_start :page_end=stdout_end @update:result="updateJob" />
+        <job-details-provider auto-refresh :jobId="job_id" :stdout_start=stdout_position :stdout_char_count=stdout_char_count @update:result="updateJob" />
         <h3>Job Information</h3>
         <table id="job-information" class="tabletip info_data_table">
             <tbody>
@@ -37,7 +37,7 @@
                     </td>
                 </tr>
                 <code-row v-if="job" id="command-line" :code-label="'Command Line'" :code-item="job.command_line" />
-                <code-row v-if="job" id="stdout" :code-label="'Tool Standard Output'" :code-item="job.tool_stdout" />
+                <code-row v-if="job" id="stdout" :code-label="'Tool Standard Output'" :code-item="stdout_text" />
                 <code-row v-if="job" id="stderr" :code-label="'Tool Standard Error'" :code-item="job.tool_stderr" />
                 <code-row
                     v-if="job && job.traceback"
@@ -103,11 +103,9 @@ export default {
     data() {
         return {
             job: null,
-            stdout_start: 1,
-            stdout_end: 3,
-            stdout_page_length: 5000,
-            stdout_live: true,
-            stdout_old: false,
+            stdout_position: 0,
+            stdout_char_count: 50000,
+            stdout_text: "",
         };
     },
     computed: {
@@ -123,18 +121,14 @@ export default {
     updated() {
         try {
             const stdout_block = document.querySelector("#stdout").querySelector(".code");
-            if (stdout_block.scrollTop <= .25 * stdout_block.scrollHeight) {
-                this.stdout_live = false;
-                this.stdout_old = true;
-            } else if (stdout_block.scrollTop >= .75 * stdout_block.scrollHeight) {
-                this.stdout_live = true;
-                this.stdout_old = false;
+            // if user is scrolled above the bottom of the code element, then no need to update the stdout
+            if (stdout_block.scrollTop <= stdout_block.scrollHeight - 3000) {
+                this.stdout_char_count = 0;
             } else {
-                this.stdout_live = false;
-                this.stdout_old = false;
+                this.stdout_char_count = 50000;
             }
         } catch(exception) {
-            console.log("Can not find code div.");
+            console.log(exception);
         }
     },
     methods: {
@@ -143,16 +137,11 @@ export default {
         },
         updateJob(job) {
             this.job = job;
-            if (this.job.tool_stdout.length >= this.stdout_page_length * 3 && this.stdout_live) {
-                this.stdout_start += 1;
-                this.stdout_end += 1;
+            // Keep stdout in memory and only fetch new text via JobProvider
+            if (job.tool_stdout != null) {
+                this.stdout_text += job.tool_stdout;
+                this.stdout_position += job.tool_stdout.length;
             }
-            if (!this.stdout_live && this.stdout_old) {
-                this.stdout_start = this.stdout_start > 1 ? this.stdout_start - 1: 1;
-                this.stdout_end = this.stdout_end > 3 ? this.stdout_end - 1: 3;
-            }
-
-
         },
     },
 };

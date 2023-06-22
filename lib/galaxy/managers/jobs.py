@@ -60,7 +60,6 @@ from galaxy.util.search import (
 import traceback
 log = logging.getLogger(__name__)
 
-STDOUT_PAGE_SIZE_CHARS = 5000
 
 class JobLock(BaseModel):
     active: bool = Field(title="Job lock status", description="If active, jobs will not dispatch")
@@ -221,7 +220,7 @@ class JobManager:
         )
         return self.job_lock()
 
-    def get_accessible_job(self, trans, decoded_job_id, stdout_start=0, stdout_end=0):
+    def get_accessible_job(self, trans, decoded_job_id, stdout_start_pos=-1, stdout_count=0):
         job = trans.sa_session.query(trans.app.model.Job).filter(trans.app.model.Job.id == decoded_job_id).first()
         if job is None:
             raise ObjectNotFound()
@@ -238,19 +237,18 @@ class JobManager:
                 if not self.dataset_manager.is_accessible(data_assoc.dataset.dataset, trans.user):
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
-        
-        if job.state == job.states.RUNNING and stdout_start > 0:
+
+        # iF stdout_count and stdout_start_pos are good values, then load standard out and add it to status
+        if job.state == job.states.RUNNING and stdout_count > 0 and stdout_start_pos > -1:
             try:
                 stdout_path = Path(".").parent.parent.parent.parent.parent / "database/jobs_directory/000" / str(
                     job.id) / "outputs/tool_stdout"
                 stdout_file = open(stdout_path, "r")
-                number_of_pages = stdout_end - stdout_start + 1 if stdout_end > 0 else 1
-                stdout_file.seek((stdout_start - 1) * STDOUT_PAGE_SIZE_CHARS)
-                job.job_stdout = stdout_file.read(STDOUT_PAGE_SIZE_CHARS * number_of_pages)
+                stdout_file.seek(stdout_start_pos)
+                job.job_stdout = stdout_file.read(stdout_count)
                 job.tool_stdout = job.job_stdout
             except Exception as e:
                 log.error("Could not read STDOUT: %s", e)
-                log.error(traceback.format_exc())
         return job
 
     def stop(self, job, message=None):
