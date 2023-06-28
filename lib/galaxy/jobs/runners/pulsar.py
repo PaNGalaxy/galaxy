@@ -646,8 +646,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
             remote_metadata_directory = run_results.get("metadata_directory", None)
             stdout = run_results.get("stdout", "")
             if stdout == "":
-                stdout_path = Path(".").parent.parent.parent.parent.parent / "database/jobs_directory/000" / str(
-                    run_results["job_id"]) / "outputs/tool_stdout"
+                stdout_path = Path(job_wrapper.working_directory) / "outputs" / "tool_stdout"
                 stdout_file = open(stdout_path, "r")
                 stdout = stdout_file.read()
             stderr = run_results.get("stderr", "")

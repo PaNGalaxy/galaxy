@@ -238,11 +238,11 @@ class JobManager:
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
 
-        # iF stdout_count and stdout_start_pos are good values, then load standard out and add it to status
+        # If stdout_count and stdout_start_pos are good values, then load standard out and add it to status
         if job.state == job.states.RUNNING and stdout_count > 0 and stdout_start_pos > -1:
             try:
-                stdout_path = Path(".").parent.parent.parent.parent.parent / "database/jobs_directory/000" / str(
-                    job.id) / "outputs/tool_stdout"
+                working_directory = trans.app.object_store.get_filename(job, base_dir="job_work", dir_only=True, obj_dir=True)
+                stdout_path = Path(working_directory) / "outputs" / "tool_stdout"
                 stdout_file = open(stdout_path, "r")
                 stdout_file.seek(stdout_start_pos)
                 job.job_stdout = stdout_file.read(stdout_count)
