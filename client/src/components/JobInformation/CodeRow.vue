@@ -40,6 +40,7 @@ export default {
             mouseIsDown: false,
             mouseMoved: false,
             expanded: false,
+            lastHeight: 0,
         };
     },
     computed: {
@@ -52,6 +53,18 @@ export default {
         iconClass() {
             return this.expanded ? ["fas", "compress-alt"] : ["fas", "expand-alt"];
         },
+    },
+    updated() {
+        // If the user is at the bottom of the code div, auto scroll for them.
+        try {
+            var codeDiv = document.querySelector("#stdout").querySelector(".code");
+            if (codeDiv.scrollTop >= this.lastHeight - 3000) {
+                codeDiv.scrollTop = codeDiv.scrollHeight;
+            }
+            this.lastHeight = codeDiv.scrollHeight;
+        } catch(exception) {
+            console.log("Code div is not present");
+        }
     },
     methods: {
         toggleExpanded() {
@@ -68,6 +81,12 @@ export default {
 .pointer {
     cursor: pointer;
 }
+
+.code {
+    max-height: 50em;
+    overflow: auto;
+}
+
 .nopadding {
     padding: 0;
     margin: 0;
