@@ -374,6 +374,7 @@ class RucioObjectStore(ConcreteObjectStore):
         rval["cache"] = dict()
         rval["cache"]["size"] = self.cache_size
         rval["cache"]["path"] = self.staging_path
+        rval["oidc_provider"] = self.oidc_provider
         return rval
 
     def __init__(self, config, config_dict):
