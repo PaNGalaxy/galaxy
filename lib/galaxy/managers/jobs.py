@@ -1,6 +1,7 @@
 import json
 import logging
 import typing
+from pathlib import Path
 from datetime import (
     date,
     datetime,
@@ -56,7 +57,7 @@ from galaxy.util.search import (
     parse_filters_structured,
     RawTextTerm,
 )
-
+import traceback
 log = logging.getLogger(__name__)
 
 
@@ -219,7 +220,7 @@ class JobManager:
         )
         return self.job_lock()
 
-    def get_accessible_job(self, trans, decoded_job_id):
+    def get_accessible_job(self, trans, decoded_job_id, stdout_start_pos=-1, stdout_count=0):
         job = trans.sa_session.query(trans.app.model.Job).filter(trans.app.model.Job.id == decoded_job_id).first()
         if job is None:
             raise ObjectNotFound()
@@ -236,6 +237,18 @@ class JobManager:
                 if not self.dataset_manager.is_accessible(data_assoc.dataset.dataset, trans.user):
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
+
+        # If stdout_count and stdout_start_pos are good values, then load standard out and add it to status
+        if job.state == job.states.RUNNING and stdout_count > 0 and stdout_start_pos > -1:
+            try:
+                working_directory = trans.app.object_store.get_filename(job, base_dir="job_work", dir_only=True, obj_dir=True)
+                stdout_path = Path(working_directory) / "outputs" / "tool_stdout"
+                stdout_file = open(stdout_path, "r")
+                stdout_file.seek(stdout_start_pos)
+                job.job_stdout = stdout_file.read(stdout_count)
+                job.tool_stdout = job.job_stdout
+            except Exception as e:
+                log.error("Could not read STDOUT: %s", e)
         return job
 
     def stop(self, job, message=None):
