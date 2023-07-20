@@ -17,10 +17,7 @@ import random
 import string
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import (
-    datetime,
-    timedelta,
-)
+from datetime import timedelta
 from enum import Enum
 from string import Template
 from typing import (
@@ -30,6 +27,8 @@ from typing import (
     List,
     NamedTuple,
     Optional,
+    overload,
+    Set,
     Tuple,
     Type,
     TYPE_CHECKING,
@@ -42,6 +41,7 @@ from uuid import (
 
 import sqlalchemy
 from boltons.iterutils import remap
+from pydantic import BaseModel
 from social_core.storage import (
     AssociationMixin,
     CodeMixin,
@@ -54,8 +54,11 @@ from sqlalchemy import (
     and_,
     asc,
     BigInteger,
+    bindparam,
     Boolean,
+    case,
     Column,
+    column,
     DateTime,
     desc,
     event,
@@ -66,6 +69,7 @@ from sqlalchemy import (
     inspect,
     Integer,
     join,
+    MetaData,
     not_,
     Numeric,
     or_,
@@ -99,16 +103,21 @@ from sqlalchemy.orm import (
     registry,
     relationship,
 )
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm.collections import attribute_mapped_collection
-from sqlalchemy.orm.decl_api import DeclarativeMeta
 from sqlalchemy.sql import exists
-from typing_extensions import Protocol
+from typing_extensions import (
+    Literal,
+    Protocol,
+    TypedDict,
+)
 
 import galaxy.exceptions
 import galaxy.model.metadata
 import galaxy.model.tags
 import galaxy.security.passwords
 import galaxy.util
+from galaxy.model.base import transaction
 from galaxy.model.custom_types import (
     JSONType,
     MetadataType,
@@ -116,18 +125,26 @@ from galaxy.model.custom_types import (
     TrimmedString,
     UUIDType,
 )
+from galaxy.model.database_object_names import NAMING_CONVENTION
 from galaxy.model.item_attrs import (
     get_item_annotation_str,
     UsesAnnotations,
 )
 from galaxy.model.orm.now import now
 from galaxy.model.orm.util import add_object_to_object_session
-from galaxy.model.view import HistoryDatasetCollectionJobStateSummary
+from galaxy.objectstore import ObjectStore
+from galaxy.schema.schema import (
+    DatasetCollectionPopulatedState,
+    DatasetState,
+    DatasetValidatedState,
+    JobState,
+)
 from galaxy.security import get_permitted_actions
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.security.validate_user_input import validate_password_str
 from galaxy.util import (
     directory_hash_id,
+    enum_values,
     listify,
     ready_name_for_url,
     unicodify,
@@ -148,9 +165,15 @@ from galaxy.util.form_builder import (
     WorkflowField,
     WorkflowMappingField,
 )
-from galaxy.util.hash_util import new_secure_hash
+from galaxy.util.hash_util import (
+    md5_hash_str,
+    new_insecure_hash,
+)
 from galaxy.util.json import safe_loads
 from galaxy.util.sanitize_html import sanitize_html
+
+if TYPE_CHECKING:
+    from galaxy.schema.invocation import InvocationMessageUnion
 
 log = logging.getLogger(__name__)
 
@@ -172,20 +195,31 @@ JOB_METRIC_SCALE = 7
 # Tags that get automatically propagated from inputs to outputs when running jobs.
 AUTO_PROPAGATED_TAGS = ["name"]
 YIELD_PER_ROWS = 100
+CANNOT_SHARE_PRIVATE_DATASET_MESSAGE = "Attempting to share a non-shareable dataset."
 
 
 if TYPE_CHECKING:
+    # Workaround for https://github.com/python/mypy/issues/14182
+    from sqlalchemy.orm.decl_api import DeclarativeMeta as _DeclarativeMeta
+
+    class DeclarativeMeta(_DeclarativeMeta, type):
+        pass
+
     from galaxy.datatypes.data import Data
+    from galaxy.tools import DefaultToolState
+    from galaxy.workflow.modules import WorkflowModule
 
     class _HasTable:
         table: Table
         __table__: Table
 
 else:
+    from sqlalchemy.orm.decl_api import DeclarativeMeta
+
     _HasTable = object
 
 
-def get_uuid(uuid: Optional[Union[UUID, str]] = None):
+def get_uuid(uuid: Optional[Union[UUID, str]] = None) -> UUID:
     if isinstance(uuid, UUID):
         return uuid
     if not uuid:
@@ -193,10 +227,11 @@ def get_uuid(uuid: Optional[Union[UUID, str]] = None):
     return UUID(str(uuid))
 
 
-class Base(metaclass=DeclarativeMeta):
+class Base(_HasTable, metaclass=DeclarativeMeta):
     __abstract__ = True
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    mapper_registry.metadata = metadata
     registry = mapper_registry
-    metadata = mapper_registry.metadata
     __init__ = mapper_registry.constructor
 
     @classmethod
@@ -204,7 +239,7 @@ class Base(metaclass=DeclarativeMeta):
         cls.table = cls.__table__
 
 
-class RepresentById(_HasTable):
+class RepresentById:
     id: int
 
     def __repr__(self):
@@ -287,11 +322,11 @@ class SerializeFilesHandler(Protocol):
 class SerializationOptions:
     def __init__(
         self,
-        for_edit,
-        serialize_dataset_objects=None,
+        for_edit: bool,
+        serialize_dataset_objects: Optional[bool] = None,
         serialize_files_handler: Optional[SerializeFilesHandler] = None,
-        strip_metadata_files=None,
-    ):
+        strip_metadata_files: Optional[bool] = None,
+    ) -> None:
         self.for_edit = for_edit
         if serialize_dataset_objects is None:
             serialize_dataset_objects = for_edit
@@ -364,7 +399,6 @@ class HasName:
 
 
 class UsesCreateAndUpdateTime:
-
     update_time: DateTime
 
     @property
@@ -381,7 +415,7 @@ class UsesCreateAndUpdateTime:
         self.update_time = now()
 
 
-class WorkerProcess(Base, UsesCreateAndUpdateTime, _HasTable):
+class WorkerProcess(Base, UsesCreateAndUpdateTime):
     __tablename__ = "worker_process"
     __table_args__ = (UniqueConstraint("server_name", "hostname"),)
 
@@ -513,6 +547,122 @@ class JobLike:
         raise NotImplementedError("Attempt to set stdout, must set tool_stderr or job_stderr")
 
 
+UNIQUE_DATASET_USER_USAGE = """
+WITH per_user_histories AS
+(
+    SELECT id
+    FROM history
+    WHERE user_id = :id
+        AND NOT purged
+),
+per_hist_hdas AS (
+    SELECT DISTINCT dataset_id
+    FROM history_dataset_association
+    WHERE NOT purged
+        AND history_id IN (SELECT id FROM per_user_histories)
+)
+SELECT COALESCE(SUM(COALESCE(dataset.total_size, dataset.file_size, 0)), 0)
+FROM dataset
+LEFT OUTER JOIN library_dataset_dataset_association ON dataset.id = library_dataset_dataset_association.dataset_id
+WHERE dataset.id IN (SELECT dataset_id FROM per_hist_hdas)
+    AND library_dataset_dataset_association.id IS NULL
+    {and_dataset_condition}
+"""
+
+
+def calculate_user_disk_usage_statements(user_id, quota_source_map, for_sqlite=False):
+    """Standalone function so can be reused for postgres directly in pgcleanup.py."""
+    statements = []
+    default_quota_enabled = quota_source_map.default_quota_enabled
+    default_exclude_ids = quota_source_map.default_usage_excluded_ids()
+    default_cond = "dataset.object_store_id IS NULL" if default_quota_enabled and default_exclude_ids else ""
+    exclude_cond = "dataset.object_store_id NOT IN :exclude_object_store_ids" if default_exclude_ids else ""
+    use_or = " OR " if (default_cond != "" and exclude_cond != "") else ""
+    default_usage_dataset_condition = "{default_cond} {use_or} {exclude_cond}".format(
+        default_cond=default_cond,
+        exclude_cond=exclude_cond,
+        use_or=use_or,
+    )
+    if default_usage_dataset_condition.strip():
+        default_usage_dataset_condition = f"AND ( {default_usage_dataset_condition} )"
+    default_usage = UNIQUE_DATASET_USER_USAGE.format(and_dataset_condition=default_usage_dataset_condition)
+    default_usage = (
+        """
+UPDATE galaxy_user SET disk_usage = (%s)
+WHERE id = :id
+"""
+        % default_usage
+    )
+    params = {"id": user_id}
+    if default_exclude_ids:
+        params["exclude_object_store_ids"] = default_exclude_ids
+    statements.append((default_usage, params))
+    source = quota_source_map.ids_per_quota_source()
+    # TODO: Merge a lot of these settings together by generating a temp table for
+    # the object_store_id to quota_source_label into a temp table of values
+    for quota_source_label, object_store_ids in source.items():
+        label_usage = UNIQUE_DATASET_USER_USAGE.format(
+            and_dataset_condition="AND ( dataset.object_store_id IN :include_object_store_ids )"
+        )
+        if for_sqlite:
+            # hacky alternative for older sqlite
+            statement = """
+WITH new (user_id, quota_source_label, disk_usage) AS (
+    VALUES(:id, :label, ({label_usage}))
+)
+INSERT OR REPLACE INTO user_quota_source_usage (id, user_id, quota_source_label, disk_usage)
+SELECT old.id, new.user_id, new.quota_source_label, new.disk_usage
+FROM new
+    LEFT JOIN user_quota_source_usage AS old
+        ON new.user_id = old.user_id
+            AND new.quota_source_label = old.quota_source_label
+""".format(
+                label_usage=label_usage
+            )
+        else:
+            statement = """
+INSERT INTO user_quota_source_usage(user_id, quota_source_label, disk_usage)
+VALUES(:id, :label, ({label_usage}))
+ON CONFLICT
+ON constraint uqsu_unique_label_per_user
+DO UPDATE SET disk_usage = excluded.disk_usage
+""".format(
+                label_usage=label_usage
+            )
+        statements.append(
+            (statement, {"id": user_id, "label": quota_source_label, "include_object_store_ids": object_store_ids})
+        )
+
+    params = {"id": user_id}
+    source_labels = list(source.keys())
+    if len(source_labels) > 0:
+        clean_old_statement = """
+DELETE FROM user_quota_source_usage
+WHERE user_id = :id AND quota_source_label NOT IN :labels
+"""
+        params["labels"] = source_labels
+    else:
+        clean_old_statement = """
+DELETE FROM user_quota_source_usage
+WHERE user_id = :id AND quota_source_label IS NOT NULL
+"""
+    statements.append((clean_old_statement, params))
+    return statements
+
+
+# move these to galaxy.schema.schema once galaxy-data depends on
+# galaxy-schema.
+class UserQuotaBasicUsage(BaseModel):
+    quota_source_label: Optional[str]
+    total_disk_usage: float
+
+
+class UserQuotaUsage(UserQuotaBasicUsage):
+    quota_percent: Optional[float]
+    quota_bytes: Optional[int]
+    quota: Optional[str]
+
+
 class User(Base, Dictifiable, RepresentById):
     """
     Data for a Galaxy user or admin and relations to their
@@ -534,6 +684,7 @@ class User(Base, Dictifiable, RepresentById):
     last_password_change = Column(DateTime, default=now)
     external = Column(Boolean, default=False)
     form_values_id = Column(Integer, ForeignKey("form_values.id"), index=True)
+    preferred_object_store_id = Column(String(255), nullable=True)
     deleted = Column(Boolean, index=True, default=False)
     purged = Column(Boolean, index=True, default=False)
     disk_usage = Column(Numeric(15, 0), index=True)
@@ -559,6 +710,7 @@ class User(Base, Dictifiable, RepresentById):
         "GalaxySession", back_populates="user", order_by=lambda: desc(GalaxySession.update_time)  # type: ignore[has-type]
     )
     quotas = relationship("UserQuotaAssociation", back_populates="user")
+    quota_source_usages = relationship("UserQuotaSourceUsage", back_populates="user")
     social_auth = relationship("UserAuthnzToken", back_populates="user")
     stored_workflow_menu_entries = relationship(
         "StoredWorkflowMenuEntry",
@@ -577,13 +729,22 @@ class User(Base, Dictifiable, RepresentById):
     )
     # Add type hint (will this work w/SA?)
     api_keys: "List[APIKeys]" = relationship(
-        "APIKeys", back_populates="user", order_by=lambda: desc(APIKeys.create_time)
+        "APIKeys",
+        back_populates="user",
+        order_by=lambda: desc(APIKeys.create_time),
+        primaryjoin=(
+            lambda: and_(
+                User.id == APIKeys.user_id,  # type: ignore[attr-defined]
+                not_(APIKeys.deleted == true()),  # type: ignore[has-type]
+            )
+        ),
     )
     data_manager_histories = relationship("DataManagerHistoryAssociation", back_populates="user")
     roles = relationship("UserRoleAssociation", back_populates="user")
     stored_workflows = relationship(
         "StoredWorkflow", back_populates="user", primaryjoin=(lambda: User.id == StoredWorkflow.user_id)  # type: ignore[has-type]
     )
+    all_notifications = relationship("UserNotificationAssociation", back_populates="user")
     non_private_roles = relationship(
         "UserRoleAssociation",
         viewonly=True,
@@ -608,6 +769,7 @@ class User(Base, Dictifiable, RepresentById):
         "deleted",
         "active",
         "last_password_change",
+        "preferred_object_store_id",
     ]
 
     def __init__(self, email=None, password=None, username=None):
@@ -640,8 +802,8 @@ class User(Base, Dictifiable, RepresentById):
         if User.use_pbkdf2:
             self.password = galaxy.security.passwords.hash_password(cleartext)
         else:
-            self.password = new_secure_hash(text_type=cleartext)
-        self.last_password_change = datetime.now()
+            self.password = new_insecure_hash(text_type=cleartext)
+        self.last_password_change = now()
 
     def set_random_password(self, length=16):
         """
@@ -715,14 +877,31 @@ class User(Base, Dictifiable, RepresentById):
                     roles.append(role)
         return roles
 
-    def get_disk_usage(self, nice_size=False):
+    def get_disk_usage(self, nice_size=False, quota_source_label=None):
         """
         Return byte count of disk space used by user or a human-readable
         string if `nice_size` is `True`.
         """
-        rval = 0
-        if self.disk_usage is not None:
-            rval = self.disk_usage
+        if quota_source_label is None:
+            rval = 0
+            if self.disk_usage is not None:
+                rval = self.disk_usage
+        else:
+            statement = """
+SELECT DISK_USAGE
+FROM user_quota_source_usage
+WHERE user_id = :user_id and quota_source_label = :label
+"""
+            sa_session = object_session(self)
+            params = {
+                "user_id": self.id,
+                "label": quota_source_label,
+            }
+            row = sa_session.execute(statement, params).fetchone()
+            if row is not None:
+                rval = row[0]
+            else:
+                rval = 0
         if nice_size:
             rval = galaxy.util.nice_size(rval)
         return rval
@@ -735,9 +914,72 @@ class User(Base, Dictifiable, RepresentById):
 
     total_disk_usage = property(get_disk_usage, set_disk_usage)
 
-    def adjust_total_disk_usage(self, amount):
+    def adjust_total_disk_usage(self, amount, quota_source_label):
+        assert amount is not None
         if amount != 0:
-            self.disk_usage = func.coalesce(self.table.c.disk_usage, 0) + amount
+            if quota_source_label is None:
+                self.disk_usage = func.coalesce(self.table.c.disk_usage, 0) + amount
+            else:
+                # else would work on newer sqlite - 3.24.0
+                engine = object_session(self).bind
+                if "sqlite" in engine.dialect.name:
+                    # hacky alternative for older sqlite
+                    statement = """
+WITH new (user_id, quota_source_label) AS ( VALUES(:user_id, :label) )
+INSERT OR REPLACE INTO user_quota_source_usage (id, user_id, quota_source_label, disk_usage)
+SELECT old.id, new.user_id, new.quota_source_label, COALESCE(old.disk_usage + :amount, :amount)
+FROM new LEFT JOIN user_quota_source_usage AS old ON new.user_id = old.user_id AND NEW.quota_source_label = old.quota_source_label;
+"""
+                else:
+                    statement = """
+INSERT INTO user_quota_source_usage(user_id, disk_usage, quota_source_label)
+VALUES(:user_id, :amount, :label)
+ON CONFLICT
+    ON constraint uqsu_unique_label_per_user
+    DO UPDATE SET disk_usage = user_quota_source_usage.disk_usage + :amount
+"""
+                statement = text(statement)
+                params = {
+                    "user_id": self.id,
+                    "amount": int(amount),
+                    "label": quota_source_label,
+                }
+                with engine.connect() as conn, conn.begin():
+                    conn.execute(statement, params)
+
+    def _get_social_auth(self, provider_backend):
+        if not self.social_auth:
+            return None
+        for auth in self.social_auth:
+            if auth.provider == provider_backend and auth.extra_data:
+                return auth
+        return None
+
+    def _get_custos_auth(self, provider_backend):
+        if not self.custos_auth:
+            return None
+        for auth in self.custos_auth:
+            if auth.provider == provider_backend and auth.refresh_token:
+                return auth
+        return None
+
+    def get_oidc_tokens(self, provider_backend):
+        tokens = {"id": None, "access": None, "refresh": None}
+        auth = self._get_social_auth(provider_backend)
+        if auth:
+            tokens["access"] = auth.extra_data.get("access_token", None)
+            tokens["refresh"] = auth.extra_data.get("refresh_token", None)
+            tokens["id"] = auth.extra_data.get("id_token", None)
+            return tokens
+
+        # no social auth found, check custos auth
+        auth = self._get_custos_auth(provider_backend)
+        if auth:
+            tokens["access"] = auth.access_token
+            tokens["refresh"] = auth.refresh_token
+            tokens["id"] = auth.id_token
+
+        return tokens
 
     def _get_social_auth(self, provider_backend):
         if not self.social_auth:
@@ -780,53 +1022,68 @@ class User(Base, Dictifiable, RepresentById):
         """
         return self.get_disk_usage(nice_size=True)
 
-    def calculate_disk_usage(self):
+    def calculate_disk_usage_default_source(self, object_store):
         """
         Return byte count total of disk space used by all non-purged, non-library
-        HDAs in non-purged histories.
+        HDAs in non-purged histories assigned to default quota source.
         """
-        # maintain a list so that we don't double count
-        return self._calculate_or_set_disk_usage(dryrun=True)
+        # only used in set_user_disk_usage.py
+        assert object_store is not None
+        quota_source_map = object_store.get_quota_source_map()
+        default_quota_enabled = quota_source_map.default_quota_enabled
+        exclude_objectstore_ids = quota_source_map.default_usage_excluded_ids()
+        default_cond = "dataset.object_store_id IS NULL OR" if default_quota_enabled and exclude_objectstore_ids else ""
+        default_usage_dataset_condition = (
+            (
+                "AND ( {default_cond} dataset.object_store_id NOT IN :exclude_object_store_ids )".format(
+                    default_cond=default_cond,
+                )
+            )
+            if exclude_objectstore_ids
+            else ""
+        )
+        default_usage = UNIQUE_DATASET_USER_USAGE.format(and_dataset_condition=default_usage_dataset_condition)
+        sql_calc = text(default_usage)
+        params = {"id": self.id}
+        bindparams = [bindparam("id")]
+        if exclude_objectstore_ids:
+            params["exclude_object_store_ids"] = exclude_objectstore_ids
+            bindparams.append(bindparam("exclude_object_store_ids", expanding=True))
+        sql_calc = sql_calc.bindparams(*bindparams)
+        sa_session = object_session(self)
+        usage = sa_session.scalar(sql_calc, params)
+        return usage
 
-    def calculate_and_set_disk_usage(self):
+    def calculate_and_set_disk_usage(self, object_store):
         """
         Calculates and sets user disk usage.
         """
-        self._calculate_or_set_disk_usage(dryrun=False)
+        self._calculate_or_set_disk_usage(object_store=object_store)
 
-    def _calculate_or_set_disk_usage(self, dryrun=True):
+    def _calculate_or_set_disk_usage(self, object_store):
         """
         Utility to calculate and return the disk usage.  If dryrun is False,
         the new value is set immediately.
         """
-        sql_calc = text(
-            """
-            WITH per_user_histories AS
-            (
-                SELECT id
-                FROM history
-                WHERE user_id = :id
-                    AND NOT purged
-            ),
-            per_hist_hdas AS (
-                SELECT DISTINCT dataset_id
-                FROM history_dataset_association
-                WHERE NOT purged
-                    AND history_id IN (SELECT id FROM per_user_histories)
-            )
-            SELECT SUM(COALESCE(dataset.total_size, dataset.file_size, 0))
-            FROM dataset
-            LEFT OUTER JOIN library_dataset_dataset_association ON dataset.id = library_dataset_dataset_association.dataset_id
-            WHERE dataset.id IN (SELECT dataset_id FROM per_hist_hdas)
-                AND library_dataset_dataset_association.id IS NULL
-        """
-        )
+        assert object_store is not None
+        quota_source_map = object_store.get_quota_source_map()
         sa_session = object_session(self)
-        usage = sa_session.scalar(sql_calc, {"id": self.id})
-        if not dryrun:
-            self.set_disk_usage(usage)
-            sa_session.flush()
-        return usage
+        for_sqlite = "sqlite" in sa_session.bind.dialect.name
+        statements = calculate_user_disk_usage_statements(self.id, quota_source_map, for_sqlite)
+        for sql, args in statements:
+            statement = text(sql)
+            binds = []
+            for key, _ in args.items():
+                expand_binding = key.endswith("s")
+                binds.append(bindparam(key, expanding=expand_binding))
+            statement = statement.bindparams(*binds)
+            sa_session.execute(statement, args)
+            # expire user.disk_usage so sqlalchemy knows to ignore
+            # the existing value - we're setting it in raw SQL for
+            # performance reasons and bypassing object properties.
+            sa_session.expire(self, ["disk_usage"])
+        with transaction(sa_session):
+            sa_session.commit()
 
     @staticmethod
     def user_template_environment(user):
@@ -888,10 +1145,71 @@ class User(Base, Dictifiable, RepresentById):
         role = Role(name=role_name, description=role_desc, type=role_type)
         assoc = UserRoleAssociation(self, role)
         session.add(assoc)
-        session.flush()
+        with transaction(session):
+            session.commit()
+
+    def dictify_usage(self, object_store=None) -> List[UserQuotaBasicUsage]:
+        """Include object_store to include empty/unused usage info."""
+        used_labels: Set[Union[str, None]] = set()
+        rval: List[UserQuotaBasicUsage] = [
+            UserQuotaBasicUsage(
+                quota_source_label=None,
+                total_disk_usage=float(self.disk_usage or 0),
+            )
+        ]
+        used_labels.add(None)
+        for quota_source_usage in self.quota_source_usages:
+            label = quota_source_usage.quota_source_label
+            rval.append(
+                UserQuotaBasicUsage(
+                    quota_source_label=label,
+                    total_disk_usage=float(quota_source_usage.disk_usage),
+                )
+            )
+            used_labels.add(label)
+
+        if object_store is not None:
+            for label in object_store.get_quota_source_map().ids_per_quota_source().keys():
+                if label not in used_labels:
+                    rval.append(
+                        UserQuotaBasicUsage(
+                            quota_source_label=label,
+                            total_disk_usage=0.0,
+                        )
+                    )
+
+        return rval
+
+    def dictify_usage_for(self, quota_source_label: Optional[str]) -> UserQuotaBasicUsage:
+        rval: UserQuotaBasicUsage
+        if quota_source_label is None:
+            rval = UserQuotaBasicUsage(
+                quota_source_label=None,
+                total_disk_usage=float(self.disk_usage or 0),
+            )
+        else:
+            quota_source_usage = self.quota_source_usage_for(quota_source_label)
+            if quota_source_usage is None:
+                rval = UserQuotaBasicUsage(
+                    quota_source_label=quota_source_label,
+                    total_disk_usage=0.0,
+                )
+            else:
+                rval = UserQuotaBasicUsage(
+                    quota_source_label=quota_source_label,
+                    total_disk_usage=float(quota_source_usage.disk_usage),
+                )
+
+        return rval
+
+    def quota_source_usage_for(self, quota_source_label: Optional[str]) -> Optional["UserQuotaSourceUsage"]:
+        for quota_source_usage in self.quota_source_usages:
+            if quota_source_usage.quota_source_label == quota_source_label:
+                return quota_source_usage
+        return None
 
 
-class PasswordResetToken(Base, _HasTable):
+class PasswordResetToken(Base):
     __tablename__ = "password_reset_token"
 
     token = Column(String(32), primary_key=True, unique=True, index=True)
@@ -1032,6 +1350,8 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
     imported = Column(Boolean, default=False, index=True)
     params = Column(TrimmedString(255), index=True)
     handler = Column(TrimmedString(255), index=True)
+    preferred_object_store_id = Column(String(255), nullable=True)
+    object_store_id_overrides = Column(JSONType)
 
     user = relationship("User")
     galaxy_session = relationship("GalaxySession")
@@ -1080,22 +1400,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
     _numeric_metric = JobMetricNumeric
     _text_metric = JobMetricText
 
-    class states(str, Enum):
-        NEW = "new"
-        RESUBMITTED = "resubmitted"
-        UPLOAD = "upload"
-        WAITING = "waiting"
-        QUEUED = "queued"
-        RUNNING = "running"
-        OK = "ok"
-        ERROR = "error"
-        FAILED = "failed"
-        PAUSED = "paused"
-        DELETING = "deleting"
-        DELETED = "deleted"
-        DELETED_NEW = "deleted_new"  # now DELETING, remove after 21.0
-        STOPPING = "stop"
-        STOPPED = "stopped"
+    states = JobState
 
     terminal_states = [states.OK, states.ERROR, states.DELETED]
     #: job states where the job hasn't finished and the model may still change
@@ -1128,7 +1433,6 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             states.ERROR,
             states.DELETING,
             states.DELETED,
-            states.DELETED_NEW,
         ]
 
     def io_dicts(self, exclude_implicit_outputs=False) -> IoDicts:
@@ -1461,7 +1765,9 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             for job in jobs_to_resume:
                 job.resume(flush=False)
             if flush:
-                object_session(self).flush()
+                session = object_session(self)
+                with transaction(session):
+                    session.commit()
 
     def _serialize(self, id_encoder, serialization_options):
         job_attrs = dict_for(self)
@@ -1503,6 +1809,19 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             params_dict[name] = value
         job_attrs["params"] = params_dict
         return job_attrs
+
+    def requires_shareable_storage(self, security_agent):
+        # An easy optimization would be to calculate this in galaxy.tools.actions when the
+        # job is created and all the output permissions are already known. Having to reload
+        # these permissions in the job code shouldn't strictly be needed.
+
+        requires_sharing = False
+        for dataset_assoc in self.output_datasets + self.output_library_datasets:
+            if not security_agent.dataset_is_private_to_a_user(dataset_assoc.dataset.dataset):
+                requires_sharing = True
+                break
+
+        return requires_sharing
 
     def to_dict(self, view="collection", system_details=False):
         if view == "admin_job_list":
@@ -1731,7 +2050,9 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
         for output_association in self.output_datasets + self.output_dataset_collection_instances:
             output_association.item.visible = False
         if flush:
-            object_session(self).flush()
+            session = object_session(self)
+            with transaction(session):
+                session.commit()
 
 
 class Task(Base, JobLike, RepresentById):
@@ -2295,7 +2616,10 @@ class JobExportHistoryArchive(Base, RepresentById):
         # Create dataset that will serve as archive.
         archive_dataset = Dataset()
         sa_session.add(archive_dataset)
-        sa_session.flush()  # ensure job.id and archive_dataset.id are available
+
+        with transaction(sa_session):
+            sa_session.commit()  # ensure job.id and archive_dataset.id are available
+
         object_store.create(archive_dataset)  # set the object store id, create dataset (if applicable)
         # Add association for keeping track of job, history, archive relationship.
         jeha = JobExportHistoryArchive(job=job, history=history, dataset=archive_dataset, compressed=compressed)
@@ -2330,6 +2654,18 @@ class JobImportHistoryArchive(Base, RepresentById):
     archive_dir = Column(TEXT)
     job = relationship("Job")
     history = relationship("History")
+
+
+class StoreExportAssociation(Base, RepresentById):
+    __tablename__ = "store_export_association"
+    __table_args__ = (Index("ix_store_export_object", "object_id", "object_type"),)
+
+    id = Column(Integer, primary_key=True)
+    task_uuid = Column(UUIDType(), index=True, unique=True)
+    create_time = Column(DateTime, default=now)
+    object_type = Column(TrimmedString(32))
+    object_id = Column(Integer)
+    export_metadata = Column(JSONType)
 
 
 class JobContainerAssociation(Base, RepresentById):
@@ -2371,15 +2707,34 @@ class InteractiveToolEntryPoint(Base, Dictifiable, RepresentById):
     modified_time = Column(DateTime, default=now, onupdate=now)
     job = relationship("Job", back_populates="interactivetool_entry_points", uselist=False)
 
-    dict_collection_visible_keys = ["id", "name", "active", "created_time", "modified_time"]
-    dict_element_visible_keys = ["id", "name", "active", "created_time", "modified_time"]
+    dict_collection_visible_keys = [
+        "id",
+        "job_id",
+        "name",
+        "active",
+        "created_time",
+        "modified_time",
+        "output_datasets_ids",
+    ]
+    dict_element_visible_keys = [
+        "id",
+        "job_id",
+        "name",
+        "active",
+        "created_time",
+        "modified_time",
+        "output_datasets_ids",
+    ]
 
-    def __init__(self, requires_domain=True, configured=False, deleted=False, **kwd):
+    def __init__(self, requires_domain=True, configured=False, deleted=False, short_token=False, **kwd):
         super().__init__(**kwd)
         self.requires_domain = requires_domain
         self.configured = configured
         self.deleted = deleted
-        self.token = self.token or uuid4().hex
+        if short_token:
+            self.token = (self.token or uuid4().hex)[:10]
+        else:
+            self.token = self.token or uuid4().hex
         self.info = self.info or {}
 
     @property
@@ -2388,6 +2743,10 @@ class InteractiveToolEntryPoint(Base, Dictifiable, RepresentById):
             # FIXME: don't included queued?
             return not self.job.finished
         return False
+
+    @property
+    def output_datasets_ids(self):
+        return [da.dataset.id for da in self.job.output_datasets]
 
 
 class GenomeIndexToolData(Base, RepresentById):  # TODO: params arg is lost
@@ -2443,6 +2802,54 @@ class UserGroupAssociation(Base, RepresentById):
         self.group = group
 
 
+class Notification(Base, Dictifiable, RepresentById):
+    __tablename__ = "notification"
+
+    id = Column(Integer, primary_key=True)
+    create_time = Column(DateTime, default=now)
+    update_time = Column(DateTime, default=now, onupdate=now)
+    publication_time = Column(
+        DateTime, default=now
+    )  # The date of publication, can be a future date to allow scheduling
+    expiration_time = Column(
+        DateTime, default=now() + timedelta(days=30 * 6)
+    )  # The expiration date, expired notifications will be permanently removed from DB regularly
+    source = Column(String(32), index=True)  # Who (or what) generated the notification
+    category = Column(
+        String(64), index=True
+    )  # Category of the notification, defines its contents. Used for filtering, un/subscribing, etc
+    variant = Column(
+        String(16), index=True
+    )  # Defines the 'importance' of the notification ('info', 'warning', 'urgent', etc.). Used for filtering, highlight rendering, etc
+    content = Column(JSONType)  # Structured content in JSON. Depending on the category of the notification
+
+    user_notification_associations = relationship("UserNotificationAssociation", back_populates="notification")
+
+    def __init__(self, source: str, category: str, variant: str, content):
+        self.source = source
+        self.category = category
+        self.variant = variant
+        self.content = content
+
+
+class UserNotificationAssociation(Base, RepresentById):
+    __tablename__ = "user_notification_association"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("galaxy_user.id"), index=True)
+    notification_id = Column(Integer, ForeignKey("notification.id"), index=True)
+    seen_time = Column(DateTime, nullable=True)
+    deleted = Column(Boolean, index=True, default=False)
+    update_time = Column(DateTime, default=now, onupdate=now)
+
+    user = relationship("User", back_populates="all_notifications")
+    notification = relationship("Notification", back_populates="user_notification_associations")
+
+    def __init__(self, user, notification):
+        self.user = user
+        self.notification = notification
+
+
 def is_hda(d):
     return isinstance(d, HistoryDatasetAssociation)
 
@@ -2478,7 +2885,8 @@ class HistoryAudit(Base, RepresentById):
             .subquery()
         )
         q = cls.__table__.delete().where(tuple_(cls.history_id, cls.update_time).in_(select(not_latest_query)))
-        sa_session.execute(q)
+        with sa_session() as session, session.begin():
+            session.execute(q)
 
 
 class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable):
@@ -2498,6 +2906,9 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
     importable = Column(Boolean, default=False)
     slug = Column(TEXT)
     published = Column(Boolean, index=True, default=False)
+    preferred_object_store_id = Column(String(255), nullable=True)
+    archived = Column(Boolean, index=True, default=False, server_default=false())
+    archive_export_id = Column(Integer, ForeignKey("store_export_association.id"), nullable=True, default=None)
 
     datasets = relationship(
         "HistoryDatasetAssociation", back_populates="history", cascade_backrefs=False, order_by=lambda: asc(HistoryDatasetAssociation.hid)  # type: ignore[has-type]
@@ -2591,11 +3002,13 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         "genome_build",
         "deleted",
         "purged",
+        "archived",
         "update_time",
         "published",
         "importable",
         "slug",
         "empty",
+        "preferred_object_store_id",
     ]
     default_name = "Unnamed history"
 
@@ -2628,6 +3041,10 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
     @property
     def empty(self):
         return self.hid_counter is None or self.hid_counter == 1
+
+    @property
+    def count(self):
+        return self.hid_counter - 1
 
     def add_pending_items(self, set_output_hid=True):
         # These are assumed to be either copies of existing datasets or new, empty datasets,
@@ -2676,7 +3093,11 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         if isinstance(dataset, Dataset):
             dataset = HistoryDatasetAssociation(dataset=dataset)
             object_session(self).add(dataset)
-            object_session(self).flush()
+
+            session = object_session(self)
+            with transaction(session):
+                session.commit()
+
         elif not isinstance(dataset, (HistoryDatasetAssociation, HistoryDatasetCollectionAssociation)):
             raise TypeError(
                 "You can only add Dataset and HistoryDatasetAssociation instances to a history"
@@ -2696,7 +3117,9 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
                 dataset.hid = self._next_hid()
         add_object_to_object_session(dataset, self)
         if quota and is_dataset and self.user:
-            self.user.adjust_total_disk_usage(dataset.quota_amount(self.user))
+            quota_source_info = dataset.dataset.quota_source_info
+            if quota_source_info.use:
+                self.user.adjust_total_disk_usage(dataset.quota_amount(self.user), quota_source_info.label)
         dataset.history = self
         if is_dataset and genome_build not in [None, "?"]:
             self.genome_build = genome_build
@@ -2714,16 +3137,21 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
             self.__add_datasets_optimized(datasets, genome_build=genome_build)
             if quota and self.user:
                 disk_usage = sum(d.get_total_size() for d in datasets if is_hda(d))
-                self.user.adjust_total_disk_usage(disk_usage)
+                if disk_usage:
+                    quota_source_info = datasets[0].dataset.quota_source_info
+                    if quota_source_info.use:
+                        self.user.adjust_total_disk_usage(disk_usage, quota_source_info.label)
             sa_session.add_all(datasets)
             if flush:
-                sa_session.flush()
+                with transaction(sa_session):
+                    sa_session.commit()
         else:
             for dataset in datasets:
                 self.add_dataset(dataset, parent_id=parent_id, genome_build=genome_build, set_hid=set_hid, quota=quota)
                 sa_session.add(dataset)
                 if flush:
-                    sa_session.flush()
+                    with transaction(sa_session):
+                        sa_session.commit()
 
     def __add_datasets_optimized(self, datasets, genome_build=None):
         """Optimized version of add_dataset above that minimizes database
@@ -2802,7 +3230,8 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
                 new_hdca.copy_tags_from(target_user, hdca)
 
         new_history.hid_counter = self.hid_counter
-        db_session.flush()
+        with transaction(db_session):
+            db_session.commit()
 
         return new_history
 
@@ -2821,7 +3250,6 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         return [hda for hda in self.datasets if not hda.dataset.deleted]
 
     def _serialize(self, id_encoder, serialization_options):
-
         history_attrs = dict_for(
             self,
             create_time=self.create_time.__str__(),
@@ -2836,7 +3264,6 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         return history_attrs
 
     def to_dict(self, view="collection", value_mapper=None):
-
         # Get basic value.
         rval = super().to_dict(view=view, value_mapper=value_mapper)
 
@@ -2860,7 +3287,9 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
             job.resume(flush=False)
         if job is not None:
             # We'll flush once if there was a paused job
-            object_session(job).flush()
+            session = object_session(job)
+            with transaction(session):
+                session.commit()
 
     @property
     def paused_jobs(self):
@@ -2943,10 +3372,10 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
             .filter(not_(HistoryDatasetAssociation.deleted))
             .order_by(HistoryDatasetAssociation.table.c.hid.asc())
             .options(
-                joinedload("dataset"),
-                joinedload("dataset.actions"),
-                joinedload("dataset.actions.role"),
-                joinedload("tags"),
+                joinedload(HistoryDatasetAssociation.dataset)
+                .joinedload(Dataset.actions)
+                .joinedload(DatasetPermissions.role),
+                joinedload(HistoryDatasetAssociation.tags),
             )
         )
 
@@ -2974,7 +3403,10 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
                 .filter(not_(HistoryDatasetCollectionAssociation.deleted))
                 .filter(HistoryDatasetCollectionAssociation.visible)
                 .order_by(HistoryDatasetCollectionAssociation.table.c.hid.asc())
-                .options(joinedload("collection"), joinedload("tags"))
+                .options(
+                    joinedload(HistoryDatasetCollectionAssociation.collection),
+                    joinedload(HistoryDatasetCollectionAssociation.tags),
+                )
             )
             self._active_visible_dataset_collections = query.all()
         return self._active_visible_dataset_collections
@@ -3013,7 +3445,14 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         visible = galaxy.util.string_as_bool_or_none(kwds.get("visible", None))
         if visible is not None:
             query = query.filter(content_class.visible == visible)
+        if "object_store_ids" in kwds:
+            if content_class == HistoryDatasetAssociation:
+                query = query.join(content_class.dataset).filter(
+                    Dataset.table.c.object_store_id.in_(kwds.get("object_store_ids"))
+                )
+            # else ignoring object_store_ids on HDCAs...
         if "ids" in kwds:
+            assert "object_store_ids" not in kwds
             ids = kwds["ids"]
             max_in_filter_length = kwds.get("max_in_filter_length", MAX_IN_FILTER_LENGTH)
             if len(ids) < max_in_filter_length:
@@ -3106,6 +3545,20 @@ class Role(Base, Dictifiable, RepresentById):
         self.deleted = deleted
 
 
+class UserQuotaSourceUsage(Base, Dictifiable, RepresentById):
+    __tablename__ = "user_quota_source_usage"
+    __table_args__ = (UniqueConstraint("user_id", "quota_source_label", name="uqsu_unique_label_per_user"),)
+
+    dict_element_visible_keys = ["disk_usage", "quota_source_label"]
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("galaxy_user.id"), index=True)
+    quota_source_label = Column(String(32), index=True)
+    # user had an index on disk_usage - does that make any sense? -John
+    disk_usage = Column(Numeric(15, 0), default=0, nullable=False)
+    user = relationship("User", back_populates="quota_source_usages")
+
+
 class UserQuotaAssociation(Base, Dictifiable, RepresentById):
     __tablename__ = "user_quota_association"
 
@@ -3146,6 +3599,7 @@ class GroupQuotaAssociation(Base, Dictifiable, RepresentById):
 
 class Quota(Base, Dictifiable, RepresentById):
     __tablename__ = "quota"
+    __table_args__ = (Index("ix_quota_quota_source_label", "quota_source_label"),)
 
     id = Column(Integer, primary_key=True)
     create_time = Column(DateTime, default=now)
@@ -3155,11 +3609,12 @@ class Quota(Base, Dictifiable, RepresentById):
     bytes = Column(BigInteger)
     operation = Column(String(8))
     deleted = Column(Boolean, index=True, default=False)
+    quota_source_label = Column(String(32), default=None)
     default = relationship("DefaultQuotaAssociation", back_populates="quota")
     groups = relationship("GroupQuotaAssociation", back_populates="quota")
     users = relationship("UserQuotaAssociation", back_populates="quota")
 
-    dict_collection_visible_keys = ["id", "name"]
+    dict_collection_visible_keys = ["id", "name", "quota_source_label"]
     dict_element_visible_keys = [
         "id",
         "name",
@@ -3170,10 +3625,11 @@ class Quota(Base, Dictifiable, RepresentById):
         "default",
         "users",
         "groups",
+        "quota_source_label",
     ]
     valid_operations = ("+", "-", "=")
 
-    def __init__(self, name=None, description=None, amount=0, operation="="):
+    def __init__(self, name=None, description=None, amount=0, operation="=", quota_source_label=None):
         self.name = name
         self.description = description
         if amount is None:
@@ -3181,6 +3637,7 @@ class Quota(Base, Dictifiable, RepresentById):
         else:
             self.bytes = amount
         self.operation = operation
+        self.quota_source_label = quota_source_label
 
     def get_amount(self):
         if self.bytes == -1:
@@ -3209,7 +3666,7 @@ class DefaultQuotaAssociation(Base, Dictifiable, RepresentById):
     id = Column(Integer, primary_key=True)
     create_time = Column(DateTime, default=now)
     update_time = Column(DateTime, default=now, onupdate=now)
-    type = Column(String(32), index=True, unique=True)
+    type = Column(String(32))
     quota_id = Column(Integer, ForeignKey("quota.id"), index=True)
     quota = relationship("Quota", back_populates="default")
 
@@ -3372,10 +3829,11 @@ class StorableObject:
     def flush(self):
         sa_session = object_session(self)
         if sa_session:
-            sa_session.flush()
+            with transaction(sa_session):
+                sa_session.commit()
 
 
-class Dataset(Base, StorableObject, Serializable, _HasTable):
+class Dataset(Base, StorableObject, Serializable):
     __tablename__ = "dataset"
 
     id = Column(Integer, primary_key=True)
@@ -3436,31 +3894,8 @@ class Dataset(Base, StorableObject, Serializable, _HasTable):
         back_populates="dataset",
     )
 
-    class states(str, Enum):
-        NEW = "new"
-        UPLOAD = "upload"
-        QUEUED = "queued"
-        RUNNING = "running"
-        OK = "ok"
-        EMPTY = "empty"
-        ERROR = "error"
-        PAUSED = "paused"
-        SETTING_METADATA = "setting_metadata"
-        FAILED_METADATA = "failed_metadata"
-        # Non-deleted, non-purged datasets that don't have physical files.
-        # These shouldn't have objectstores attached -
-        # 'deferred' can be materialized for jobs using
-        # attached DatasetSource objects but 'discarded'
-        # cannot (e.g. imported histories). These should still
-        # be able to have history contents associated (normal HDAs?)
-        DEFERRED = "deferred"
-        DISCARDED = "discarded"
-
-        @classmethod
-        def values(self):
-            return self.__members__.values()
-
     # failed_metadata is only valid as DatasetInstance state currently
+    states = DatasetState
 
     non_ready_states = (states.NEW, states.UPLOAD, states.QUEUED, states.RUNNING, states.SETTING_METADATA)
     ready_states = tuple(set(states.__members__.values()) - set(non_ready_states))
@@ -3486,7 +3921,7 @@ class Dataset(Base, StorableObject, Serializable, _HasTable):
 
     permitted_actions = get_permitted_actions(filter="DATASET")
     file_path = "/tmp/"
-    object_store = None  # This get initialized in mapping.py (method init) by app.py
+    object_store: Optional[ObjectStore] = None  # This get initialized in mapping.py (method init) by app.py
     engine = None
 
     def __init__(
@@ -3519,14 +3954,27 @@ class Dataset(Base, StorableObject, Serializable, _HasTable):
     def in_ready_state(self):
         return self.state in self.ready_states
 
+    @property
+    def shareable(self):
+        """Return True if placed into an objectstore not labeled as ``private``."""
+        if self.external_filename:
+            return True
+        else:
+            object_store = self._assert_object_store_set()
+            return not object_store.is_private(self)
+
+    def ensure_shareable(self):
+        if not self.shareable:
+            raise Exception(CANNOT_SHARE_PRIVATE_DATASET_MESSAGE)
+
     def get_file_name(self):
         if self.purged:
             log.warning(f"Attempt to get file name of purged dataset {self.id}")
             return ""
         if not self.external_filename:
-            assert self.object_store is not None, f"Object Store has not been initialized for dataset {self.id}"
-            if self.object_store.exists(self):
-                file_name = self.object_store.get_filename(self)
+            object_store = self._assert_object_store_set()
+            if object_store.exists(self):
+                file_name = object_store.get_filename(self)
             else:
                 file_name = ""
             if not file_name and self.state not in (self.states.NEW, self.states.QUEUED):
@@ -3539,6 +3987,16 @@ class Dataset(Base, StorableObject, Serializable, _HasTable):
         # Make filename absolute
         return os.path.abspath(filename)
 
+    @property
+    def quota_source_label(self):
+        return self.quota_source_info.label
+
+    @property
+    def quota_source_info(self):
+        object_store_id = self.object_store_id
+        quota_source_map = self.object_store.get_quota_source_map()
+        return quota_source_map.get_quota_source_info(object_store_id)
+
     def set_file_name(self, filename):
         if not filename:
             self.external_filename = None
@@ -3546,6 +4004,10 @@ class Dataset(Base, StorableObject, Serializable, _HasTable):
             self.external_filename = filename
 
     file_name = property(get_file_name, set_file_name)
+
+    def _assert_object_store_set(self):
+        assert self.object_store is not None, f"Object Store has not been initialized for dataset {self.id}"
+        return self.object_store
 
     def get_extra_files_path(self):
         # Unlike get_file_name - external_extra_files_path is not backed by an
@@ -3593,16 +4055,24 @@ class Dataset(Base, StorableObject, Serializable, _HasTable):
     def _extra_files_rel_path(self):
         return self._extra_files_path or self.extra_files_path_name
 
-    def _calculate_size(self):
+    def _calculate_size(self) -> int:
         if self.external_filename:
             try:
                 return os.path.getsize(self.external_filename)
             except OSError:
                 return 0
-        else:
-            return self.object_store.size(self)
+        assert self.object_store
+        return self.object_store.size(self)
 
-    def get_size(self, nice_size=False, calculate_size=True):
+    @overload
+    def get_size(self, nice_size: Literal[False], calculate_size: bool = True) -> int:
+        ...
+
+    @overload
+    def get_size(self, nice_size: Literal[True], calculate_size: bool = True) -> str:
+        ...
+
+    def get_size(self, nice_size: bool = False, calculate_size: bool = True) -> Union[int, str]:
         """Returns the size of the data on disk"""
         if self.file_size:
             if nice_size:
@@ -3636,7 +4106,8 @@ class Dataset(Base, StorableObject, Serializable, _HasTable):
         # for backwards compatibility, set if unset
         self.set_total_size()
         db_session = object_session(self)
-        db_session.flush()
+        with transaction(db_session):
+            db_session.commit()
         return self.total_size
 
     def set_total_size(self):
@@ -3713,8 +4184,8 @@ class Dataset(Base, StorableObject, Serializable, _HasTable):
         # serialize Dataset objects only for jobs that can actually modify these models.
         assert serialization_options.serialize_dataset_objects
 
-        def to_int(n):
-            return int(n) if n is not None else 0
+        def to_int(n) -> Optional[int]:
+            return int(n) if n is not None else None
 
         rval = dict_for(
             self,
@@ -3846,13 +4317,13 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
     """A base class for all 'dataset instances', HDAs, LDAs, etc"""
 
     states = Dataset.states
+    _state: str
     conversion_messages = Dataset.conversion_messages
     permitted_actions = Dataset.permitted_actions
+    purged: bool
+    creating_job_associations: List[Union[JobToOutputDatasetCollectionAssociation, JobToOutputDatasetAssociation]]
 
-    class validated_states(str, Enum):
-        UNKNOWN = "unknown"
-        INVALID = "invalid"
-        OK = "ok"
+    validated_states = DatasetValidatedState
 
     def __init__(
         self,
@@ -3871,7 +4342,7 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
         deleted=False,
         designation=None,
         parent_id=None,
-        validated_state="unknown",
+        validated_state=DatasetValidatedState.UNKNOWN,
         validated_state_message=None,
         visible=True,
         create_dataset=False,
@@ -3909,7 +4380,8 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
             dataset.job_id = creating_job_id
             if flush:
                 sa_session.add(dataset)
-                sa_session.flush()
+                with transaction(sa_session):
+                    sa_session.commit()
         elif dataset:
             add_object_to_object_session(self, dataset)
         self.dataset = dataset
@@ -3950,7 +4422,9 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
             sa_session = object_session(self)
             if sa_session:
                 object_session(self).add(self.dataset)
-                object_session(self).flush()  # flush here, because hda.flush() won't flush the Dataset object
+                session = object_session(self)
+                with transaction(session):
+                    session.commit()  # flush here, because hda.flush() won't flush the Dataset object
 
     state = property(get_dataset_state, set_dataset_state)
 
@@ -4093,10 +4567,6 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
     def hashes(self):
         return self.dataset.hashes
 
-    def get_raw_data(self):
-        """Returns the full data. To stream it open the file_name and read/write as needed"""
-        return self.datatype.get_raw_data(self)
-
     def get_mime(self):
         """Returns the mime type of the data"""
         try:
@@ -4210,7 +4680,8 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
         session = trans.sa_session
         session.add(new_dataset)
         session.add(assoc)
-        session.flush()
+        with transaction(session):
+            session.commit()
         return new_dataset
 
     def copy_attributes(self, new_dataset):
@@ -4340,9 +4811,6 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
 
     def get_display_applications(self, trans):
         return self.datatype.get_display_applications_by_dataset(self, trans)
-
-    def get_visualizations(self):
-        return self.datatype.get_visualizations(self)
 
     def get_datasources(self, trans):
         """
@@ -4477,6 +4945,11 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
         self.copied_from_history_dataset_association = copied_from_history_dataset_association
         self.copied_from_library_dataset_dataset_association = copied_from_library_dataset_dataset_association
 
+    @property
+    def user(self):
+        if self.history:
+            return self.history.user
+
     def __create_version__(self, session):
         state = inspect(self)
         changes = {}
@@ -4524,7 +4997,7 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
         self.validated_state = other_hda.validated_state
         self.validated_state_message = other_hda.validated_state_message
         if include_tags and self.history:
-            self.copy_tags_from(self.history.user, other_hda)
+            self.copy_tags_from(self.user, other_hda)
         self.dataset = new_dataset or other_hda.dataset
         if old_dataset:
             old_dataset.full_delete()
@@ -4558,12 +5031,10 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
         hda.copy_tags_to(copy_tags)
         object_session(self).add(hda)
         hda.metadata = self.metadata
-        # In some instances peek relies on dataset_id, i.e. gmaj.zip for viewing MAFs
-        if not self.datatype.copy_safe_peek:
-            object_session(self).flush([self])
-            hda.set_peek()
         if flush:
-            object_session(self).flush()
+            session = object_session(self)
+            with transaction(session):
+                session.commit()
         return hda
 
     def copy_tags_to(self, copy_tags=None):
@@ -4590,6 +5061,9 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
         """
         Copy this HDA to a library optionally replacing an existing LDDA.
         """
+        if not self.dataset.shareable:
+            raise Exception("Attempting to share a non-shareable dataset.")
+
         if replace_dataset:
             # The replace_dataset param ( when not None ) refers to a LibraryDataset that
             #   is being replaced with a new version.
@@ -4626,10 +5100,10 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
             )
             trans.sa_session.add(dp)
         # Must set metadata after ldda flushed, as MetadataFiles require ldda.id
-        flushed = False
         if self.set_metadata_requires_flush:
-            flushed = True
-            object_session(self).flush()
+            session = object_session(self)
+            with transaction(session):
+                session.commit()
         ldda.metadata = self.metadata
         # TODO: copy #tags from history
         if ldda_message:
@@ -4638,12 +5112,11 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
             target_folder.add_library_dataset(library_dataset, genome_build=ldda.dbkey)
             object_session(self).add(target_folder)
         object_session(self).add(library_dataset)
-        if not self.datatype.copy_safe_peek:
-            # In some instances peek relies on dataset_id, i.e. gmaj.zip for viewing MAFs
-            if not flushed:
-                object_session(self).flush()
-            ldda.set_peek()
-        object_session(self).flush()
+
+        session = object_session(self)
+        with transaction(session):
+            session.commit()
+
         return ldda
 
     def clear_associated_files(self, metadata_safe=False, purge=False):
@@ -4661,10 +5134,10 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
         """
         return self.dataset.get_access_roles(security_agent)
 
-    def purge_usage_from_quota(self, user):
+    def purge_usage_from_quota(self, user, quota_source_info):
         """Remove this HDA's quota_amount from user's quota."""
-        if user:
-            user.adjust_total_disk_usage(-self.quota_amount(user))
+        if user and quota_source_info.use:
+            user.adjust_total_disk_usage(-self.quota_amount(user), quota_source_info.label)
 
     def quota_amount(self, user):
         """
@@ -4683,7 +5156,7 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
             for hda in self.dataset.history_associations:
                 if hda.id == self.id:
                     continue
-                if not hda.purged and hda.history and hda.history.user and hda.history.user == user:
+                if not hda.purged and hda.history and hda.user and hda.user == user:
                     break
             else:
                 rval += self.get_total_size()
@@ -4920,8 +5393,6 @@ class Library(Base, Dictifiable, HasName, Serializable):
         We prepend an F to folders.
         """
         rval = super().to_dict(view=view, value_mapper=value_mapper)
-        if "root_folder_id" in rval:
-            rval["root_folder_id"] = f"F{str(rval['root_folder_id'])}"
         return rval
 
     def get_active_folders(self, folder, folders=None):
@@ -5268,15 +5739,14 @@ class LibraryDatasetDatasetAssociation(DatasetInstance, HasName, Serializable):
         tag_manager = galaxy.model.tags.GalaxyTagHandler(sa_session)
         src_ldda_tags = tag_manager.get_tags_str(self.tags)
         tag_manager.apply_item_tags(user=self.user, item=hda, tags_str=src_ldda_tags)
-
         sa_session.add(hda)
-        sa_session.flush()
+        with transaction(sa_session):
+            sa_session.commit()
         hda.metadata = self.metadata  # need to set after flushed, as MetadataFiles require dataset.id
         if add_to_history and target_history:
             target_history.add_dataset(hda)
-        if not self.datatype.copy_safe_peek:
-            hda.set_peek()  # in some instances peek relies on dataset_id, i.e. gmaj.zip for viewing MAFs
-        sa_session.flush()
+        with transaction(sa_session):
+            sa_session.commit()
         return hda
 
     def copy(self, parent_id=None, target_folder=None):
@@ -5302,13 +5772,12 @@ class LibraryDatasetDatasetAssociation(DatasetInstance, HasName, Serializable):
         tag_manager.apply_item_tags(user=self.user, item=ldda, tags_str=src_ldda_tags)
 
         sa_session.add(ldda)
-        sa_session.flush()
+        with transaction(sa_session):
+            sa_session.commit()
         # Need to set after flushed, as MetadataFiles require dataset.id
         ldda.metadata = self.metadata
-        if not self.datatype.copy_safe_peek:
-            # In some instances peek relies on dataset_id, i.e. gmaj.zip for viewing MAFs
-            ldda.set_peek()
-        sa_session.flush()
+        with transaction(sa_session):
+            sa_session.commit()
         return ldda
 
     def clear_associated_files(self, metadata_safe=False, purge=False):
@@ -5398,7 +5867,10 @@ class LibraryDatasetDatasetAssociation(DatasetInstance, HasName, Serializable):
                     WHERE library_folder.id = parent_folders_of.folder_id)
             """
         ).execution_options(autocommit=True)
-        ret = object_session(self).execute(sql, {"library_dataset_id": ldda.library_dataset_id, "ldda_id": ldda.id})
+
+        with object_session(self).bind.connect() as conn, conn.begin():
+            ret = conn.execute(sql, {"library_dataset_id": ldda.library_dataset_id, "ldda_id": ldda.id})
+
         if ret.rowcount < 1:
             log.warning(f"Attempt to updated parent folder times failed: {ret.rowcount} records updated.")
 
@@ -5639,10 +6111,7 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
     dict_collection_visible_keys = ["id", "collection_type"]
     dict_element_visible_keys = ["id", "collection_type"]
 
-    class populated_states(str, Enum):
-        NEW = "new"  # New dataset collection, unpopulated elements
-        OK = "ok"  # Collection elements populated (HDAs may or may not have errors)
-        FAILED = "failed"  # some problem populating state, won't be populated
+    populated_states = DatasetCollectionPopulatedState
 
     def __init__(self, id=None, collection_type=None, populated=True, element_count=None):
         self.id = id
@@ -5972,7 +6441,9 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
             )
         object_session(self).add(new_collection)
         if flush:
-            object_session(self).flush()
+            session = object_session(self)
+            with transaction(session):
+                session.commit()
         return new_collection
 
     def replace_failed_elements(self, replacements):
@@ -6116,15 +6587,6 @@ class HistoryDatasetCollectionAssociation(
         back_populates="history_dataset_collection_associations",
         uselist=False,
     )
-    job_state_summary = relationship(
-        HistoryDatasetCollectionJobStateSummary,
-        primaryjoin=(
-            lambda: HistoryDatasetCollectionAssociation.id
-            == HistoryDatasetCollectionJobStateSummary.__table__.c.hdca_id
-        ),
-        foreign_keys=HistoryDatasetCollectionJobStateSummary.__table__.c.hdca_id,
-        uselist=False,
-    )
     tags = relationship(
         "HistoryDatasetCollectionTagAssociation",
         order_by=lambda: HistoryDatasetCollectionTagAssociation.id,
@@ -6144,6 +6606,7 @@ class HistoryDatasetCollectionAssociation(
 
     dict_dbkeysandextensions_visible_keys = ["dbkeys", "extensions"]
     editable_keys = ("name", "deleted", "visible")
+    _job_state_summary = None
 
     def __init__(self, deleted=False, visible=True, **kwd):
         super().__init__(**kwd)
@@ -6179,12 +6642,74 @@ class HistoryDatasetCollectionAssociation(
             return None
 
     @property
+    def job_state_summary(self):
+        """
+        Aggregate counts of jobs by state, stored in a JobStateSummary object.
+        """
+        if not self._job_state_summary:
+            self._job_state_summary = self._get_job_state_summary()
+            # if summary exists, but there are no jobs, load zeroes for all other counts (otherwise they will be None)
+            if self._job_state_summary and self._job_state_summary.all_jobs == 0:
+                zeroes = [0] * (len(Job.states) + 1)
+                self._job_state_summary = JobStateSummary._make(zeroes)
+
+        return self._job_state_summary
+
+    def _get_job_state_summary(self):
+        def build_statement():
+            state_label = "state"  # used to generate `SELECT job.state AS state`, and then refer to it in aggregates.
+
+            # Select job states joining on icjja > icj > hdca
+            # (We are selecting Job.id in addition to Job.state because otherwise the UNION operation
+            #  will get rid of duplicates, making aggregates meaningless.)
+            subq1 = (
+                select(Job.id, Job.state.label(state_label))
+                .join(ImplicitCollectionJobsJobAssociation, ImplicitCollectionJobsJobAssociation.job_id == Job.id)
+                .join(
+                    ImplicitCollectionJobs,
+                    ImplicitCollectionJobs.id == ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id,
+                )
+                .join(
+                    HistoryDatasetCollectionAssociation,
+                    HistoryDatasetCollectionAssociation.implicit_collection_jobs_id == ImplicitCollectionJobs.id,
+                )
+                .where(HistoryDatasetCollectionAssociation.id == self.id)
+            )
+
+            # Select job states joining on hdca
+            subq2 = (
+                select(Job.id, Job.state.label(state_label))
+                .join(HistoryDatasetCollectionAssociation, HistoryDatasetCollectionAssociation.job_id == Job.id)
+                .where(HistoryDatasetCollectionAssociation.id == self.id)
+            )
+
+            # Combine subqueries
+            subq = subq1.union(subq2)
+
+            # Build and return final query
+            stm = select().select_from(subq)
+            # Add aggregate columns for each job state
+            for state in enum_values(Job.states):
+                col = func.sum(case((column(state_label) == state, 1), else_=0)).label(state)
+                stm = stm.add_columns(col)
+            # Add aggregate column for all jobs
+            col = func.count("*").label("all_jobs")
+            stm = stm.add_columns(col)
+            return stm
+
+        if not object_session(self):
+            return None  # no session means object is not persistant; therefore, it has no associated jobs.
+
+        engine = object_session(self).bind
+        with engine.connect() as conn:
+            counts = conn.execute(build_statement()).one()
+            assert len(counts) == len(Job.states) + 1  # Verify all job states + all jobs are counted
+            return JobStateSummary._make(counts)
+
+    @property
     def job_state_summary_dict(self):
         if self.job_state_summary:
-            states = self.job_state_summary.__dict__.copy()
-            del states["_sa_instance_state"]
-            del states["hdca_id"]
-            return states
+            return self.job_state_summary._asdict()
 
     @property
     def dataset_dbkeys_and_extensions_summary(self):
@@ -6207,6 +6732,14 @@ class HistoryDatasetCollectionAssociation(
     @property
     def job_source_id(self):
         return self.implicit_collection_jobs_id or self.job_id
+
+    def touch(self):
+        # cause an update to be emitted, so that e.g. update_time is incremented and triggers are notified
+        if getattr(self, "name", None):
+            # attribute to flag doesn't really matter as long as it's not null (and primary key also doesn't work)
+            flag_modified(self, "name")
+            if self.collection:
+                flag_modified(self.collection, "collection_type")
 
     def to_hda_representative(self, multiple=False):
         rval = []
@@ -6334,7 +6867,9 @@ class HistoryDatasetCollectionAssociation(
             element_destination.stage_addition(hdca)
             element_destination.add_pending_items()
         if flush:
-            object_session(self).flush()
+            session = object_session(self)
+            with transaction(session):
+                session.commit()
         return hdca
 
     @property
@@ -6654,7 +7189,7 @@ class GalaxySession(Base, RepresentById):
     def __init__(self, is_valid=False, **kwd):
         super().__init__(**kwd)
         self.is_valid = is_valid
-        self.last_action = self.last_action or datetime.now()
+        self.last_action = self.last_action or now()
 
     def add_history(self, history, association=None):
         if association is None:
@@ -6875,7 +7410,7 @@ class Workflow(Base, Dictifiable, RepresentById):
     source_metadata = Column(JSONType)
     uuid = Column(UUIDType, nullable=True)
 
-    steps = relationship(
+    steps: List["WorkflowStep"] = relationship(
         "WorkflowStep",
         back_populates="workflow",
         primaryjoin=(lambda: Workflow.id == WorkflowStep.workflow_id),  # type: ignore[has-type]
@@ -6926,7 +7461,7 @@ class Workflow(Base, Dictifiable, RepresentById):
             steps[step_id] = step
         return steps
 
-    def step_by_index(self, order_index):
+    def step_by_index(self, order_index: int):
         for step in self.steps:
             if order_index == step.order_index:
                 return step
@@ -7037,19 +7572,20 @@ class WorkflowStep(Base, RepresentById):
     workflow_id = Column(Integer, ForeignKey("workflow.id"), index=True, nullable=False)
     subworkflow_id = Column(Integer, ForeignKey("workflow.id"), index=True, nullable=True)
     dynamic_tool_id = Column(Integer, ForeignKey("dynamic_tool.id"), index=True, nullable=True)
-    type = Column(String(64))
+    type: str = Column(String(64))
     tool_id = Column(TEXT)
     tool_version = Column(TEXT)
     tool_inputs = Column(JSONType)
     tool_errors = Column(JSONType)
     position = Column(MutableJSONType)
     config = Column(JSONType)
-    order_index = Column(Integer)
+    order_index: int = Column(Integer)
+    when_expression = Column(JSONType)
     uuid = Column(UUIDType)
     label = Column(Unicode(255))
     temp_input_connections: Optional[InputConnDictType]
 
-    subworkflow = relationship(
+    subworkflow: Optional[Workflow] = relationship(
         "Workflow",
         primaryjoin=(lambda: Workflow.id == WorkflowStep.subworkflow_id),
         back_populates="parent_workflow_steps",
@@ -7073,6 +7609,12 @@ class WorkflowStep(Base, RepresentById):
         "Workflow", primaryjoin=(lambda: Workflow.id == WorkflowStep.workflow_id), back_populates="steps"
     )
 
+    # Injected attributes
+    # TODO: code using these should be refactored to not depend on these non-persistent fields
+    module: Optional["WorkflowModule"]
+    state: Optional["DefaultToolState"]
+    upgrade_messages: Optional[Dict]
+
     STEP_TYPE_TO_INPUT_TYPE = {
         "data_input": "dataset",
         "data_collection_input": "dataset_collection",
@@ -7083,10 +7625,12 @@ class WorkflowStep(Base, RepresentById):
     def __init__(self):
         self.uuid = uuid4()
         self._input_connections_by_name = None
+        self._inputs_by_name = None
 
     @reconstructor
     def init_on_load(self):
         self._input_connections_by_name = None
+        self._inputs_by_name = None
 
     @property
     def tool_uuid(self):
@@ -7112,6 +7656,23 @@ class WorkflowStep(Base, RepresentById):
         tool_state = self.tool_inputs
         return tool_state.get("optional") or False
 
+    def setup_inputs_by_name(self):
+        # Ensure input_connections has already been set.
+
+        # Make connection information available on each step by input name.
+        inputs_by_name = {}
+        for step_input in self.inputs:
+            input_name = step_input.name
+            assert input_name not in inputs_by_name
+            inputs_by_name[input_name] = step_input
+        self._inputs_by_name = inputs_by_name
+
+    @property
+    def inputs_by_name(self):
+        if self._inputs_by_name is None:
+            self.setup_inputs_by_name()
+        return self._inputs_by_name
+
     def get_input(self, input_name):
         for step_input in self.inputs:
             if step_input.name == input_name:
@@ -7135,8 +7696,27 @@ class WorkflowStep(Base, RepresentById):
         conn.output_name = output_name
         add_object_to_object_session(conn, output_step)
         conn.output_step = output_step
-        if input_subworkflow_step_index is not None:
-            input_subworkflow_step = self.subworkflow.step_by_index(input_subworkflow_step_index)
+        if self.subworkflow:
+            if input_subworkflow_step_index is not None:
+                input_subworkflow_step = self.subworkflow.step_by_index(input_subworkflow_step_index)
+            else:
+                input_subworkflow_steps = [step for step in self.subworkflow.input_steps if step.label == input_name]
+                if not input_subworkflow_steps:
+                    inferred_order_index = input_name.split(":", 1)[0]
+                    if inferred_order_index.isdigit():
+                        input_subworkflow_steps = [self.subworkflow.step_by_index(int(inferred_order_index))]
+                if len(input_subworkflow_steps) != 1:
+                    # `when` expression inputs don't need to be passed into subworkflow
+                    # In the absence of formal extra step inputs this seems like the best we can do.
+                    # A better way to do these validations is to validate that all required subworkflow inputs
+                    # are connected.
+                    if input_name not in (self.when_expression or ""):
+                        raise galaxy.exceptions.MessageException(
+                            f"Invalid subworkflow connection at step index {self.order_index + 1}"
+                        )
+                    else:
+                        input_subworkflow_steps = [None]
+                input_subworkflow_step = input_subworkflow_steps[0]
             conn.input_subworkflow_step = input_subworkflow_step
         return conn
 
@@ -7218,6 +7798,7 @@ class WorkflowStep(Base, RepresentById):
         copied_step.position = self.position
         copied_step.config = self.config
         copied_step.label = self.label
+        copied_step.when_expression = self.when_expression
         copied_step.inputs = copy_list(self.inputs, copied_step)
 
         subworkflow_step_mapping = {}
@@ -7470,16 +8051,37 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
         back_populates="parent_workflow_invocation",
         uselist=True,
     )
-    steps = relationship("WorkflowInvocationStep", back_populates="workflow_invocation")
-    workflow = relationship("Workflow")
+    steps = relationship(
+        "WorkflowInvocationStep",
+        back_populates="workflow_invocation",
+        order_by=lambda: WorkflowInvocationStep.order_index,
+    )
+    workflow: Workflow = relationship("Workflow")
     output_dataset_collections = relationship(
         "WorkflowInvocationOutputDatasetCollectionAssociation", back_populates="workflow_invocation"
     )
     output_datasets = relationship("WorkflowInvocationOutputDatasetAssociation", back_populates="workflow_invocation")
     output_values = relationship("WorkflowInvocationOutputValue", back_populates="workflow_invocation")
+    messages = relationship("WorkflowInvocationMessage", back_populates="workflow_invocation")
 
-    dict_collection_visible_keys = ["id", "update_time", "create_time", "workflow_id", "history_id", "uuid", "state"]
-    dict_element_visible_keys = ["id", "update_time", "create_time", "workflow_id", "history_id", "uuid", "state"]
+    dict_collection_visible_keys = [
+        "id",
+        "update_time",
+        "create_time",
+        "workflow_id",
+        "history_id",
+        "uuid",
+        "state",
+    ]
+    dict_element_visible_keys = [
+        "id",
+        "update_time",
+        "create_time",
+        "workflow_id",
+        "history_id",
+        "uuid",
+        "state",
+    ]
 
     class states(str, Enum):
         NEW = "new"  # Brand new workflow invocation... maybe this should be same as READY
@@ -7555,7 +8157,7 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
             step_invocations[step_id] = invocation_step
         return step_invocations
 
-    def step_invocation_for_step_id(self, step_id):
+    def step_invocation_for_step_id(self, step_id: int) -> Optional["WorkflowInvocationStep"]:
         target_invocation_step = None
         for invocation_step in self.steps:
             if step_id == invocation_step.workflow_step_id:
@@ -7583,7 +8185,7 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
         return [wid for wid in query.all()]
 
     @staticmethod
-    def poll_active_workflow_ids(sa_session, scheduler=None, handler=None):
+    def poll_active_workflow_ids(engine, scheduler=None, handler=None):
         and_conditions = [
             or_(
                 WorkflowInvocation.state == WorkflowInvocation.states.NEW,
@@ -7595,14 +8197,11 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
         if handler is not None:
             and_conditions.append(WorkflowInvocation.handler == handler)
 
-        query = (
-            sa_session.query(WorkflowInvocation.id)
-            .filter(and_(*and_conditions))
-            .order_by(WorkflowInvocation.table.c.id.asc())
-        )
+        stmt = select(WorkflowInvocation.id).filter(and_(*and_conditions)).order_by(WorkflowInvocation.id.asc())
         # Immediately just load all ids into memory so time slicing logic
         # is relatively intutitive.
-        return [wid for wid in query.all()]
+        with engine.connect() as conn:
+            return conn.scalars(stmt).all()
 
     def add_output(self, workflow_output, step, output_object):
         if not hasattr(output_object, "history_content_type"):
@@ -7852,6 +8451,19 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
             attach_step(request_to_content)
             self.input_step_parameters.append(request_to_content)
 
+    def add_message(self, message: "InvocationMessageUnion"):
+        self.messages.append(
+            WorkflowInvocationMessage(
+                workflow_invocation_id=self.id,
+                **message.dict(
+                    exclude_unset=True,
+                    exclude={
+                        "history_id"
+                    },  # history_id comes in through workflow_invocation and isn't persisted in database
+                ),
+            )
+        )
+
     @property
     def resource_parameters(self):
         resource_type = WorkflowRequestInputParameter.types.RESOURCE_PARAMETERS
@@ -7913,6 +8525,78 @@ class WorkflowInvocationToSubworkflowInvocationAssociation(Base, Dictifiable, Re
     dict_element_visible_keys = ["id", "workflow_step_id", "workflow_invocation_id", "subworkflow_invocation_id"]
 
 
+class WorkflowInvocationMessage(Base, Dictifiable, Serializable):
+    __tablename__ = "workflow_invocation_message"
+    id = Column(Integer, primary_key=True)
+    workflow_invocation_id = Column(Integer, ForeignKey("workflow_invocation.id"), index=True, nullable=False)
+    reason = Column(String(32))
+    details = Column(TrimmedString(255), nullable=True)
+    output_name = Column(String(255), nullable=True)
+    workflow_step_id = Column(Integer, ForeignKey("workflow_step.id"), nullable=True)
+    dependent_workflow_step_id = Column(Integer, ForeignKey("workflow_step.id"), nullable=True)
+    job_id = Column(Integer, ForeignKey("job.id"), nullable=True)
+    hda_id = Column(Integer, ForeignKey("history_dataset_association.id"), nullable=True)
+    hdca_id = Column(Integer, ForeignKey("history_dataset_collection_association.id"), nullable=True)
+
+    workflow_invocation = relationship("WorkflowInvocation", back_populates="messages", lazy=True)
+    workflow_step = relationship("WorkflowStep", foreign_keys=workflow_step_id, lazy=True)
+    dependent_workflow_step = relationship("WorkflowStep", foreign_keys=dependent_workflow_step_id, lazy=True)
+
+    @property
+    def workflow_step_index(self):
+        return self.workflow_step and self.workflow_step.order_index
+
+    @property
+    def dependent_workflow_step_index(self):
+        return self.dependent_workflow_step and self.dependent_workflow_step.order_index
+
+    @property
+    def history_id(self):
+        return self.workflow_invocation.history_id
+
+
+class EffectiveOutput(TypedDict):
+    """An output for the sake or determining full workflow outputs.
+
+    A workflow output might not be an effective output if it is an
+    output on a subworkflow or a parent workflow that doesn't declare
+    it an output.
+
+    This is currently only used for determining object store selections.
+    We don't want to capture subworkflow outputs that the user would like
+    to ignore and discard as effective workflow outputs.
+    """
+
+    output_name: str
+    step_id: int
+
+
+class WorkflowInvocationStepObjectStores(NamedTuple):
+    preferred_object_store_id: Optional[str]
+    preferred_outputs_object_store_id: Optional[str]
+    preferred_intermediate_object_store_id: Optional[str]
+    step_effective_outputs: Optional[List["EffectiveOutput"]]
+
+    def is_output_name_an_effective_output(self, output_name: str) -> bool:
+        if self.step_effective_outputs is None:
+            return True
+        else:
+            for effective_output in self.step_effective_outputs:
+                if effective_output["output_name"] == output_name:
+                    return True
+
+            return False
+
+    @property
+    def is_split_configuration(self):
+        preferred_outputs_object_store_id = self.preferred_outputs_object_store_id
+        preferred_intermediate_object_store_id = self.preferred_intermediate_object_store_id
+        has_typed_preferences = (
+            preferred_outputs_object_store_id is not None or preferred_intermediate_object_store_id is not None
+        )
+        return has_typed_preferences and preferred_outputs_object_store_id != preferred_intermediate_object_store_id
+
+
 class WorkflowInvocationStep(Base, Dictifiable, Serializable):
     __tablename__ = "workflow_invocation_step"
 
@@ -7947,6 +8631,9 @@ class WorkflowInvocationStep(Base, Dictifiable, Serializable):
         ),
         back_populates="workflow_invocation_step",
         viewonly=True,
+    )
+    order_index = column_property(
+        select([WorkflowStep.order_index]).where(WorkflowStep.id == workflow_step_id).scalar_subquery()
     )
 
     subworkflow_invocation_id: column_property
@@ -8005,6 +8692,36 @@ class WorkflowInvocationStep(Base, Dictifiable, Serializable):
             return self.implicit_collection_jobs.job_list
         else:
             return []
+
+    @property
+    def preferred_object_stores(self) -> WorkflowInvocationStepObjectStores:
+        meta_type = WorkflowRequestInputParameter.types.META_PARAMETERS
+        preferred_object_store_id = None
+        preferred_outputs_object_store_id = None
+        preferred_intermediate_object_store_id = None
+        step_effective_outputs: Optional[List["EffectiveOutput"]] = None
+
+        workflow_invocation = self.workflow_invocation
+        for input_parameter in workflow_invocation.input_parameters:
+            if input_parameter.type != meta_type:
+                continue
+            if input_parameter.name == "preferred_object_store_id":
+                preferred_object_store_id = input_parameter.value
+            elif input_parameter.name == "preferred_outputs_object_store_id":
+                preferred_outputs_object_store_id = input_parameter.value
+            elif input_parameter.name == "preferred_intermediate_object_store_id":
+                preferred_intermediate_object_store_id = input_parameter.value
+            elif input_parameter.name == "effective_outputs":
+                all_effective_outputs = json.loads(input_parameter.value)
+                step_id = self.workflow_step_id
+                step_effective_outputs = [e for e in all_effective_outputs if e["step_id"] == step_id]
+
+        return WorkflowInvocationStepObjectStores(
+            preferred_object_store_id,
+            preferred_outputs_object_store_id,
+            preferred_intermediate_object_store_id,
+            step_effective_outputs,
+        )
 
     def _serialize(self, id_encoder, serialization_options):
         step_attrs = dict_for(self)
@@ -8090,7 +8807,7 @@ class WorkflowRequestInputParameter(Base, Dictifiable, Serializable):
 
     id = Column(Integer, primary_key=True)
     workflow_invocation_id = Column(
-        Integer, ForeignKey("workflow_invocation.id", onupdate="CASCADE", ondelete="CASCADE")
+        Integer, ForeignKey("workflow_invocation.id", onupdate="CASCADE", ondelete="CASCADE"), index=True
     )
     name = Column(Unicode(255))
     value = Column(TEXT)
@@ -8120,7 +8837,7 @@ class WorkflowRequestStepState(Base, Dictifiable, Serializable):
 
     id = Column(Integer, primary_key=True)
     workflow_invocation_id = Column(
-        Integer, ForeignKey("workflow_invocation.id", onupdate="CASCADE", ondelete="CASCADE")
+        Integer, ForeignKey("workflow_invocation.id", onupdate="CASCADE", ondelete="CASCADE"), index=True
     )
     workflow_step_id = Column(Integer, ForeignKey("workflow_step.id"))
     value = Column(MutableJSONType)
@@ -8486,7 +9203,7 @@ class FormDefinition(Base, Dictifiable, RepresentById):
             ).get(field["type"], TextField)
             form_def["inputs"].append(
                 FieldClass(
-                    user=user, value=values.get(field["name"], field["default"]), security=security, **field
+                    user=user, value=values.get(field["name"], field.get("default")), security=security, **field
                 ).to_dict()
             )
         return form_def
@@ -8595,7 +9312,8 @@ class PSAAssociation(Base, AssociationMixin, RepresentById):
 
     def save(self):
         self.sa_session.add(self)
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
 
     @classmethod
     def store(cls, server_url, association):
@@ -8608,7 +9326,8 @@ class PSAAssociation(Base, AssociationMixin, RepresentById):
         assoc.lifetime = association.lifetime
         assoc.assoc_type = association.assoc_type
         cls.sa_session.add(assoc)
-        cls.sa_session.flush()
+        with transaction(cls.sa_session):
+            cls.sa_session.commit()
 
     @classmethod
     def get(cls, *args, **kwargs):
@@ -8636,7 +9355,8 @@ class PSACode(Base, CodeMixin, RepresentById):
 
     def save(self):
         self.sa_session.add(self)
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
 
     @classmethod
     def get_code(cls, code):
@@ -8661,7 +9381,8 @@ class PSANonce(Base, NonceMixin, RepresentById):
 
     def save(self):
         self.sa_session.add(self)
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
 
     @classmethod
     def use(cls, server_url, timestamp, salt):
@@ -8670,7 +9391,8 @@ class PSANonce(Base, NonceMixin, RepresentById):
         except IndexError:
             instance = cls(server_url=server_url, timestamp=timestamp, salt=salt)
             cls.sa_session.add(instance)
-            cls.sa_session.flush()
+            with transaction(cls.sa_session):
+                cls.sa_session.commit()
             return instance
 
 
@@ -8694,7 +9416,8 @@ class PSAPartial(Base, PartialMixin, RepresentById):
 
     def save(self):
         self.sa_session.add(self)
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
 
     @classmethod
     def load(cls, token):
@@ -8741,11 +9464,13 @@ class UserAuthnzToken(Base, UserMixin, RepresentById):
     def set_extra_data(self, extra_data=None):
         if super().set_extra_data(extra_data):
             self.sa_session.add(self)
-            self.sa_session.flush()
+            with transaction(self.sa_session):
+                self.sa_session.commit()
 
     def save(self):
         self.sa_session.add(self)
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
 
     @classmethod
     def username_max_length(cls):
@@ -8760,7 +9485,8 @@ class UserAuthnzToken(Base, UserMixin, RepresentById):
     @classmethod
     def changed(cls, user):
         cls.sa_session.add(user)
-        cls.sa_session.flush()
+        with transaction(cls.sa_session):
+            cls.sa_session.commit()
 
     @classmethod
     def user_query(cls):
@@ -8786,7 +9512,8 @@ class UserAuthnzToken(Base, UserMixin, RepresentById):
             raise Exception(f"User with this email '{instance.email}' already exists.")
         instance.set_random_password()
         cls.sa_session.add(instance)
-        cls.sa_session.flush()
+        with transaction(cls.sa_session):
+            cls.sa_session.commit()
         return instance
 
     @classmethod
@@ -8819,7 +9546,8 @@ class UserAuthnzToken(Base, UserMixin, RepresentById):
         uid = str(uid)
         instance = cls(user=user, uid=uid, provider=provider)
         cls.sa_session.add(instance)
-        cls.sa_session.flush()
+        with transaction(cls.sa_session):
+            cls.sa_session.commit()
         return instance
 
 
@@ -8842,7 +9570,7 @@ class CustosAuthnzToken(Base, RepresentById):
     user = relationship("User", back_populates="custos_auth")
 
 
-class CloudAuthz(Base, _HasTable):
+class CloudAuthz(Base):
     __tablename__ = "cloudauthz"
 
     id = Column(Integer, primary_key=True)
@@ -8863,8 +9591,8 @@ class CloudAuthz(Base, _HasTable):
         self.provider = provider
         self.config = config
         self.authn_id = authn_id
-        self.last_update = datetime.now()
-        self.last_activity = datetime.now()
+        self.last_update = now()
+        self.last_activity = now()
         self.description = description
 
     def equals(self, user_id, provider, authn_id, config):
@@ -8878,7 +9606,7 @@ class CloudAuthz(Base, _HasTable):
         )
 
 
-class Page(Base, Dictifiable, RepresentById):
+class Page(Base, HasTags, Dictifiable, RepresentById):
     __tablename__ = "page"
     __table_args__ = (Index("ix_page_slug", "slug", mysql_length=200),)
 
@@ -8934,6 +9662,8 @@ class Page(Base, Dictifiable, RepresentById):
         "importable",
         "deleted",
         "username",
+        "email_hash",
+        "update_time",
     ]
 
     def to_dict(self, view="element"):
@@ -8948,6 +9678,11 @@ class Page(Base, Dictifiable, RepresentById):
     @property
     def username(self):
         return self.user.username
+
+    # email needed for hash generation
+    @property
+    def email_hash(self):
+        return md5_hash_str(self.user.email)
 
 
 class PageRevision(Base, Dictifiable, RepresentById):
@@ -8984,7 +9719,7 @@ class PageUserShareAssociation(Base, UserShareAssociation):
     page = relationship("Page", back_populates="users_shared_with")
 
 
-class Visualization(Base, RepresentById):
+class Visualization(Base, HasTags, RepresentById):
     __tablename__ = "visualization"
     __table_args__ = (
         Index("ix_visualization_dbkey", "dbkey", mysql_length=200),
@@ -9575,6 +10310,7 @@ class APIKeys(Base, RepresentById):
     user_id = Column(Integer, ForeignKey("galaxy_user.id"), index=True)
     key = Column(TrimmedString(32), index=True, unique=True)
     user = relationship("User", back_populates="api_keys")
+    deleted = Column(Boolean, index=True, server_default=false(), nullable=False)
 
 
 def copy_list(lst, *args, **kwds):
@@ -10045,3 +10781,6 @@ def receive_init(target, args, kwargs):
         if obj:
             add_object_to_object_session(target, obj)
             return  # Once is enough.
+
+
+JobStateSummary = NamedTuple("JobStateSummary", [(value, int) for value in enum_values(Job.states)] + [("all_jobs", int)])  # type: ignore[misc]  # Ref https://github.com/python/mypy/issues/848#issuecomment-255237167

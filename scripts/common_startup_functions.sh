@@ -10,7 +10,7 @@ parse_common_args() {
     while :
     do
         case "$1" in
-            --skip-eggs|--skip-wheels|--skip-samples|--dev-wheels|--no-create-venv|--no-replace-pip|--replace-pip|--skip-client-build)
+            --skip-eggs|--skip-wheels|--skip-samples|--dev-wheels|--no-create-venv|--skip-client-build)
                 common_startup_args="$common_startup_args $1"
                 shift
                 ;;
@@ -55,6 +55,10 @@ parse_common_args() {
                 gravity_args="status"
                 paster_args="$paster_args $1"
                 add_pid_arg=1
+                shift
+                ;;
+            --no-replace-pip|--replace-pip)
+                # Deprecated options
                 shift
                 ;;
             "")
@@ -113,8 +117,6 @@ setup_python() {
         set_conda_exe
         if [ -n "$CONDA_EXE" ] && \
                 check_conda_env ${GALAXY_CONDA_ENV:="_galaxy_"}; then
-            # You almost surely have the required minimum pip version and running `conda install ... pip>=<min_ver>` every time is slow
-            REPLACE_PIP=0
             [ -n "$PYTHONPATH" ] && { echo 'Unsetting $PYTHONPATH'; unset PYTHONPATH; }
             if [ "$CONDA_DEFAULT_ENV" != "$GALAXY_CONDA_ENV" ]; then
                 conda_activate
@@ -132,17 +134,6 @@ setup_python() {
 
     find_python_command
     "$GALAXY_PYTHON" ./scripts/check_python.py || exit 1
-}
-
-setup_gravity_state_dir() {
-    # $GALAXY_VIRTUAL_ENV is expected to be set, and cwd must be galaxy root
-    if ! grep -q '^GRAVITY_STATE_DIR=' "${GALAXY_VIRTUAL_ENV}/bin/activate"; then
-        echo "Setting \$GRAVITY_STATE_DIR in ${GALAXY_VIRTUAL_ENV}/bin/activate"
-        echo '' >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
-        echo '# Galaxy Gravity per-instance state directory configured by Galaxy common_startup.sh' >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
-        echo "GRAVITY_STATE_DIR=\${GRAVITY_STATE_DIR:-'$(pwd)/database/gravity'}" >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
-        echo 'export GRAVITY_STATE_DIR' >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
-    fi
 }
 
 set_galaxy_config_file_var() {

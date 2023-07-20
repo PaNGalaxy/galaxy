@@ -1,6 +1,6 @@
 <template>
     <b-button
-        id="tool-panel-upload-button"
+        id="activity-upload"
         v-b-tooltip.hover.bottom
         :aria-label="title | localize"
         :title="title | localize"
@@ -23,11 +23,13 @@
 </template>
 
 <script>
+import Query from "utils/query-string-parsing";
 import { VBTooltip } from "bootstrap-vue";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { library } from "@fortawesome/fontawesome-svg-core";
 import { faUpload } from "@fortawesome/free-solid-svg-icons";
-import { openGlobalUploadModal } from "./mount";
+import { useGlobalUploadModal } from "composables/globalUploadModal";
+
 library.add(faUpload);
 
 export default {
@@ -38,23 +40,30 @@ export default {
     props: {
         title: { type: String, default: "Download from URL or upload files from disk" },
     },
+    setup() {
+        const { openGlobalUploadModal } = useGlobalUploadModal();
+        return { openGlobalUploadModal };
+    },
     data() {
         return {
             status: "",
             percentage: 0,
         };
     },
-    created() {
+    mounted() {
         this.eventHub.$on("upload:status", this.setStatus);
         this.eventHub.$on("upload:percentage", this.setPercentage);
+        if (Query.get("tool_id") == "upload1") {
+            this.showUploadDialog();
+        }
     },
     beforeDestroy() {
         this.eventHub.$off("upload:status", this.setStatus);
         this.eventHub.$off("upload:percentage", this.setPercentage);
     },
     methods: {
-        showUploadDialog(e) {
-            openGlobalUploadModal();
+        showUploadDialog() {
+            this.openGlobalUploadModal();
         },
         setStatus(val) {
             this.status = val;

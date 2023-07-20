@@ -145,7 +145,9 @@ def get_object_store(tool_job_working_directory, object_store=None):
         with open(object_store_conf_path) as f:
             config_dict = json.load(f)
         assert config_dict is not None
-        object_store = build_object_store_from_config(None, config_dict=config_dict)
+        # build an object store but disable any process management associated with it
+        # we're using it as a library - not as a service.
+        object_store = build_object_store_from_config(None, config_dict=config_dict, disable_process_management=True)
     Dataset.object_store = object_store
     return object_store
 
@@ -208,15 +210,16 @@ def set_metadata_portable(
         outputs_directory = os.path.join(tool_job_working_directory, "outputs")
         if not os.path.exists(outputs_directory):
             outputs_directory = tool_job_working_directory
+        metadata_directory = os.path.join(tool_job_working_directory, "metadata")
 
         # TODO: constants...
         locations = [
+            (metadata_directory, "tool_"),
             (outputs_directory, "tool_"),
             (tool_job_working_directory, ""),
-            (outputs_directory, ""),  # # Pulsar style output directory? Was this ever used - did this ever work?
         ]
         for directory, prefix in locations:
-            if os.path.exists(os.path.join(directory, f"{prefix}stdout")):
+            if directory and os.path.exists(os.path.join(directory, f"{prefix}stdout")):
                 with open(os.path.join(directory, f"{prefix}stdout"), "rb") as f:
                     tool_stdout = f.read(MAX_STDIO_READ_BYTES)
                 with open(os.path.join(directory, f"{prefix}stderr"), "rb") as f:
@@ -261,9 +264,9 @@ def set_metadata_portable(
         else:
             final_job_state = Job.states.ERROR
 
-        version_string_path = os.path.join("outputs", COMMAND_VERSION_FILENAME)
+        default_version_string_path = os.path.join("outputs", COMMAND_VERSION_FILENAME)
+        version_string_path = metadata_params.get("compute_version_path", default_version_string_path)
         version_string = collect_shrinked_content_from_path(version_string_path)
-
         expression_context = ExpressionContext(dict(stdout=tool_stdout[:255], stderr=tool_stderr[:255]))
 
         # Load outputs.
@@ -274,17 +277,13 @@ def set_metadata_portable(
             strip_metadata_files=False,
             serialize_jobs=True,
         )
-    try:
-        import_model_store = store.imported_store_for_metadata(
-            tool_job_working_directory / "metadata/outputs_new", object_store=object_store
-        )
-    except AssertionError:
-        # Remove in 21.09, this should only happen for jobs that started on <= 20.09 and finish now
-        import_model_store = None
+    import_model_store = store.imported_store_for_metadata(
+        tool_job_working_directory / "metadata/outputs_new", object_store=object_store
+    )
 
     tool_script_file = tool_job_working_directory / "tool_script.sh"
-    job = None
-    if import_model_store and export_store:
+    job: Optional[Job] = None
+    if export_store:
         job = next(iter(import_model_store.sa_session.objects[Job].values()))
 
     job_context = SessionlessJobContext(
@@ -305,8 +304,7 @@ def set_metadata_portable(
         # discover extra outputs...
         output_collections = {}
         for name, output_collection in metadata_params["output_collections"].items():
-            # TODO: remove HistoryDatasetCollectionAssociation fallback on 22.01, model_class used to not be serialized prior to 21.09
-            model_class = output_collection.get("model_class", "HistoryDatasetCollectionAssociation")
+            model_class = output_collection["model_class"]
             collection = import_model_store.sa_session.query(getattr(galaxy.model, model_class)).find(
                 output_collection["id"]
             )
@@ -328,18 +326,18 @@ def set_metadata_portable(
             final_job_state = Job.states.ERROR
             job_messages.append(str(e))
         if job:
-            job.job_messages = job_messages
+            job.set_streams(tool_stdout=tool_stdout, tool_stderr=tool_stderr, job_messages=job_messages)
             job.state = final_job_state
-        if os.path.exists(tool_script_file):
-            with open(tool_script_file) as command_fh:
-                command_line_lines = []
-                for i, line in enumerate(command_fh):
-                    if i == 0 and line.endswith("COMMAND_VERSION 2>&1;"):
-                        # Don't record version command as part of command line
-                        continue
-                    command_line_lines.append(line)
-                job.command_line = "".join(command_line_lines).strip()
-                export_store.export_job(job, include_job_data=False)
+            if os.path.exists(tool_script_file):
+                with open(tool_script_file) as command_fh:
+                    command_line_lines = []
+                    for i, line in enumerate(command_fh):
+                        if i == 0 and line.endswith("COMMAND_VERSION 2>&1;"):
+                            # Don't record version command as part of command line
+                            continue
+                        command_line_lines.append(line)
+                    job.command_line = "".join(command_line_lines).strip()
+                    export_store.export_job(job, include_job_data=False)
 
     unnamed_id_to_path = {}
     unnamed_is_deferred = {}
@@ -360,15 +358,7 @@ def set_metadata_portable(
     for output_name, output_dict in outputs.items():
         dataset_instance_id = output_dict["id"]
         klass = getattr(galaxy.model, output_dict.get("model_class", "HistoryDatasetAssociation"))
-        dataset = None
-        if import_model_store:
-            dataset = import_model_store.sa_session.query(klass).find(dataset_instance_id)
-        if dataset is None:
-            # legacy check for jobs that started before 21.01, remove on 21.05
-            filename_in = os.path.join(f"metadata/metadata_in_{output_name}")
-            import pickle
-
-            dataset = pickle.load(open(filename_in, "rb"))  # load DatasetInstance
+        dataset = import_model_store.sa_session.query(klass).find(dataset_instance_id)
         assert dataset is not None
 
         filename_kwds = tool_job_working_directory / f"metadata/metadata_kwds_{output_name}"
@@ -407,7 +397,21 @@ def set_metadata_portable(
                     files_path = os.path.abspath(
                         os.path.join(tool_job_working_directory, "working", extra_files_dir_name)
                     )
-                    dataset.dataset.external_extra_files_path = files_path
+                    if os.path.exists(files_path):
+                        dataset.dataset.external_extra_files_path = files_path
+                    else:
+                        # could be pulsar, stores extra files in outputs directory
+                        pulsar_extra_files_path = os.path.join(
+                            tool_job_working_directory, "outputs", extra_files_dir_name
+                        )
+                        if os.path.exists(pulsar_extra_files_path):
+                            dataset.dataset.external_extra_files_path = pulsar_extra_files_path
+                        elif dataset_filename_override and not object_store:
+                            # pulsar, no remote metadata and no extended metadata
+                            dataset.dataset.external_extra_files_path = os.path.join(
+                                os.path.dirname(dataset_filename_override), extra_files_dir_name
+                            )
+
             file_dict = tool_provided_metadata.get_dataset_meta(output_name, dataset.dataset.id, dataset.dataset.uuid)
             if "ext" in file_dict:
                 dataset.extension = file_dict["ext"]
@@ -476,13 +480,11 @@ def set_metadata_portable(
             else:
                 dataset.metadata.to_JSON_dict(filename_out)  # write out results of set_meta
 
-            json.dump(
-                (True, "Metadata has been set successfully"), open(filename_results_code, "wt+")
-            )  # setting metadata has succeeded
+            with open(filename_results_code, "w+") as tf:
+                json.dump((True, "Metadata has been set successfully"), tf)  # setting metadata has succeeded
         except Exception:
-            json.dump(
-                (False, traceback.format_exc()), open(filename_results_code, "wt+")
-            )  # setting metadata has failed somehow
+            with open(filename_results_code, "w+") as tf:
+                json.dump((False, traceback.format_exc()), tf)  # setting metadata has failed somehow
 
     if export_store:
         export_store.push_metadata_files()

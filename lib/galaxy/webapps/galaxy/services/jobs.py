@@ -15,7 +15,7 @@ from galaxy.managers.jobs import (
     JobSearch,
     view_show_job,
 )
-from galaxy.schema.fields import EncodedDatabaseIdField
+from galaxy.schema.fields import DecodedDatabaseIdField
 from galaxy.schema.schema import JobIndexQueryPayload
 
 
@@ -46,12 +46,11 @@ class JobsService:
     def show(
         self,
         trans: ProvidesUserContext,
-        id: EncodedDatabaseIdField,
+        id: DecodedDatabaseIdField,
         full: bool = False,
         stdout_start_pos: int = 0,
         stdout_count: int = 0,
     ) -> Dict[str, Any]:
-        id = trans.app.security.decode_id(id)
         job = self.job_manager.get_accessible_job(trans, id, stdout_start_pos, stdout_count)
         return view_show_job(trans, job, bool(full))
 

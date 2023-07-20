@@ -2,7 +2,7 @@ import { shallowMount } from "@vue/test-utils";
 import axios from "axios";
 import MockAdapter from "axios-mock-adapter";
 import flushPromises from "flush-promises";
-import { getLocalVue } from "jest/helpers";
+import { getLocalVue } from "tests/jest/helpers";
 import SelectionOperations from "./SelectionOperations.vue";
 import MockConfigProvider from "components/providers/MockConfigProvider";
 
@@ -149,6 +149,14 @@ describe("History Selection Operations", () => {
                 expect(wrapper.find(buildListOption).exists()).toBe(false);
                 expect(wrapper.find(buildPairOption).exists()).toBe(false);
                 expect(wrapper.find(buildListOfPairsOption).exists()).toBe(false);
+            });
+
+            it("should display list building option when all are selected", async () => {
+                const buildListOption = '[data-description="build list all"]';
+                await wrapper.setProps({ selectionSize: 105 });
+                await wrapper.setProps({ totalItemsInQuery: 105 });
+                await wrapper.setProps({ isQuerySelection: true });
+                expect(wrapper.find(buildListOption).exists()).toBe(true);
             });
         });
 

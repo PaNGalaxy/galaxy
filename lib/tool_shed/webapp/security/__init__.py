@@ -6,6 +6,7 @@ from sqlalchemy import (
     false,
 )
 
+from galaxy.model.base import transaction
 from galaxy.util import listify
 from galaxy.util.bunch import Bunch
 
@@ -73,7 +74,7 @@ class CommunityRBACAgent(RBACAgent):
 
     @property
     def sa_session(self):
-        """Returns a SQLAlchemy session"""
+        """Returns a SQLAlchemy scoped session"""
         return self.model.context
 
     def allow_action(self, roles, action, item):
@@ -107,25 +108,33 @@ class CommunityRBACAgent(RBACAgent):
     def associate_group_role(self, group, role):
         assoc = self.model.GroupRoleAssociation(group, role)
         self.sa_session.add(assoc)
-        self.sa_session.flush()
+        session = self.sa_session()
+        with transaction(session):
+            session.commit()
         return assoc
 
     def associate_user_group(self, user, group):
         assoc = self.model.UserGroupAssociation(user, group)
         self.sa_session.add(assoc)
-        self.sa_session.flush()
+        session = self.sa_session()
+        with transaction(session):
+            session.commit()
         return assoc
 
     def associate_user_role(self, user, role):
         assoc = self.model.UserRoleAssociation(user, role)
         self.sa_session.add(assoc)
-        self.sa_session.flush()
+        session = self.sa_session()
+        with transaction(session):
+            session.commit()
         return assoc
 
     def associate_repository_category(self, repository, category):
         assoc = self.model.RepositoryCategoryAssociation(repository, category)
         self.sa_session.add(assoc)
-        self.sa_session.flush()
+        session = self.sa_session()
+        with transaction(session):
+            session.commit()
         return assoc
 
     def create_private_user_role(self, user):
@@ -134,7 +143,9 @@ class CommunityRBACAgent(RBACAgent):
             name=user.email, description=f"Private Role for {user.email}", type=self.model.Role.types.PRIVATE
         )
         self.sa_session.add(role)
-        self.sa_session.flush()
+        session = self.sa_session()
+        with transaction(session):
+            session.commit()
         # Add user to role
         self.associate_components(role=role, user=user)
         return role
@@ -164,18 +175,6 @@ class CommunityRBACAgent(RBACAgent):
                 return None
         return role
 
-    def get_repository_reviewer_role(self):
-        return (
-            self.sa_session.query(self.model.Role)
-            .filter(
-                and_(
-                    self.model.Role.table.c.name == "Repository Reviewer",
-                    self.model.Role.table.c.type == self.model.Role.types.SYSTEM,
-                )
-            )
-            .first()
-        )
-
     def set_entity_group_associations(self, groups=None, users=None, roles=None, delete_existing_assocs=True):
         if groups is None:
             groups = []
@@ -187,7 +186,9 @@ class CommunityRBACAgent(RBACAgent):
             if delete_existing_assocs:
                 for a in group.roles + group.users:
                     self.sa_session.delete(a)
-                    self.sa_session.flush()
+                    session = self.sa_session()
+                    with transaction(session):
+                        session.commit()
             for role in roles:
                 self.associate_components(group=group, role=role)
             for user in users:
@@ -208,7 +209,9 @@ class CommunityRBACAgent(RBACAgent):
             if delete_existing_assocs:
                 for a in role.users + role.groups:
                     self.sa_session.delete(a)
-                    self.sa_session.flush()
+                    session = self.sa_session()
+                    with transaction(session):
+                        session.commit()
             for user in users:
                 self.associate_components(user=user, role=role)
             for group in groups:
@@ -225,7 +228,9 @@ class CommunityRBACAgent(RBACAgent):
             if delete_existing_assocs:
                 for a in user.non_private_roles + user.groups:
                     self.sa_session.delete(a)
-                    self.sa_session.flush()
+                    session = self.sa_session()
+                    with transaction(session):
+                        session.commit()
             self.sa_session.refresh(user)
             for role in roles:
                 # Make sure we are not creating an additional association with a PRIVATE role
@@ -280,26 +285,6 @@ class CommunityRBACAgent(RBACAgent):
         if iuc_group is not None:
             for uga in iuc_group.users:
                 if uga.user.id == user.id:
-                    return True
-        return False
-
-    def user_can_review_repositories(self, user):
-        if user:
-            roles = user.all_roles()
-            if roles:
-                repository_reviewer_role = self.get_repository_reviewer_role()
-                if repository_reviewer_role:
-                    return repository_reviewer_role in roles
-        return False
-
-    def user_can_browse_component_review(self, app, repository, component_review, user):
-        if component_review and user:
-            if self.can_push(app, user, repository):
-                # A user with write permission on the repository can access private/public component reviews.
-                return True
-            else:
-                if self.user_can_review_repositories(user):
-                    # Reviewers can access private/public component reviews.
                     return True
         return False
 

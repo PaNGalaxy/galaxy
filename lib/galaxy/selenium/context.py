@@ -12,6 +12,7 @@ from .navigates_galaxy import NavigatesGalaxy
 class GalaxySeleniumContext(NavigatesGalaxy):
     url: str
     target_url_from_selenium: str
+    configured_driver: ConfiguredDriver
 
     def build_url(self, url: str, for_selenium: bool = True) -> str:
         if for_selenium:
@@ -37,12 +38,6 @@ class GalaxySeleniumContext(NavigatesGalaxy):
             return
 
         self.driver.save_screenshot(target)
-        return target
-
-    def screenshot_if(self, label: Optional[str]) -> Optional[str]:
-        target = None
-        if label:
-            target = self.screenshot(label)
         return target
 
     @abstractmethod

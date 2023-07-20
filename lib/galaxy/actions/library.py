@@ -17,6 +17,7 @@ from galaxy.exceptions import (
     RequestParameterInvalidException,
 )
 from galaxy.model import LibraryDataset
+from galaxy.model.base import transaction
 from galaxy.tools.actions import upload_common
 from galaxy.tools.parameters import populate_state
 from galaxy.util.path import (
@@ -88,7 +89,7 @@ class LibraryActions:
     Mixin for controllers that provide library functionality.
     """
 
-    def _upload_dataset(self, trans, folder_id: str, replace_dataset: Optional[LibraryDataset] = None, **kwd):
+    def _upload_dataset(self, trans, folder_id: int, replace_dataset: Optional[LibraryDataset] = None, **kwd):
         # Set up the traditional tool state/params
         cntrller = "api"
         tool_id = "upload1"
@@ -213,7 +214,7 @@ class LibraryActions:
         (files_and_folders, _response_code, _message) = self._get_path_files_and_folders(params, preserve_dirs)
         if _response_code:
             return (uploaded_datasets, _response_code, _message)
-        for (path, name, folder) in files_and_folders:
+        for path, name, folder in files_and_folders:
             uploaded_datasets.append(
                 self._make_library_uploaded_dataset(trans, params, name, path, "path_paste", library_bunch, folder)
             )
@@ -224,7 +225,7 @@ class LibraryActions:
         if problem_response:
             return problem_response
         files_and_folders = []
-        for (line, path) in self._paths_list(params):
+        for line, path in self._paths_list(params):
             line_files_and_folders = self._get_single_path_files_and_folders(line, path, preserve_dirs)
             files_and_folders.extend(line_files_and_folders)
         return files_and_folders, None, None
@@ -257,7 +258,7 @@ class LibraryActions:
             response_code = 400
             return None, response_code, message
         bad_paths = []
-        for (_, path) in self._paths_list(params):
+        for _, path in self._paths_list(params):
             if not os.path.exists(path):
                 bad_paths.append(path)
         if bad_paths:
@@ -299,16 +300,15 @@ class LibraryActions:
         if link_data_only == "link_to_files":
             uploaded_dataset.data.link_to(path)
             trans.sa_session.add_all((uploaded_dataset.data, uploaded_dataset.data.dataset))
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
         return uploaded_dataset
 
-    def _create_folder(self, trans, parent_id, library_id, **kwd):
+    def _create_folder(self, trans, parent_id: int, **kwd):
         is_admin = trans.user_is_admin
         current_user_roles = trans.get_current_user_roles()
         try:
-            parent_folder = trans.sa_session.query(trans.app.model.LibraryFolder).get(
-                trans.security.decode_id(parent_id)
-            )
+            parent_folder = trans.sa_session.query(trans.app.model.LibraryFolder).get(parent_id)
         except Exception:
             parent_folder = None
         # Check the library which actually contains the user-supplied parent folder, not the user-supplied
@@ -322,7 +322,8 @@ class LibraryActions:
         new_folder.genome_build = trans.app.genome_builds.default_value
         parent_folder.add_folder(new_folder)
         trans.sa_session.add(new_folder)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         # New folders default to having the same permissions as their parent folder
         trans.app.security_agent.copy_library_permissions(trans, parent_folder, new_folder)
         return 200, dict(created=new_folder)
@@ -335,7 +336,7 @@ class LibraryActions:
                 raise ObjectNotFound(message)
             elif (
                 not trans.app.security_agent.can_access_dataset(current_user_roles, item.dataset)
-                and item.history.user == trans.user
+                and item.user == trans.user
             ):
                 message = f"You do not have permission to access the history dataset with id ({str(item.id)})."
                 raise ItemAccessibilityException(message)

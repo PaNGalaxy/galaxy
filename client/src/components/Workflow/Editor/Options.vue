@@ -1,3 +1,56 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import { BDropdown, BDropdownItem, BButton } from "bootstrap-vue";
+import { useConfirmDialog } from "@/composables/confirmDialog";
+
+const emit = defineEmits<{
+    (e: "onAttributes"): void;
+    (e: "onSave"): void;
+    (e: "onReport"): void;
+    (e: "onSaveAs"): void;
+    (e: "onLayout"): void;
+    (e: "onLint"): void;
+    (e: "onUpgrade"): void;
+    (e: "onDownload"): void;
+    (e: "onRun"): void;
+}>();
+
+const props = defineProps<{
+    hasChanges?: boolean;
+    hasInvalidConnections?: boolean;
+    requiredReindex?: boolean;
+}>();
+
+const { confirm } = useConfirmDialog();
+
+const saveHover = computed(() => {
+    if (!props.hasChanges) {
+        return "Workflow has no changes";
+    } else if (props.hasInvalidConnections) {
+        return "Workflow has invalid connections, review and remove invalid connections";
+    } else {
+        return "Save Workflow";
+    }
+});
+
+async function onSave() {
+    if (props.hasInvalidConnections) {
+        console.log("getting confirmation");
+        const confirmed = await confirm(
+            `Workflow has invalid connections. You can save the workflow, but it may not run correctly.`,
+            {
+                id: "save-workflow-confirmation",
+                okTitle: "Save Workflow",
+            }
+        );
+        if (confirmed) {
+            emit("onSave");
+        }
+    } else {
+        emit("onSave");
+    }
+}
+</script>
 <template>
     <div class="panel-header-buttons">
         <b-button
@@ -11,7 +64,7 @@
             @click="$emit('onAttributes')">
             <span class="fa fa-pencil-alt" />
         </b-button>
-        <b-button-group v-b-tooltip class="editor-button-save-group" title="Save Workflow">
+        <b-button-group v-b-tooltip class="editor-button-save-group" :title="saveHover">
             <b-button
                 id="workflow-save-button"
                 role="button"
@@ -19,7 +72,7 @@
                 aria-label="Save Workflow"
                 class="editor-button-save"
                 :disabled="!hasChanges"
-                @click="$emit('onSave')">
+                @click="onSave">
                 <span class="fa fa-floppy-o" />
             </b-button>
         </b-button-group>
@@ -76,23 +129,3 @@
         </b-button>
     </div>
 </template>
-
-<script>
-import { BDropdown, BDropdownItem, BButton } from "bootstrap-vue";
-
-export default {
-    components: {
-        BDropdown,
-        BDropdownItem,
-        BButton,
-    },
-    props: {
-        hasChanges: {
-            type: Boolean,
-        },
-        requiredReindex: {
-            type: Boolean,
-        },
-    },
-};
-</script>

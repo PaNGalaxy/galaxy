@@ -1,4 +1,9 @@
 import logging
+from typing import (
+    Any,
+    Callable,
+    Dict,
+)
 
 import tool_shed.util.shed_util_common as suc
 from galaxy import (
@@ -6,11 +11,12 @@ from galaxy import (
     util,
     web,
 )
+from galaxy.model.base import transaction
 from galaxy.web import (
     expose_api,
     expose_api_anonymous_and_sessionless,
+    require_admin,
 )
-from galaxy.web import require_admin as require_admin
 from galaxy.webapps.base.controller import BaseAPIController
 from tool_shed.util import repository_util
 
@@ -20,10 +26,7 @@ log = logging.getLogger(__name__)
 class CategoriesController(BaseAPIController):
     """RESTful controller for interactions with categories in the Tool Shed."""
 
-    def __get_repository_count(self, trans, category_name):
-        return self.app.repository_registry.viewable_repositories_and_suites_by_category.get(category_name, 0)
-
-    def __get_value_mapper(self, trans):
+    def __get_value_mapper(self, trans) -> Dict[str, Callable]:
         value_mapper = {"id": trans.security.encode_id}
         return value_mapper
 
@@ -55,7 +58,8 @@ class CategoriesController(BaseAPIController):
                 # Create the category
                 category = self.app.model.Category(name=name, description=description)
                 trans.sa_session.add(category)
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
                 category_dict = category.to_dict(view="element", value_mapper=self.__get_value_mapper(trans))
                 category_dict["message"] = f"Category '{str(category.name)}' has been created"
                 category_dict["url"] = web.url_for(
@@ -83,6 +87,7 @@ class CategoriesController(BaseAPIController):
         sort_order = kwd.get("sort_order", "asc")
         page = kwd.get("page", None)
         category = suc.get_category(self.app, category_id)
+        category_dict: Dict[str, Any]
         if category is None:
             category_dict = dict(message=f"Unable to locate category record for id {str(id)}.", status="error")
             return category_dict

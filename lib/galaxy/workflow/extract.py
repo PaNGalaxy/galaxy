@@ -8,6 +8,7 @@ from galaxy import (
     exceptions,
     model,
 )
+from galaxy.model.base import transaction
 from galaxy.tool_util.parser import ToolOutputCollectionPart
 from galaxy.tools.parameters.basic import (
     DataCollectionToolParameter,
@@ -52,8 +53,9 @@ def extract_workflow(
     # Workflow to populate
     workflow = model.Workflow()
     workflow.name = workflow_name
+    workflow.steps = steps
     # Order the steps if possible
-    attach_ordered_steps(workflow, steps)
+    attach_ordered_steps(workflow)
     # And let's try to set up some reasonable locations on the canvas
     # (these are pretty arbitrary values)
     levorder = order_workflow_steps_with_levels(steps)
@@ -69,7 +71,8 @@ def extract_workflow(
     workflow.stored_workflow = stored
     stored.latest_workflow = workflow
     trans.sa_session.add(stored)
-    trans.sa_session.flush()
+    with transaction(trans.sa_session):
+        trans.sa_session.commit()
     return stored
 
 

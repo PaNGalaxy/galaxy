@@ -3,24 +3,43 @@
         <ConfigProvider v-slot="config">
             <component
                 :is="viewElement"
+                v-if="loaded === true"
                 v-bind="currentNode"
                 :image-loc="config.welcome_directory"
                 @select="down"
                 @back="up">
             </component>
+            <div v-else-if="loaded === false">
+                <!--
+                    this shouldn't ever show unless the load actually fails,
+                    which shouldn't happen -- just a barebones failsafe 
+                -->
+                <Heading h1>Welcome to Galaxy!</Heading>
+                <p>
+                    Galaxy is web-based platform for reproducible computational analysis. Research in Galaxy is
+                    supported by 3 pillars: data, tools, and workflows.
+                </p>
+                <p>
+                    If this is your first time using Galaxy we strongly recommend looking at the introductory materials
+                    available at <a href="https://training.galaxyproject.org">training.galaxyproject.org</a>.
+                </p>
+            </div>
         </ConfigProvider>
     </div>
 </template>
 <script>
 import { BCard, BCardGroup, BTabs, BTab, BCarousel, BCarouselSlide, BButton, BRow, BCol } from "bootstrap-vue";
 import { getAppRoot } from "onload/loadConfig";
+import { getResource } from "./getResource";
 import Topics from "components/NewUserWelcome/components/Topics";
 import Subtopics from "components/NewUserWelcome/components/Subtopics";
 import Slides from "components/NewUserWelcome/components/Slides";
 import ConfigProvider from "components/providers/ConfigProvider";
+import Heading from "components/Common/Heading";
 
 export default {
     components: {
+        Heading,
         BCard,
         BCardGroup,
         BTabs,
@@ -35,12 +54,11 @@ export default {
         Slides,
         ConfigProvider,
     },
-    props: {
-        newUserDict: { type: Object, required: true },
-    },
     data() {
         return {
+            loaded: undefined,
             position: [],
+            newUser: {},
         };
     },
     computed: {
@@ -48,9 +66,10 @@ export default {
             return this.position.length;
         },
         currentNode() {
+            const userDict = this.newUser;
             return this.position.reduce((node, i) => {
                 return node.topics[i];
-            }, this.newUserDict);
+            }, userDict);
         },
         viewElement() {
             let element;
@@ -67,6 +86,16 @@ export default {
             }
             return element;
         },
+    },
+    async mounted() {
+        // todo, move to config, use non-webpack import and load like a plugin
+        const resource = await getResource();
+        if (resource?.newUserDict) {
+            this.newUser = resource.newUserDict;
+            this.loaded = true;
+        } else {
+            // Custom contents in component if this happens to fail, redirecting to tours or something?
+        }
     },
     methods: {
         imgUrl(src) {
@@ -85,7 +114,7 @@ export default {
 </script>
 
 <style scoped type="scss">
-.new-user-welcome::v-deep {
+.new-user-welcome:deep() {
     .carousel-fig {
         padding-bottom: 10;
     }

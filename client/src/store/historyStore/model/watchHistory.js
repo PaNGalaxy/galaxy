@@ -6,9 +6,11 @@
  */
 
 import defaultStore from "store/index";
+import { useHistoryItemsStore } from "stores/history/historyItemsStore";
 import { urlData } from "utils/url";
 import { loadSet } from "utils/setCache";
-import { getCurrentHistoryFromServer } from "./queries";
+import { useHistoryStore } from "stores/historyStore";
+import { getCurrentHistoryFromServer } from "stores/services/history.services";
 import { getGalaxyInstance } from "app";
 
 const limit = 1000;
@@ -37,13 +39,15 @@ function setVisibilityThrottle() {
 }
 
 export async function watchHistoryOnce(store) {
+    const historyStore = useHistoryStore();
+    const historyItemsStore = useHistoryItemsStore();
     // "Reset" watchTimeout so we don't queue up watchHistory calls in rewatchHistory.
     watchTimeout = null;
     // get current history
     const checkForUpdate = new Date();
     const history = await getCurrentHistoryFromServer(lastUpdateTime);
-    store.commit("setLastCheckedTime", { checkForUpdate });
-    if (!history) {
+    historyItemsStore.setLastCheckedTime(checkForUpdate);
+    if (!history || !history.id) {
         return;
     }
 
@@ -51,6 +55,7 @@ export async function watchHistoryOnce(store) {
     if (!lastUpdateTime || lastUpdateTime < history.update_time) {
         const historyId = history.id;
         lastUpdateTime = history.update_time;
+        historyItemsStore.setLastUpdateTime();
         // execute request to obtain recently changed items
         const params = {
             v: "dev",
@@ -63,7 +68,7 @@ export async function watchHistoryOnce(store) {
         if (detailedIds.length) {
             params["details"] = detailedIds.join(",");
         }
-        const url = `api/histories/${historyId}/contents`;
+        const url = `/api/histories/${historyId}/contents`;
         lastRequestDate = new Date();
         const payload = await urlData({ url, params });
         // show warning that not all changes have been obtained
@@ -71,9 +76,9 @@ export async function watchHistoryOnce(store) {
             console.debug(`Reached limit of monitored changes (limit=${limit}).`);
         }
         // pass changed items to attached stores
-        store.commit("history/setHistory", history);
+        historyStore.setHistory(history);
         store.commit("saveDatasets", { payload });
-        store.commit("saveHistoryItems", { historyId, payload });
+        historyItemsStore.saveHistoryItems(historyId, payload);
         store.commit("saveCollectionObjects", { payload });
         // trigger changes in legacy handler
         const Galaxy = getGalaxyInstance();
@@ -86,16 +91,20 @@ export async function watchHistoryOnce(store) {
 }
 
 export async function watchHistory(store = defaultStore) {
+    const historyItemsStore = useHistoryItemsStore();
     // Only set up visibility listeners once, whenever a watch is first started
     if (watchingVisibility === false) {
         watchingVisibility = true;
+        historyItemsStore.setWatchingVisibility(watchingVisibility);
         document.addEventListener("visibilitychange", setVisibilityThrottle);
     }
     try {
         await watchHistoryOnce(store);
     } catch (error) {
-        // would be fantastic if we could show some error alerting the user to this
+        // error alerting the user that watch history failed
         console.warn(error);
+        watchingVisibility = false;
+        historyItemsStore.setWatchingVisibility(watchingVisibility);
     } finally {
         watchTimeout = setTimeout(() => {
             watchHistory(store);

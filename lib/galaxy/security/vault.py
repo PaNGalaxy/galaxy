@@ -30,6 +30,7 @@ except ImportError:
     hvac = None
 
 from galaxy import model
+from galaxy.model.base import transaction
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +58,6 @@ class Vault(abc.ABC):
         :param key: The key to read. Typically a hierarchical path such as `/galaxy/user/1/preferences/editor`
         :return: The string value stored at the key, such as 'ace_editor'.
         """
-        pass
 
     @abc.abstractmethod
     def write_secret(self, key: str, value: str) -> None:
@@ -68,7 +68,6 @@ class Vault(abc.ABC):
         :param value: The value to write, such as 'vscode'
         :return:
         """
-        pass
 
     @abc.abstractmethod
     def list_secrets(self, key: str) -> List[str]:
@@ -80,7 +79,6 @@ class Vault(abc.ABC):
                  ['/galaxy/user/1/preferences/editor`, '/galaxy/user/1/preferences/storage`]
                  Note that only immediate subkeys are returned.
         """
-        pass
 
 
 class NullVault(Vault):
@@ -137,7 +135,8 @@ class DatabaseVault(Vault):
             if value:
                 vault_entry.value = value
                 self.sa_session.merge(vault_entry)
-                self.sa_session.flush()
+                with transaction(self.sa_session):
+                    self.sa_session.commit()
         else:
             # recursively create parent keys
             parent_key, _, _ = key.rpartition("/")
@@ -145,7 +144,8 @@ class DatabaseVault(Vault):
                 self._update_or_create(parent_key, None)
             vault_entry = model.Vault(key=key, value=value, parent_key=parent_key or None)
             self.sa_session.merge(vault_entry)
-            self.sa_session.flush()
+            with transaction(self.sa_session):
+                self.sa_session.commit()
         return vault_entry
 
     def read_secret(self, key: str) -> Optional[str]:
@@ -198,7 +198,10 @@ class UserVaultWrapper(Vault):
         self.user = user
 
     def read_secret(self, key: str) -> Optional[str]:
-        return self.vault.read_secret(f"user/{self.user.id}/{key}")
+        if self.user:
+            return self.vault.read_secret(f"user/{self.user.id}/{key}")
+        else:
+            return None
 
     def write_secret(self, key: str, value: str) -> None:
         return self.vault.write_secret(f"user/{self.user.id}/{key}", value)

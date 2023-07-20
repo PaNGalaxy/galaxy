@@ -1,12 +1,13 @@
 <template>
-    <div class="unified-panel">
+    <div class="unified-panel" aria-labelledby="toolbox-heading">
         <div unselectable="on">
             <div class="unified-panel-header-inner">
                 <nav class="d-flex justify-content-between mx-3 my-2">
-                    <h4 v-localize class="m-1">Tools</h4>
+                    <h2 v-if="!showAdvanced" id="toolbox-heading" v-localize class="m-1 h-sm">Tools</h2>
+                    <h2 v-else id="toolbox-heading" v-localize class="m-1 h-sm">Advanced Tool Search</h2>
                     <div class="panel-header-buttons">
                         <b-button-group>
-                            <favorites-button v-if="isUser" :query="query" @onFavorites="onQuery" />
+                            <favorites-button v-if="!showAdvanced" :query="query" @onFavorites="onQuery" />
                             <panel-view-button
                                 v-if="panelViews && Object.keys(panelViews).length > 1"
                                 :panel-views="panelViews"
@@ -19,26 +20,41 @@
         </div>
         <div class="unified-panel-controls">
             <tool-search
+                enable-advanced
                 :current-panel-view="currentPanelView"
                 :placeholder="titleSearchTools"
+                :show-advanced.sync="showAdvanced"
+                :toolbox="tools"
                 :query="query"
+                :query-pending="queryPending"
                 @onQuery="onQuery"
                 @onResults="onResults" />
-            <upload-button />
-            <div v-if="hasResults" class="pb-2">
-                <b-button size="sm" class="w-100" @click="onToggle">
-                    <span :class="buttonIcon" />
-                    <span class="mr-1">{{ buttonText }}</span>
-                </b-button>
-            </div>
-            <div v-else-if="queryTooShort" class="pb-2">
-                <b-badge class="alert-danger w-100">Search string too short!</b-badge>
-            </div>
-            <div v-else-if="queryFinished" class="pb-2">
-                <b-badge class="alert-danger w-100">No results found!</b-badge>
-            </div>
+            <section v-if="!showAdvanced">
+                <upload-button />
+                <div v-if="hasResults" class="pb-2">
+                    <b-button size="sm" class="w-100" @click="onToggle">
+                        <span :class="buttonIcon" />
+                        <span class="mr-1">{{ buttonText }}</span>
+                    </b-button>
+                </div>
+                <div v-else-if="queryTooShort" class="pb-2">
+                    <b-badge class="alert-danger w-100">Search string too short!</b-badge>
+                </div>
+                <div v-else-if="queryFinished" class="pb-2">
+                    <b-badge class="alert-danger w-100">No results found!</b-badge>
+                </div>
+                <div v-if="closestTerm" class="pb-2">
+                    <b-badge class="alert-danger w-100">
+                        Did you mean:
+                        <i>
+                            <a href="javascript:void(0)" @click="onQuery(closestTerm)">{{ closestTerm }}</a>
+                        </i>
+                        ?
+                    </b-badge>
+                </div>
+            </section>
         </div>
-        <div class="unified-panel-body">
+        <div v-if="!showAdvanced" class="unified-panel-body">
             <div class="toolMenuContainer">
                 <div class="toolMenu">
                     <tool-section
@@ -48,7 +64,7 @@
                         :query-filter="queryFilter"
                         @onClick="onOpen" />
                 </div>
-                <tool-section :category="{ text: workflowTitle }" />
+                <tool-section :category="{ text: 'Workflows' }" />
                 <div id="internal-workflows" class="toolSectionBody">
                     <div class="toolSectionBg" />
                     <div v-for="wf in workflows" :key="wf.id" class="toolTitle">
@@ -63,10 +79,11 @@
 <script>
 import ToolSection from "./Common/ToolSection";
 import ToolSearch from "./Common/ToolSearch";
-import { UploadButton, openGlobalUploadModal } from "components/Upload";
+import UploadButton from "components/Upload/UploadButton";
+import { useGlobalUploadModal } from "composables/globalUploadModal";
 import FavoritesButton from "./Buttons/FavoritesButton";
 import PanelViewButton from "./Buttons/PanelViewButton";
-import { filterToolSections, filterTools } from "./utilities";
+import { filterToolSections, filterTools, hasResults, hideToolsSection } from "./utilities";
 import { getGalaxyInstance } from "app";
 import { getAppRoot } from "onload";
 import _l from "utils/localization";
@@ -90,28 +107,29 @@ export default {
         currentPanelView: {
             type: String,
         },
-        storedWorkflowMenuEntries: {
-            type: Array,
-            required: true,
-        },
-        workflowTitle: {
-            type: String,
-            default: _l("Workflows"),
-        },
+    },
+    setup() {
+        const { openGlobalUploadModal } = useGlobalUploadModal();
+        return { openGlobalUploadModal };
     },
     data() {
         return {
+            closestTerm: null,
             query: null,
             results: null,
             queryFilter: null,
             queryPending: false,
             showSections: false,
+            showAdvanced: false,
             buttonText: "",
             buttonIcon: "",
             titleSearchTools: _l("search tools"),
         };
     },
     computed: {
+        tools() {
+            return hideToolsSection(this.toolbox);
+        },
         queryTooShort() {
             return this.query && this.query.length < 3;
         },
@@ -120,9 +138,9 @@ export default {
         },
         sections() {
             if (this.showSections) {
-                return filterToolSections(this.toolbox, this.results);
+                return filterToolSections(this.tools, this.results);
             } else {
-                return filterTools(this.toolbox, this.results);
+                return hasResults(this.results) ? filterTools(this.tools, this.results) : this.tools;
             }
         },
         isUser() {
@@ -130,20 +148,26 @@ export default {
             return !!(Galaxy.user && Galaxy.user.id);
         },
         workflows() {
-            return [
-                {
-                    title: _l("All workflows"),
-                    href: `${getAppRoot()}workflows/list`,
-                    id: "list",
-                },
-                ...this.storedWorkflowMenuEntries.map((menuEntry) => {
-                    return {
-                        id: menuEntry.id,
-                        title: menuEntry.name,
-                        href: `${getAppRoot()}workflows/run?id=${menuEntry.id}`,
-                    };
-                }),
-            ];
+            const Galaxy = getGalaxyInstance();
+            const storedWorkflowMenuEntries = Galaxy && Galaxy.config.stored_workflow_menu_entries;
+            if (storedWorkflowMenuEntries) {
+                return [
+                    {
+                        title: _l("All workflows"),
+                        href: `${getAppRoot()}workflows/list`,
+                        id: "list",
+                    },
+                    ...storedWorkflowMenuEntries.map((menuEntry) => {
+                        return {
+                            id: menuEntry.id,
+                            title: menuEntry.name,
+                            href: `${getAppRoot()}workflows/run?id=${menuEntry.id}`,
+                        };
+                    }),
+                ];
+            } else {
+                return [];
+            }
         },
         hasResults() {
             return this.results && this.results.length > 0;
@@ -154,8 +178,9 @@ export default {
             this.query = q;
             this.queryPending = true;
         },
-        onResults(results) {
+        onResults(results, closestTerm = null) {
             this.results = results;
+            this.closestTerm = closestTerm;
             this.queryFilter = this.hasResults ? this.query : null;
             this.setButtonText();
             this.queryPending = false;
@@ -163,15 +188,12 @@ export default {
         onOpen(tool, evt) {
             if (tool.id === "upload1") {
                 evt.preventDefault();
-                openGlobalUploadModal();
+                this.openGlobalUploadModal();
             } else if (tool.form_style === "regular") {
                 evt.preventDefault();
-                const Galaxy = getGalaxyInstance();
                 // encode spaces in tool.id
-                Galaxy.router.push("/", {
-                    tool_id: tool.id.replace(/ /g, "%20"),
-                    version: tool.version,
-                });
+                const toolId = tool.id;
+                this.$router.push(`/?tool_id=${encodeURIComponent(toolId)}&version=latest`);
             }
         },
         onToggle() {

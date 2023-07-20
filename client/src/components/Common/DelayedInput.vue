@@ -12,13 +12,28 @@
             @keydown.esc="setQuery('')" />
         <b-input-group-append>
             <b-button
+                v-if="enableAdvanced"
+                v-b-tooltip.hover
+                aria-haspopup="true"
+                size="sm"
+                :pressed="showAdvanced"
+                :variant="showAdvanced ? 'info' : 'secondary'"
+                :title="titleAdvanced | l"
+                data-description="toggle advanced search"
+                @click="onToggle">
+                <icon v-if="showAdvanced" fixed-width icon="angle-double-up" />
+                <icon v-else fixed-width icon="angle-double-down" />
+            </b-button>
+            <b-button
+                v-b-tooltip.hover
+                aria-haspopup="true"
                 class="search-clear"
                 size="sm"
                 :title="titleClear | l"
                 data-description="reset query"
                 @click="clearBox">
-                <icon v-if="loading" icon="spinner" spin />
-                <icon v-else icon="times" />
+                <icon v-if="loading" fixed-width icon="spinner" spin />
+                <icon v-else fixed-width icon="times" />
             </b-button>
         </b-input-group-append>
     </b-input-group>
@@ -42,13 +57,22 @@ export default {
             type: Number,
             default: 1000,
         },
+        enableAdvanced: {
+            type: Boolean,
+            default: false,
+        },
+        showAdvanced: {
+            type: Boolean,
+            default: false,
+        },
     },
     data() {
         return {
             queryInput: null,
             queryTimer: null,
             queryCurrent: null,
-            titleClear: "clear search (esc)",
+            titleClear: "Clear Search (esc)",
+            titleAdvanced: "Toggle Advanced Search",
         };
     },
     watch: {
@@ -82,6 +106,9 @@ export default {
         clearBox() {
             this.setQuery("");
             this.$refs.toolInput.focus();
+        },
+        onToggle() {
+            this.$emit("onToggle", !this.showAdvanced);
         },
     },
 };

@@ -21,12 +21,19 @@
 </template>
 
 <script>
+import { getGalaxyInstance } from "app";
+import { useHistoryItemsStore } from "stores/history/historyItemsStore";
+import { mapState } from "pinia";
 import WorkflowIcons from "components/Workflow/icons";
 import FormDisplay from "components/Form/FormDisplay";
 import FormMessage from "components/Form/FormMessage";
 import FormCard from "components/Form/FormCard";
 import { visitInputs } from "components/Form/utilities";
 import { getTool } from "./services";
+import { library } from "@fortawesome/fontawesome-svg-core";
+import { faEdit, faUndo } from "@fortawesome/free-solid-svg-icons";
+
+library.add(faEdit, faUndo);
 
 export default {
     components: {
@@ -56,9 +63,19 @@ export default {
         return {
             expanded: this.model.expanded,
             errorText: null,
+            modelData: {},
             modelIndex: {},
             modelInputs: this.model.inputs,
         };
+    },
+    computed: {
+        ...mapState(useHistoryItemsStore, ["getLastUpdateTime"]),
+        icon() {
+            return WorkflowIcons[this.model.step_type];
+        },
+        historyStatusKey() {
+            return `${this.historyId}_${this.getLastUpdateTime}`;
+        },
     },
     watch: {
         validationScrollTo() {
@@ -66,10 +83,8 @@ export default {
                 this.expanded = true;
             }
         },
-    },
-    computed: {
-        icon() {
-            return WorkflowIcons[this.model.step_type];
+        historyStatusKey() {
+            this.onHistoryChange();
         },
     },
     methods: {
@@ -79,24 +94,34 @@ export default {
                 this.modelIndex[name] = input;
             });
         },
+        onHistoryChange() {
+            const Galaxy = getGalaxyInstance();
+            if (Galaxy && Galaxy.currHistoryPanel) {
+                this.onUpdate();
+            }
+        },
         onChange(data, refreshRequest) {
+            this.modelData = data;
             if (refreshRequest) {
-                getTool(this.model.id, this.model.version, data, this.historyId).then(
-                    (newModel) => {
-                        this.onCreateIndex();
-                        visitInputs(newModel.inputs, (newInput, name) => {
-                            const input = this.modelIndex[name];
-                            input.options = newInput.options;
-                            input.textable = newInput.textable;
-                        });
-                        this.modelInputs = JSON.parse(JSON.stringify(this.modelInputs));
-                    },
-                    (errorText) => {
-                        this.errorText = errorText;
-                    }
-                );
+                this.onUpdate();
             }
             this.$emit("onChange", this.model.index, data);
+        },
+        onUpdate() {
+            getTool(this.model.id, this.model.version, this.modelData, this.historyId).then(
+                (newModel) => {
+                    this.onCreateIndex();
+                    visitInputs(newModel.inputs, (newInput, name) => {
+                        const input = this.modelIndex[name];
+                        input.options = newInput.options;
+                        input.textable = newInput.textable;
+                    });
+                    this.modelInputs = JSON.parse(JSON.stringify(this.modelInputs));
+                },
+                (errorText) => {
+                    this.errorText = errorText;
+                }
+            );
         },
         onValidation(validation) {
             this.$emit("onValidation", this.model.index, validation);

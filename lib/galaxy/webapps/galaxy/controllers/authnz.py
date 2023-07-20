@@ -120,6 +120,8 @@ class OIDC(JSAppLauncher):
             return trans.show_error_message(message)
         if "?confirm" in redirect_url:
             return trans.response.send_redirect(url_for(redirect_url))
+        if "?connect_external_provider" in redirect_url:
+            return trans.response.send_redirect(url_for(redirect_url))
         elif redirect_url is None:
             redirect_url = url_for("/")
 
@@ -143,7 +145,7 @@ class OIDC(JSAppLauncher):
             )
         except exceptions.AuthenticationFailed as e:
             return trans.response.send_redirect(
-                f"{trans.request.base + url_for('/')}root/login?message={str(e) or 'Duplicate Email'}"
+                f"{trans.request.url_path + url_for('/')}root/login?message={str(e) or 'Duplicate Email'}"
             )
 
         if success is False:
@@ -180,9 +182,11 @@ class OIDC(JSAppLauncher):
     @web.json
     @web.expose
     def logout(self, trans, provider, **kwargs):
-        post_logout_redirect_url = f"{trans.request.base + url_for('/')}root/login?is_logout_redirect=true"
+        post_user_logout_href = trans.app.config.post_user_logout_href
+        if post_user_logout_href is not None:
+            post_user_logout_href = trans.request.base + url_for(post_user_logout_href)
         success, message, redirect_uri = trans.app.authnz_manager.logout(
-            provider, trans, post_logout_redirect_url=post_logout_redirect_url
+            provider, trans, post_user_logout_href=post_user_logout_href
         )
         if success:
             return {"redirect_uri": redirect_uri}

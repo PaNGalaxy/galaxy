@@ -1,14 +1,17 @@
 """ Test Tool execution and state handling logic.
 """
 from collections import OrderedDict
-from unittest import TestCase
+from typing import cast
 
 import webob.exc
 
 import galaxy.model
 from galaxy.app_unittest_utils import tools_support
+from galaxy.managers.collections import DatasetCollectionManager
+from galaxy.model.base import transaction
 from galaxy.model.orm.util import add_object_to_object_session
 from galaxy.util.bunch import Bunch
+from galaxy.util.unittest import TestCase
 
 BASE_REPEAT_TOOL_CONTENTS = """<tool id="test_tool" name="Test Tool">
     <command>echo "$param1" #for $r in $repeat# "$r.param2" #end for# &lt; $out1</command>
@@ -25,20 +28,20 @@ BASE_REPEAT_TOOL_CONTENTS = """<tool id="test_tool" name="Test Tool">
 """
 
 # Tool with a repeat parameter, to test state update.
-REPEAT_TOOL_CONTENTS = BASE_REPEAT_TOOL_CONTENTS % """<param type="text" name="param2" value="" />"""
-REPEAT_COLLECTION_PARAM_CONTENTS = (
-    BASE_REPEAT_TOOL_CONTENTS % """<param type="data_collection" name="param2" collection_type="paired" />"""
+REPEAT_TOOL_CONTENTS = BASE_REPEAT_TOOL_CONTENTS % ("""<param type="text" name="param2" value="" />""",)
+REPEAT_COLLECTION_PARAM_CONTENTS = BASE_REPEAT_TOOL_CONTENTS % (
+    """<param type="data_collection" name="param2" collection_type="paired" />""",
 )
 
 
-class ToolExecutionTestCase(TestCase, tools_support.UsesTools):
+class TestToolExecution(TestCase, tools_support.UsesTools):
     tool_action: "MockAction"
 
     def setUp(self):
         self.setup_app()
         self.history = galaxy.model.History()
         self.trans = MockTrans(self.app, self.history)
-        self.app.dataset_collection_manager = MockCollectionService()
+        self.app.dataset_collection_manager = cast(DatasetCollectionManager, MockCollectionService())
         self.tool_action = MockAction(self.trans)
 
     def tearDown(self):
@@ -129,7 +132,9 @@ class ToolExecutionTestCase(TestCase, tools_support.UsesTools):
         self.trans.sa_session.add(hda)
         add_object_to_object_session(self.history, hda)
         self.history.datasets.append(hda)
-        self.trans.sa_session.flush()
+        session = self.trans.sa_session
+        with transaction(session):
+            session.commit()
         return hda
 
     def __add_collection_dataset(self, id, collection_type="paired", *hdas):

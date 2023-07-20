@@ -2,15 +2,23 @@
 Manager and Serializer for libraries.
 """
 import logging
-from typing import Optional
+from typing import (
+    Dict,
+    Optional,
+    Set,
+    Tuple,
+)
 
 from sqlalchemy import (
     and_,
+    asc,
     false,
+    func,
     not_,
     or_,
     true,
 )
+from sqlalchemy.orm import Query
 from sqlalchemy.orm.exc import (
     MultipleResultsFound,
     NoResultFound,
@@ -18,6 +26,11 @@ from sqlalchemy.orm.exc import (
 
 from galaxy import exceptions
 from galaxy.managers.folders import FolderManager
+from galaxy.model import (
+    Library,
+    Role,
+)
+from galaxy.model.base import transaction
 from galaxy.util import (
     pretty_print_time_interval,
     unicodify,
@@ -32,7 +45,7 @@ class LibraryManager:
     Interface/service object for interacting with libraries.
     """
 
-    def get(self, trans, decoded_library_id, check_accessible=True):
+    def get(self, trans, decoded_library_id: int, check_accessible: bool = True) -> Library:
         """
         Get the library from the DB.
 
@@ -59,7 +72,7 @@ class LibraryManager:
         library = self.secure(trans, library, check_accessible)
         return library
 
-    def create(self, trans, name, description="", synopsis=""):
+    def create(self, trans, name: str, description: Optional[str] = "", synopsis: Optional[str] = "") -> Library:
         """
         Create a new library.
         """
@@ -70,10 +83,18 @@ class LibraryManager:
             root_folder = trans.app.model.LibraryFolder(name=name, description="")
             library.root_folder = root_folder
             trans.sa_session.add_all((library, root_folder))
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
             return library
 
-    def update(self, trans, library, name=None, description=None, synopsis=None):
+    def update(
+        self,
+        trans,
+        library: Library,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        synopsis: Optional[str] = None,
+    ) -> Library:
         """
         Update the given library
         """
@@ -100,10 +121,11 @@ class LibraryManager:
             changed = True
         if changed:
             trans.sa_session.add(library)
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
         return library
 
-    def delete(self, trans, library, undelete=False):
+    def delete(self, trans, library: Library, undelete: Optional[bool] = False) -> Library:
         """
         Mark given library deleted/undeleted based on the flag.
         """
@@ -114,10 +136,11 @@ class LibraryManager:
         else:
             library.deleted = True
         trans.sa_session.add(library)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         return library
 
-    def list(self, trans, deleted: Optional[bool] = False):
+    def list(self, trans, deleted: Optional[bool] = False) -> Tuple[Query, Dict[str, Set]]:
         """
         Return a list of libraries from the DB.
 
@@ -187,9 +210,10 @@ class LibraryManager:
                 prefetched_ids["allowed_library_add_ids"] = allowed_library_add_ids
                 prefetched_ids["allowed_library_modify_ids"] = allowed_library_modify_ids
                 prefetched_ids["allowed_library_manage_ids"] = allowed_library_manage_ids
+        query = query.order_by(asc(func.lower(Library.name)))
         return query, prefetched_ids
 
-    def secure(self, trans, library, check_accessible=True):
+    def secure(self, trans, library: Library, check_accessible: bool = True) -> Library:
         """
         Check if library is accessible to user.
 
@@ -208,7 +232,7 @@ class LibraryManager:
             library = self.check_accessible(trans, library)
         return library
 
-    def check_accessible(self, trans, library):
+    def check_accessible(self, trans, library: Library) -> Library:
         """
         Check whether the library is accessible to current user.
         """
@@ -219,7 +243,7 @@ class LibraryManager:
         else:
             return library
 
-    def get_library_dict(self, trans, library, prefetched_ids=None):
+    def get_library_dict(self, trans, library: Library, prefetched_ids: Optional[Dict[str, Set]] = None) -> dict:
         """
         Return library data in the form of a dictionary.
 
@@ -238,9 +262,7 @@ class LibraryManager:
         allowed_library_add_ids = prefetched_ids.get("allowed_library_add_ids", None) if prefetched_ids else None
         allowed_library_modify_ids = prefetched_ids.get("allowed_library_modify_ids", None) if prefetched_ids else None
         allowed_library_manage_ids = prefetched_ids.get("allowed_library_manage_ids", None) if prefetched_ids else None
-        library_dict = library.to_dict(
-            view="element", value_mapper={"id": trans.security.encode_id, "root_folder_id": trans.security.encode_id}
-        )
+        library_dict = library.to_dict(view="element")
         library_dict["public"] = False if (restricted_library_ids and library.id in restricted_library_ids) else True
         library_dict["create_time_pretty"] = pretty_print_time_interval(library.create_time, precise=True)
         if not trans.user_is_admin:
@@ -271,7 +293,7 @@ class LibraryManager:
             library_dict["can_user_manage"] = True
         return library_dict
 
-    def get_current_roles(self, trans, library):
+    def get_current_roles(self, trans, library: Library) -> dict:
         """
         Load all permissions currently related to the given library.
 
@@ -303,13 +325,13 @@ class LibraryManager:
             add_library_item_role_list=add_library_item_role_list,
         )
 
-    def get_access_roles(self, trans, library):
+    def get_access_roles(self, trans, library: Library) -> Set[Role]:
         """
         Load access roles for all library permissions
         """
         return set(library.get_access_roles(trans.app.security_agent))
 
-    def get_modify_roles(self, trans, library):
+    def get_modify_roles(self, trans, library: Library) -> Set[Role]:
         """
         Load modify roles for all library permissions
         """
@@ -319,7 +341,7 @@ class LibraryManager:
             )
         )
 
-    def get_manage_roles(self, trans, library):
+    def get_manage_roles(self, trans, library: Library) -> Set[Role]:
         """
         Load manage roles for all library permissions
         """
@@ -329,7 +351,7 @@ class LibraryManager:
             )
         )
 
-    def get_add_roles(self, trans, library):
+    def get_add_roles(self, trans, library: Library) -> Set[Role]:
         """
         Load add roles for all library permissions
         """
@@ -339,26 +361,21 @@ class LibraryManager:
             )
         )
 
-    def set_permission_roles(self, trans, library, access_roles, modify_roles, manage_roles, add_roles):
-        """
-        Set permissions on the given library.
-        """
-
-    def make_public(self, trans, library):
+    def make_public(self, trans, library: Library) -> bool:
         """
         Makes the given library public (removes all access roles)
         """
         trans.app.security_agent.make_library_public(library)
         return self.is_public(trans, library)
 
-    def is_public(self, trans, library):
+    def is_public(self, trans, library: Library) -> bool:
         """
         Return true if lib is public.
         """
         return trans.app.security_agent.library_is_public(library)
 
 
-def get_containing_library_from_library_dataset(trans, library_dataset):
+def get_containing_library_from_library_dataset(trans, library_dataset) -> Optional[Library]:
     """Given a library_dataset, get the containing library"""
     folder = library_dataset.folder
     while folder.parent:

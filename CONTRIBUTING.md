@@ -71,7 +71,7 @@ https://help.github.com/en/github/getting-started-with-github/git-and-github-lea
      issue (`git checkout -b bugfix_branch release_XX.XX`).
 
    * Serious security problems should not be fixed via pull request - please see
-     [the Galaxy security policies](SECURITY_POLICY.md) for information about
+     [the Galaxy security policies](SECURITY.md) for information about
      responsibly disclosing security issues.
 
 4. If your changes modify code please ensure the resulting files conform to
@@ -91,7 +91,7 @@ https://help.github.com/en/github/getting-started-with-github/git-and-github-lea
    Developers reviewing your pull request will be happy to help you add or run
    the relevant tests as part of the pull request review process.
 
-6. Write a useful and properly formatted commit message. 
+6. Write a useful and properly formatted commit message.
    Follow [these guidelines and template](https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#_commit_guidelines),
    in particular start your message with a short imperative sentence on a single
    line, possibly followed by a blank line and a more detailed explanation.
@@ -157,8 +157,8 @@ https://help.github.com/en/github/getting-started-with-github/git-and-github-lea
 - Galaxy follows [PEP-8](https://www.python.org/dev/peps/pep-0008/), with
   particular emphasis on readability being the ultimate goal:
   - 4 spaces (not tabs!) per indentation level
-  - divergences from PEP-8 are listed in the `[flake8]` section of the
-    `setup.cfg` file
+  - divergences from PEP-8 are listed in the `[flake8]` section of the `.flake8`
+    file and in the `[tool.ruff]` section of the `pyproject.toml` file.
   - The Python code base is automatically formatted using
     [isort](https://pycqa.github.io/isort/) (for imports) and
     [black](https://black.readthedocs.io). To easily format your Python code
@@ -167,6 +167,20 @@ https://help.github.com/en/github/getting-started-with-github/git-and-github-lea
 - Python [docstrings](http://www.python.org/dev/peps/pep-0257/) need to be in
   [reStructured Text (RST)](https://docutils.sourceforge.io/rst.html) format and
   compatible with [Sphinx](https://www.sphinx-doc.org).
+
+## Documentation
+
+General documentation (e.g. admin, development, release notes) is found in the
+``doc/source/`` directory.
+The documentation source files need to be written in one of these markup
+languages:
+- [reStructuredText](https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html)
+  (with Sphinx extensions)
+- [Markdown](https://myst-parser.readthedocs.io/en/latest/syntax/typography.html)
+  (with MyST-Parser extensions).
+These source files are then built into HTML documentation with
+[Sphinx](https://www.sphinx-doc.org/) by running ``make docs`` and published on
+the [Galaxy Documentation website](https://docs.galaxyproject.org/).
 
 ## A Quick Note about Tools
 

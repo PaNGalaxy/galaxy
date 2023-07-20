@@ -5,6 +5,7 @@
         size="sm"
         variant="link"
         aria-label="Show favorite tools"
+        :disabled="isAnonymous"
         :title="tooltipText"
         @click="onFavorites">
         <icon v-if="toggle" :icon="['fas', 'star']" />
@@ -13,7 +14,8 @@
 </template>
 
 <script>
-import _l from "utils/localization";
+import { mapState } from "pinia";
+import { useUserStore } from "@/stores/userStore";
 
 export default {
     name: "FavoritesButton",
@@ -25,17 +27,20 @@ export default {
     data() {
         return {
             searchKey: "#favorites",
-            tooltipToggle: _l("Show favorites"),
-            tooltipUntoggle: "Clear",
             toggle: false,
         };
     },
     computed: {
+        ...mapState(useUserStore, ["isAnonymous"]),
         tooltipText() {
-            if (this.toggle) {
-                return this.tooltipUntoggle;
+            if (this.isAnonymous) {
+                return this.l("Log in to Favorite Tools");
             } else {
-                return this.tooltipToggle;
+                if (this.toggle) {
+                    return this.l("Clear");
+                } else {
+                    return this.l("Show favorites");
+                }
             }
         },
     },

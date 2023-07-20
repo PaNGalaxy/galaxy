@@ -147,6 +147,10 @@ class AuthnzManager:
             "redirect_uri": config_xml.find("redirect_uri").text,
             "enable_idp_logout": asbool(config_xml.findtext("enable_idp_logout", "false")),
         }
+        if config_xml.find("label") is not None:
+            rtv["label"] = config_xml.find("label").text
+        if config_xml.find("require_create_confirmation") is not None:
+            rtv["require_create_confirmation"] = asbool(config_xml.find("require_create_confirmation").text)
         if config_xml.find("prompt") is not None:
             rtv["prompt"] = config_xml.find("prompt").text
         if config_xml.find("api_url") is not None:
@@ -172,6 +176,10 @@ class AuthnzManager:
             "redirect_uri": config_xml.find("redirect_uri").text,
             "enable_idp_logout": asbool(config_xml.findtext("enable_idp_logout", "false")),
         }
+        if config_xml.find("label") is not None:
+            rtv["label"] = config_xml.find("label").text
+        if config_xml.find("require_create_confirmation") is not None:
+            rtv["require_create_confirmation"] = asbool(config_xml.find("require_create_confirmation").text)
         if config_xml.find("credential_url") is not None:
             rtv["credential_url"] = config_xml.find("credential_url").text
         if config_xml.find("well_known_oidc_config_uri") is not None:
@@ -396,7 +404,7 @@ class AuthnzManager:
             log.exception(msg)
             return False, msg, (None, None)
 
-    def logout(self, provider, trans, post_logout_redirect_url=None):
+    def logout(self, provider, trans, post_user_logout_href=None):
         """
         Log the user out of the identity provider.
 
@@ -404,8 +412,8 @@ class AuthnzManager:
         :param provider: set the name of the identity provider.
         :type trans: GalaxyWebTransaction
         :param trans: Galaxy web transaction.
-        :type post_logout_redirect_url: string
-        :param post_logout_redirect_url: (Optional) URL for identity provider
+        :type post_user_logout_href: string
+        :param post_user_logout_href: (Optional) URL for identity provider
             to redirect to after logging user out.
         :return: a tuple (success boolean, message, redirect URI)
         """
@@ -418,7 +426,7 @@ class AuthnzManager:
             success, message, backend = self._get_authnz_backend(provider)
             if success is False:
                 return False, message, None
-            return True, message, backend.logout(trans, post_logout_redirect_url)
+            return True, message, backend.logout(trans, post_user_logout_href)
         except Exception:
             msg = f"An error occurred when logging out from `{provider}` identity provider.  Please contact an administrator for assistance."
             log.exception(msg)

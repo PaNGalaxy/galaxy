@@ -7,7 +7,7 @@ import UploadModel from "mvc/upload/upload-model";
 import UploadWrapper from "./UploadWrapper";
 import { defaultNewFileName, uploadModelsToPayload } from "./helpers";
 import UploadFtp from "mvc/upload/upload-ftp";
-import LazyLimited from "mvc/lazy/lazy-limited";
+import LazyLimited from "./lazy-limited";
 import { findExtension } from "./utils";
 import { filesDialog, refreshContentsWrapper } from "utils/data";
 import { getAppRoot } from "onload";
@@ -22,10 +22,6 @@ export default {
         Select2,
     },
     props: {
-        app: {
-            type: Object,
-            required: true,
-        },
         lazyLoadMax: {
             type: Number,
             default: null,
@@ -37,6 +33,10 @@ export default {
         hasCallback: {
             type: Boolean,
             default: false,
+        },
+        details: {
+            type: Object,
+            required: true,
         },
     },
     computed: {
@@ -55,12 +55,7 @@ export default {
             return this.hasCallback ? "Cancel" : "Close";
         },
         history_id() {
-            const storeId = this.$store?.getters["history/currentHistoryId"];
-            if (storeId) {
-                return storeId;
-            }
-            const legacyId = this.app.currentHistory();
-            return legacyId;
+            return this.details.history_id;
         },
     },
     methods: {
@@ -119,7 +114,7 @@ export default {
                 }
             });
             if (list.length > 0) {
-                const data = uploadModelsToPayload(list, this.history_id);
+                const data = uploadModelsToPayload(list, this.details.history_id);
                 axios
                     .post(`${getAppRoot()}api/tools/fetch`, data)
                     .then((message) => {
@@ -289,6 +284,9 @@ export default {
         _eventCreate: function () {
             this.uploadbox.add([{ name: defaultNewFileName, size: 0, mode: "new" }]);
         },
+        addFiles: function (files) {
+            this.uploadbox.add(files);
+        },
         /** Pause upload process */
         _eventStop: function () {
             if (this.counterRunning > 0) {
@@ -305,7 +303,7 @@ export default {
             return $(this.$refs.uploadTable);
         },
         extensionDetails(extension) {
-            return findExtension(this.app.effectiveExtensions, extension);
+            return findExtension(this.details.effectiveExtensions, extension);
         },
         initExtensionInfo() {
             $(this.$refs.footerExtensionInfo)
@@ -329,10 +327,10 @@ export default {
             this.collection = new UploadModel.Collection();
         },
         initAppProperties() {
-            this.listExtensions = this.app.effectiveExtensions;
-            this.listGenomes = this.app.listGenomes;
-            this.ftpUploadSite = this.app.currentFtp();
-            this.fileSourcesConfigured = this.app.fileSourcesConfigured;
+            this.listExtensions = this.details.effectiveExtensions;
+            this.listGenomes = this.details.listGenomes;
+            this.ftpUploadSite = this.details.currentFtp;
+            this.fileSourcesConfigured = this.details.fileSourcesConfigured;
         },
         initFtpPopover() {
             // add ftp file viewer
@@ -348,7 +346,7 @@ export default {
             this.collection.each((model) => {
                 if (
                     model.get("status") == "init" &&
-                    (model.get("extension") == this.app.defaultExtension || !defaults_only)
+                    (model.get("extension") == this.details.defaultExtension || !defaults_only)
                 ) {
                     model.set("extension", extension);
                 }
@@ -358,7 +356,7 @@ export default {
             this.collection.each((model) => {
                 if (
                     model.get("status") == "init" &&
-                    (model.get("genome") == this.app.defaultGenome || !defaults_only)
+                    (model.get("genome") == this.details.defaultDbKey || !defaults_only)
                 ) {
                     model.set("genome", genome);
                 }

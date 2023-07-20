@@ -4,6 +4,7 @@ Contains functionality needed in every web interface
 import logging
 from typing import (
     Any,
+    Callable,
     Optional,
 )
 
@@ -22,9 +23,8 @@ from galaxy import (
     web,
 )
 from galaxy.datatypes.interval import ChromatinInteractions
-from galaxy.managers import api_keys
-from galaxy.managers import base as managers_base
 from galaxy.managers import (
+    base as managers_base,
     configuration,
     users,
     workflows,
@@ -37,6 +37,7 @@ from galaxy.model import (
     LibraryDatasetDatasetAssociation,
     tags,
 )
+from galaxy.model.base import transaction
 from galaxy.model.item_attrs import UsesAnnotations
 from galaxy.util.dictifiable import Dictifiable
 from galaxy.util.sanitize_html import sanitize_html
@@ -199,10 +200,8 @@ class BaseAPIController(BaseController):
                 deleted=deleted,
             )
 
-        except exceptions.ItemDeletionException as e:
-            raise HTTPBadRequest(detail=f"Invalid {class_name} id ( {str(id)} ) specified: {util.unicodify(e)}")
-        except exceptions.MessageException as e:
-            raise HTTPBadRequest(detail=e.err_msg)
+        except exceptions.MessageException:
+            raise
         except Exception as e:
             log.exception("Exception in get_object check for %s %s.", class_name, str(id))
             raise HTTPInternalServerError(comment=util.unicodify(e))
@@ -269,7 +268,6 @@ class JSAppLauncher(BaseUIController):
         Should not be used with url_for -- see
         (https://github.com/galaxyproject/galaxy/issues/1878) for why.
         """
-        self._check_require_login(trans)
         return self._bootstrapped_client(trans, **kwd)
 
     # This includes contextualized user options in the bootstrapped data; we
@@ -384,17 +382,6 @@ class Datatype:
 #
 
 
-class CreatesApiKeysMixin:
-    """
-    Mixing centralizing logic for creating API keys for user objects.
-
-    Deprecated - please use api_keys.ApiKeyManager for new development.
-    """
-
-    def create_api_key(self, trans, user):
-        return api_keys.ApiKeyManager(trans.app).create_api_key(user)
-
-
 class SharableItemSecurityMixin:
     """Mixin for handling security for sharable items."""
 
@@ -406,7 +393,9 @@ class SharableItemSecurityMixin:
 
 
 class UsesLibraryMixinItems(SharableItemSecurityMixin):
-    def get_library_folder(self, trans, id, check_ownership=False, check_accessible=True):
+    get_object: Callable
+
+    def get_library_folder(self, trans, id: int, check_ownership=False, check_accessible=True):
         return self.get_object(trans, id, "LibraryFolder", check_ownership=False, check_accessible=check_accessible)
 
     def get_library_dataset_dataset_association(self, trans, id, check_ownership=False, check_accessible=True):
@@ -454,7 +443,7 @@ class UsesLibraryMixinItems(SharableItemSecurityMixin):
             # Slight misuse of ItemOwnershipException?
             raise exceptions.ItemOwnershipException("User cannot add to library item.")
 
-    def _copy_hdca_to_library_folder(self, trans, hda_manager, from_hdca_id, folder_id, ldda_message=""):
+    def _copy_hdca_to_library_folder(self, trans, hda_manager, from_hdca_id: int, folder_id: int, ldda_message=""):
         """
         Fetches the collection identified by `from_hcda_id` and dispatches individual collection elements to
         _copy_hda_to_library_folder
@@ -480,7 +469,7 @@ class UsesLibraryMixinItems(SharableItemSecurityMixin):
         ]
 
     def _copy_hda_to_library_folder(
-        self, trans, hda_manager, from_hda_id, folder_id, ldda_message="", element_identifier=None
+        self, trans, hda_manager, from_hda_id: int, folder_id: int, ldda_message="", element_identifier=None
     ):
         """
         Copies hda ``from_hda_id`` to library folder ``folder_id``, optionally
@@ -490,7 +479,6 @@ class UsesLibraryMixinItems(SharableItemSecurityMixin):
         in its payload.
         """
         log.debug(f"_copy_hda_to_library_folder: {str((from_hda_id, folder_id, ldda_message))}")
-        # PRECONDITION: folder_id has already been altered to remove the folder prefix ('F')
         # TODO: allow name and other, editable ldda attrs?
         if ldda_message:
             ldda_message = sanitize_html(ldda_message)
@@ -519,7 +507,8 @@ class UsesLibraryMixinItems(SharableItemSecurityMixin):
         # If there is, refactor `ldda.visible = True` to do this only when adding HDCAs.
         ldda.visible = True
         ldda.update_parent_folder_update_times()
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         ldda_dict = ldda.to_dict()
         rval = trans.security.encode_dict_ids(ldda_dict)
         update_time = ldda.update_time.isoformat()
@@ -605,7 +594,8 @@ class UsesLibraryMixinItems(SharableItemSecurityMixin):
                         flush_needed = True
 
         if flush_needed:
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
 
         # finally, apply the new library_dataset to its associated ldda (must be the same)
         security_agent.copy_library_permissions(trans, library_dataset, ldda)
@@ -781,7 +771,8 @@ class UsesVisualizationMixin(UsesLibraryMixinItems):
         # TODO: need to handle custom db keys.
         imported_visualization = visualization.copy(user=user, title=f"imported: {visualization.title}")
         trans.sa_session.add(imported_visualization)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         return imported_visualization
 
     def create_visualization(
@@ -814,7 +805,8 @@ class UsesVisualizationMixin(UsesLibraryMixinItems):
         if save:
             session = trans.sa_session
             session.add(revision)
-            session.flush()
+            with transaction(session):
+                session.commit()
 
         return visualization
 
@@ -833,7 +825,8 @@ class UsesVisualizationMixin(UsesLibraryMixinItems):
         visualization.latest_revision = revision
         # TODO:?? does this automatically add revision to visualzation.revisions?
         trans.sa_session.add(revision)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         return revision
 
     def save_visualization(self, trans, config, type, id=None, title=None, dbkey=None, slug=None, annotation=None):
@@ -912,7 +905,8 @@ class UsesVisualizationMixin(UsesLibraryMixinItems):
 
         vis.latest_revision = vis_rev
         session.add(vis_rev)
-        session.flush()
+        with transaction(session):
+            session.commit()
         encoded_id = trans.security.encode_id(vis.id)
         return {"vis_id": encoded_id, "url": url_for(controller="visualization", action=vis.type, id=encoded_id)}
 
@@ -1090,7 +1084,7 @@ class UsesVisualizationMixin(UsesLibraryMixinItems):
             user = trans.get_user()
             if not user:
                 error("Must be logged in to manage Galaxy items")
-            if data.history.user != user:
+            if data.user != user:
                 error(f"{data.__class__.__name__} is not owned by current user")
 
         if check_accessible:
@@ -1141,7 +1135,8 @@ class UsesVisualizationMixin(UsesLibraryMixinItems):
         if save:
             session = trans.sa_session
             session.add(visualization)
-            session.flush()
+            with transaction(session):
+                session.commit()
 
         return visualization
 
@@ -1220,16 +1215,19 @@ class UsesStoredWorkflowMixin(SharableItemSecurityMixin, UsesAnnotations):
             # Older workflows may be missing slugs, so set them here.
             if not workflow.slug:
                 self.slug_builder.create_item_slug(trans.sa_session, workflow)
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
 
         return workflow
 
-    def get_stored_workflow_steps(self, trans, stored_workflow):
+    def get_stored_workflow_steps(self, trans, stored_workflow: model.StoredWorkflow):
         """Restores states for a stored workflow's steps."""
         module_injector = WorkflowModuleInjector(trans)
-        for step in stored_workflow.latest_workflow.steps:
+        workflow = stored_workflow.latest_workflow
+        module_injector.inject_all(workflow, exact_tools=False, ignore_tool_missing_exception=True)
+        for step in workflow.steps:
             try:
-                module_injector.inject(step, exact_tools=False)
+                module_injector.compute_runtime_state(step)
             except exceptions.ToolMissingException:
                 pass
 
@@ -1246,7 +1244,8 @@ class UsesStoredWorkflowMixin(SharableItemSecurityMixin, UsesAnnotations):
         # Save new workflow.
         session = trans.sa_session
         session.add(imported_stored)
-        session.flush()
+        with transaction(session):
+            session.commit()
 
         # Copy annotations.
         self.copy_item_annotation(session, stored.user, stored, imported_stored.user, imported_stored)
@@ -1254,7 +1253,8 @@ class UsesStoredWorkflowMixin(SharableItemSecurityMixin, UsesAnnotations):
             self.copy_item_annotation(
                 session, stored.user, step, imported_stored.user, imported_stored.latest_workflow.steps[order_index]
             )
-        session.flush()
+        with transaction(session):
+            session.commit()
         return imported_stored
 
     def _workflow_to_dict(self, trans, stored):
@@ -1302,7 +1302,8 @@ class UsesFormDefinitionsMixin:
             field_obj.country = util.restore_text(params.get(f"{widget_name}_country", ""))
             field_obj.phone = util.restore_text(params.get(f"{widget_name}_phone", ""))
             trans.sa_session.add(field_obj)
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
 
     def get_form_values(self, trans, user, form_definition, **kwd):
         """
@@ -1357,7 +1358,8 @@ class SharableMixin:
             # Only update slug if slug is not already in use.
             if trans.sa_session.query(item.__class__).filter_by(user=item.user, slug=new_slug).count() == 0:
                 item.slug = new_slug
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
 
         return item.slug
 
@@ -1377,20 +1379,8 @@ class SharableMixin:
         raise NotImplementedError()
 
     @web.expose
-    def display_by_username_and_slug(self, trans, username, slug):
+    def display_by_username_and_slug(self, trans, username, slug, **kwargs):
         """Display item by username and slug."""
-        raise NotImplementedError()
-
-    @web.json
-    @web.require_login("get item name and link")
-    def get_name_and_link_async(self, trans, id=None):
-        """Returns item's name and link."""
-        raise NotImplementedError()
-
-    @web.expose
-    @web.require_login("get item content asynchronously")
-    def get_item_content_async(self, trans, id):
-        """Returns item content in HTML format."""
         raise NotImplementedError()
 
     def get_item(self, trans, id):
@@ -1418,14 +1408,16 @@ class UsesTagsMixin(SharableItemSecurityMixin):
         user = trans.user
         tagged_item = self._get_tagged_item(trans, item_class_name, id)
         deleted = tagged_item and self.get_tag_handler(trans).remove_item_tag(trans, user, tagged_item, tag_name)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         return deleted
 
     def _apply_item_tag(self, trans, item_class_name, id, tag_name, tag_value=None):
         user = trans.user
         tagged_item = self._get_tagged_item(trans, item_class_name, id)
         tag_assoc = self.get_tag_handler(trans).apply_item_tag(user, tagged_item, tag_name, tag_value)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         return tag_assoc
 
     def _get_item_tag_assoc(self, trans, item_class_name, id, tag_name):
@@ -1489,7 +1481,8 @@ class UsesExtendedMetadataMixin(SharableItemSecurityMixin):
                 trans.get_current_user_roles(), item, trans.user
             ):
                 item.extended_metadata = extmeta_obj
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
         if item.__class__ == HistoryDatasetAssociation:
             history = None
             if check_writable:
@@ -1498,7 +1491,8 @@ class UsesExtendedMetadataMixin(SharableItemSecurityMixin):
                 history = self.security_check(trans, item, check_ownership=False, check_accessible=True)
             if history:
                 item.extended_metadata = extmeta_obj
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
 
     def unset_item_extended_metadata_obj(self, trans, item, check_writable=False):
         if item.__class__ == LibraryDatasetDatasetAssociation:
@@ -1506,7 +1500,8 @@ class UsesExtendedMetadataMixin(SharableItemSecurityMixin):
                 trans.get_current_user_roles(), item, trans.user
             ):
                 item.extended_metadata = None
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
         if item.__class__ == HistoryDatasetAssociation:
             history = None
             if check_writable:
@@ -1515,7 +1510,8 @@ class UsesExtendedMetadataMixin(SharableItemSecurityMixin):
                 history = self.security_check(trans, item, check_ownership=False, check_accessible=True)
             if history:
                 item.extended_metadata = None
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
 
     def create_extended_metadata(self, trans, extmeta):
         """
@@ -1524,17 +1520,20 @@ class UsesExtendedMetadataMixin(SharableItemSecurityMixin):
         """
         ex_meta = ExtendedMetadata(extmeta)
         trans.sa_session.add(ex_meta)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         for path, value in self._scan_json_block(extmeta):
             meta_i = ExtendedMetadataIndex(ex_meta, path, value)
             trans.sa_session.add(meta_i)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         return ex_meta
 
     def delete_extended_metadata(self, trans, item):
         if item.__class__ == ExtendedMetadata:
             trans.sa_session.delete(item)
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
 
     def _scan_json_block(self, meta, prefix=""):
         """

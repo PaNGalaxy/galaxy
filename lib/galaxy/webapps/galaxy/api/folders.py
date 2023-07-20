@@ -14,7 +14,7 @@ from fastapi import (
 )
 
 from galaxy.managers.context import ProvidesUserContext
-from galaxy.schema.fields import EncodedDatabaseIdField
+from galaxy.schema.fields import LibraryFolderDatabaseIdField
 from galaxy.schema.schema import (
     CreateLibraryFolderPayload,
     LibraryAvailablePermissions,
@@ -25,18 +25,18 @@ from galaxy.schema.schema import (
     LibraryPermissionScope,
     UpdateLibraryFolderPayload,
 )
-from galaxy.webapps.galaxy.services.library_folders import LibraryFoldersService
-from . import (
+from galaxy.webapps.galaxy.api import (
     depends,
     DependsOnTrans,
     Router,
 )
+from galaxy.webapps.galaxy.services.library_folders import LibraryFoldersService
 
 log = logging.getLogger(__name__)
 
-router = Router(tags=["folders"])
+router = Router(tags=["data libraries folders"])
 
-FolderIdPathParam: EncodedDatabaseIdField = Path(
+FolderIdPathParam: LibraryFolderDatabaseIdField = Path(
     ..., title="Folder ID", description="The encoded identifier of the library folder."
 )
 
@@ -56,7 +56,7 @@ class FastAPILibraryFolders:
     def show(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = FolderIdPathParam,
+        id: LibraryFolderDatabaseIdField = FolderIdPathParam,
     ) -> LibraryFolderDetails:
         """Returns detailed information about the library folder with the given ID."""
         return self.service.show(trans, id)
@@ -68,7 +68,7 @@ class FastAPILibraryFolders:
     def create(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = FolderIdPathParam,
+        id: LibraryFolderDatabaseIdField = FolderIdPathParam,
         payload: CreateLibraryFolderPayload = Body(...),
     ) -> LibraryFolderDetails:
         """Returns detailed information about the newly created library folder."""
@@ -82,7 +82,7 @@ class FastAPILibraryFolders:
     def update(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = FolderIdPathParam,
+        id: LibraryFolderDatabaseIdField = FolderIdPathParam,
         payload: UpdateLibraryFolderPayload = Body(...),
     ) -> LibraryFolderDetails:
         """Updates the information of an existing library folder."""
@@ -95,7 +95,7 @@ class FastAPILibraryFolders:
     def delete(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = FolderIdPathParam,
+        id: LibraryFolderDatabaseIdField = FolderIdPathParam,
         undelete: Optional[bool] = UndeleteQueryParam,
     ) -> LibraryFolderDetails:
         """Marks the specified library folder as deleted (or undeleted)."""
@@ -108,16 +108,16 @@ class FastAPILibraryFolders:
     def get_permissions(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = FolderIdPathParam,
+        id: LibraryFolderDatabaseIdField = FolderIdPathParam,
         scope: Optional[LibraryPermissionScope] = Query(
             None,
             title="Scope",
             description="The scope of the permissions to retrieve. Either the `current` permissions or the `available`.",
         ),
-        page: Optional[int] = Query(
+        page: int = Query(
             default=1, title="Page", description="The page number to retrieve when paginating the available roles."
         ),
-        page_limit: Optional[int] = Query(
+        page_limit: int = Query(
             default=10, title="Page Limit", description="The maximum number of permissions per page when paginating."
         ),
         q: Optional[str] = Query(
@@ -142,13 +142,13 @@ class FastAPILibraryFolders:
     def set_permissions(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = FolderIdPathParam,
+        id: LibraryFolderDatabaseIdField = FolderIdPathParam,
         action: Optional[LibraryFolderPermissionAction] = Query(
             default=None,
             title="Action",
             description=(
                 "Indicates what action should be performed on the Library. "
-                f"Currently only `{LibraryFolderPermissionAction.set_permissions}` is supported."
+                f"Currently only `{LibraryFolderPermissionAction.set_permissions.value}` is supported."
             ),
         ),
         payload: LibraryFolderPermissionsPayload = Body(...),

@@ -18,13 +18,14 @@ from galaxy import (
 )
 from galaxy.actions.library import LibraryActions
 from galaxy.exceptions import ObjectNotFound
-from galaxy.managers import base as managers_base
 from galaxy.managers import (
+    base as managers_base,
     folders,
     lddas,
     library_datasets,
     roles,
 )
+from galaxy.model.base import transaction
 from galaxy.structured_app import StructuredApp
 from galaxy.tools.actions import upload_common
 from galaxy.tools.parameters import populate_state
@@ -261,7 +262,8 @@ class LibraryDatasetsController(BaseGalaxyAPIController, UsesVisualizationMixin,
                     trans.app.security_agent.permitted_actions.DATASET_ACCESS.action, dataset, private_role
                 )
                 trans.sa_session.add(dp)
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
             if not trans.app.security_agent.dataset_is_private_to_user(trans, dataset):
                 # Check again and inform the user if dataset is not private.
                 raise exceptions.InternalServerError("An error occurred and the dataset is NOT private.")
@@ -354,7 +356,8 @@ class LibraryDatasetsController(BaseGalaxyAPIController, UsesVisualizationMixin,
             library_dataset.deleted = True
 
         trans.sa_session.add(library_dataset)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
 
         rval = trans.security.encode_all_ids(library_dataset.to_dict())
         nice_size = util.nice_size(
@@ -529,7 +532,7 @@ class LibraryDatasetsController(BaseGalaxyAPIController, UsesVisualizationMixin,
         for input in tool.inputs.values():
             if input.type == "upload_dataset":
                 dataset_upload_inputs.append(input)
-        library_bunch = upload_common.handle_library_params(trans, {}, trans.security.encode_id(folder.id))
+        library_bunch = upload_common.handle_library_params(trans, {}, folder.id)
         abspath_datasets = []
         kwd["filesystem_paths"] = path
         if source in ["importdir_folder"]:
