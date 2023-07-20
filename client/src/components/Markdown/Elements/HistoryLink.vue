@@ -1,6 +1,12 @@
 <template>
     <div>
-        <b-link v-if="showLink" @click="onClick">Click to Import History: {{ name }}.</b-link>
+        <b-link
+            v-if="showLink"
+            data-description="history import link"
+            :data-history-id="args.history_id"
+            @click="onClick"
+            >Click to Import History: {{ name }}.</b-link
+        >
         <div v-if="imported" class="text-success">
             <font-awesome-icon icon="check" class="mr-1" />
             <span>Successfully Imported History: {{ name }}!</span>
@@ -15,11 +21,11 @@
 
 <script>
 import axios from "axios";
-import { getAppRoot } from "onload/loadConfig";
 import Vue from "vue";
 import BootstrapVue from "bootstrap-vue";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { errorMessageAsString } from "utils/simple-error";
+import { withPrefix } from "utils/redirect";
 
 Vue.use(BootstrapVue);
 
@@ -54,7 +60,7 @@ export default {
     methods: {
         onClick() {
             axios
-                .post(`${getAppRoot()}api/histories`, { history_id: this.args.history_id })
+                .post(withPrefix("/api/histories"), { history_id: this.args.history_id })
                 .then(() => {
                     this.imported = true;
                 })

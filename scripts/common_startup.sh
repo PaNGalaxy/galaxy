@@ -15,26 +15,26 @@ done
 DEV_WHEELS=0
 FETCH_WHEELS=1
 CREATE_VENV=1
-REPLACE_PIP=$SET_VENV
 COPY_SAMPLE_FILES=1
 SKIP_CLIENT_BUILD=${GALAXY_SKIP_CLIENT_BUILD:-0}
+SKIP_NODE=${GALAXY_SKIP_NODE:-0}
+INSTALL_PREBUILT_CLIENT=${GALAXY_INSTALL_PREBUILT_CLIENT:-0}
 NODE_VERSION=${GALAXY_NODE_VERSION:-"$(cat client/.node_version)"}
-YARN_INSTALL_OPTS=${YARN_INSTALL_OPTS:-"--network-timeout 300000 --check-files"}
+: "${YARN_INSTALL_OPTS:=--network-timeout 300000 --check-files}"
+: "${GALAXY_CONDA_PYTHON_VERSION:=3.7}"
 
 for arg in "$@"; do
     [ "$arg" = "--skip-eggs" ] && FETCH_WHEELS=0
     [ "$arg" = "--skip-wheels" ] && FETCH_WHEELS=0
     [ "$arg" = "--dev-wheels" ] && DEV_WHEELS=1
     [ "$arg" = "--no-create-venv" ] && CREATE_VENV=0
-    [ "$arg" = "--no-replace-pip" ] && REPLACE_PIP=0
-    [ "$arg" = "--replace-pip" ] && REPLACE_PIP=1
     [ "$arg" = "--stop-daemon" ] && FETCH_WHEELS=0
     [ "$arg" = "--skip-samples" ] && COPY_SAMPLE_FILES=0
     [ "$arg" = "--skip-client-build" ] && SKIP_CLIENT_BUILD=1
+    [ "$arg" = "--skip-node" ] && SKIP_NODE=1
 done
 
 SAMPLES="
-    lib/tool_shed/scripts/bootstrap_tool_shed/user_info.xml.sample
     tool-data/shared/ucsc/builds.txt.sample
     tool-data/shared/ucsc/manual_builds.txt.sample
     static/welcome.html.sample
@@ -43,6 +43,9 @@ SAMPLES="
 RMFILES="
     lib/pkg_resources.pyc
 "
+
+MIN_PYTHON_VERSION=3.7
+MIN_PIP_VERSION=20.3
 
 # return true if $1 is in $2 else false
 in_dir() {
@@ -99,7 +102,7 @@ else
     GIT_BRANCH=0
 fi
 
-: ${GALAXY_VIRTUAL_ENV:=.venv}
+: "${GALAXY_VIRTUAL_ENV:=.venv}"
 # GALAXY_CONDA_ENV is not set here because we don't want to execute the Galaxy version check if we don't need to
 
 if [ $SET_VENV -eq 1 ] && [ $CREATE_VENV -eq 1 ]; then
@@ -110,13 +113,13 @@ if [ $SET_VENV -eq 1 ] && [ $CREATE_VENV -eq 1 ]; then
         if [ -n "$CONDA_EXE" ]; then
             echo "Found Conda, will set up a virtualenv using conda."
             echo "To use a virtualenv instead, create one with a non-Conda Python at $GALAXY_VIRTUAL_ENV"
-            : ${GALAXY_CONDA_ENV:="_galaxy_"}
+            : "${GALAXY_CONDA_ENV:=_galaxy_}"
             if [ "$CONDA_DEFAULT_ENV" != "$GALAXY_CONDA_ENV" ]; then
                 if ! check_conda_env "$GALAXY_CONDA_ENV"; then
                     echo "Creating Conda environment for Galaxy: $GALAXY_CONDA_ENV"
                     echo "To avoid this, use the --no-create-venv flag or set \$GALAXY_CONDA_ENV to an"
                     echo "existing environment before starting Galaxy."
-                    $CONDA_EXE create --yes --override-channels --channel conda-forge --channel defaults --name "$GALAXY_CONDA_ENV" 'python=3.7' 'pip>=19.3'
+                    $CONDA_EXE create --yes --override-channels --channel conda-forge --name "$GALAXY_CONDA_ENV" "python=${GALAXY_CONDA_PYTHON_VERSION}" "pip>=${MIN_PIP_VERSION}"
                     unset __CONDA_INFO
                 fi
                 conda_activate
@@ -141,8 +144,7 @@ if [ $SET_VENV -eq 1 ] && [ $CREATE_VENV -eq 1 ]; then
                     virtualenv -p "$GALAXY_PYTHON" "$GALAXY_VIRTUAL_ENV"
                 else
                     # Download virtualenv zipapp
-                    min_python_version=3.7
-                    vurl="https://bootstrap.pypa.io/virtualenv/${min_python_version}/virtualenv.pyz"
+                    vurl="https://bootstrap.pypa.io/virtualenv/${MIN_PYTHON_VERSION}/virtualenv.pyz"
                     vtmp=$(mktemp -d -t galaxy-virtualenv-XXXXXX)
                     vsrc="$vtmp/$(basename $vurl)"
                     echo "Fetching $vurl"
@@ -163,7 +165,6 @@ if [ $SET_VENV -eq 1 ] && [ $CREATE_VENV -eq 1 ]; then
             fi
         fi
     fi
-    setup_gravity_state_dir
 fi
 
 # activate virtualenv or conda env, sets $GALAXY_VIRTUAL_ENV and $GALAXY_CONDA_ENV
@@ -174,21 +175,20 @@ if [ $SET_VENV -eq 1 ] && [ -z "$VIRTUAL_ENV" ]; then
     exit 1
 fi
 
-: ${GALAXY_WHEELS_INDEX_URL:="https://wheels.galaxyproject.org/simple"}
-: ${PYPI_INDEX_URL:="https://pypi.python.org/simple"}
-: ${GALAXY_DEV_REQUIREMENTS:="./lib/galaxy/dependencies/dev-requirements.txt"}
-if [ $REPLACE_PIP -eq 1 ]; then
-    python -m pip install 'pip>=19.3'
-fi
+: "${GALAXY_WHEELS_INDEX_URL:=https://wheels.galaxyproject.org/simple}"
+: "${PYPI_INDEX_URL:=https://pypi.python.org/simple}"
+: "${GALAXY_DEV_REQUIREMENTS:=./lib/galaxy/dependencies/dev-requirements.txt}"
 
 requirement_args="-r requirements.txt"
 if [ $DEV_WHEELS -eq 1 ]; then
-    requirement_args="-r ${GALAXY_DEV_REQUIREMENTS}"
+    requirement_args="$requirement_args -r ${GALAXY_DEV_REQUIREMENTS}"
 fi
 
 [ "$CI" = 'true' ] && export PIP_PROGRESS_BAR=off
 
 if [ $FETCH_WHEELS -eq 1 ]; then
+    python -m pip install "pip>=$MIN_PIP_VERSION" wheel
+    # shellcheck disable=SC2086
     pip install $requirement_args --index-url "${GALAXY_WHEELS_INDEX_URL}" --extra-index-url "${PYPI_INDEX_URL}"
     GALAXY_CONDITIONAL_DEPENDENCIES=$(PYTHONPATH=lib python -c "from __future__ import print_function; import galaxy.dependencies; print('\n'.join(galaxy.dependencies.optional('$GALAXY_CONFIG_FILE')))")
     if [ -n "$GALAXY_CONDITIONAL_DEPENDENCIES" ]; then
@@ -201,19 +201,21 @@ if [ $FETCH_WHEELS -eq 1 ]; then
 fi
 
 # Install node if not installed
-if [ -n "$VIRTUAL_ENV" ]; then
-    if ! in_venv "$(command -v node)" || [ "$(node --version)" != "v${NODE_VERSION}" ]; then
-        echo "Installing node into $VIRTUAL_ENV with nodeenv."
-        if [ -d "${VIRTUAL_ENV}/lib/node_modules" ]; then
-            echo "Removing old ${VIRTUAL_ENV}/lib/node_modules directory."
-            rm -rf "${VIRTUAL_ENV}/lib/node_modules"
+if [ $SKIP_NODE -eq 0 ]; then
+    if [ -n "$VIRTUAL_ENV" ]; then
+        if ! command -v node >/dev/null || [ "$(node --version)" != "v${NODE_VERSION}" ]; then
+            echo "Installing node into $VIRTUAL_ENV with nodeenv."
+            if [ -d "${VIRTUAL_ENV}/lib/node_modules" ]; then
+                echo "Removing old ${VIRTUAL_ENV}/lib/node_modules directory."
+                rm -rf "${VIRTUAL_ENV}/lib/node_modules"
+            fi
+            nodeenv -n "$NODE_VERSION" -p
         fi
-        nodeenv -n "$NODE_VERSION" -p
-    fi
-elif [ -n "$CONDA_DEFAULT_ENV" ] && [ -n "$CONDA_EXE" ]; then
-    if ! in_conda_env "$(command -v node)"; then
-        echo "Installing node into '$CONDA_DEFAULT_ENV' Conda environment with conda."
-        $CONDA_EXE install --yes --override-channels --channel conda-forge --channel defaults --name "$CONDA_DEFAULT_ENV" nodejs="$NODE_VERSION"
+    elif [ -n "$CONDA_DEFAULT_ENV" ] && [ -n "$CONDA_EXE" ]; then
+        if ! in_conda_env "$(command -v node)"; then
+            echo "Installing node into '$CONDA_DEFAULT_ENV' Conda environment with conda."
+            $CONDA_EXE install --yes --override-channels --channel conda-forge --name "$CONDA_DEFAULT_ENV" nodejs="$NODE_VERSION"
+        fi
     fi
 fi
 
@@ -252,7 +254,7 @@ if [ $SKIP_CLIENT_BUILD -eq 0 ]; then
     elif [ -n "$CONDA_DEFAULT_ENV" ] && [ -n "$CONDA_EXE" ]; then
         if ! in_conda_env "$(command -v yarn)"; then
             echo "Installing yarn into '$CONDA_DEFAULT_ENV' Conda environment with conda."
-            $CONDA_EXE install --yes --override-channels --channel conda-forge --channel defaults --name "$CONDA_DEFAULT_ENV" yarn
+            $CONDA_EXE install --yes --override-channels --channel conda-forge --name "$CONDA_DEFAULT_ENV" yarn
         fi
     else
         echo "WARNING: Galaxy client build needed but there is no virtualenv enabled. Build may fail."
@@ -261,16 +263,34 @@ if [ $SKIP_CLIENT_BUILD -eq 0 ]; then
     set_galaxy_config_file_var
     # Set plugin path
     GALAXY_PLUGIN_PATH=$(python scripts/config_parse.py --setting=plugin_path --config-file="$GALAXY_CONFIG_FILE")
-    # Build client
-    cd client
-    if yarn install $YARN_INSTALL_OPTS; then
-        if ! (export GALAXY_PLUGIN_PATH="$GALAXY_PLUGIN_PATH"; yarn run build-production-maps;) then
-            echo "ERROR: Galaxy client build failed. See ./client/README.md for more information, including how to get help."
+
+    if [ $INSTALL_PREBUILT_CLIENT -eq 0 ]; then
+        # If we have not opted to use a prebuilt client, then build client.
+        cd client
+        # shellcheck disable=SC2086
+        if yarn install $YARN_INSTALL_OPTS; then
+            if ! (export GALAXY_PLUGIN_PATH="$GALAXY_PLUGIN_PATH"; yarn run build-production-maps;) then
+                echo "ERROR: Galaxy client build failed. See ./client/README.md for more information, including how to get help."
+                exit 1
+            fi
+        else
+            echo "ERROR: Galaxy client dependency installation failed. See ./client/README.md for more information, including how to get help."
             exit 1
         fi
+        cd -
     else
-        echo "ERROR: Galaxy client dependency installation failed. See ./client/README.md for more information, including how to get help."
-        exit 1
+        # Install prebuilt client
+        # shellcheck disable=SC2086
+        if yarn install $YARN_INSTALL_OPTS; then
+            if ! (yarn run stage) then
+                echo "ERROR: Galaxy prebuilt client install failed. See ./client/README.md for more information, including how to get help."
+                exit 1
+            fi
+        else
+            echo "ERROR: Galaxy prebuilt client dependency installation failed. See ./client/README.md for more information, including how to get help."
+            exit 1
+        fi
+
     fi
-    cd -
+
 fi

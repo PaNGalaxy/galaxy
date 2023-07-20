@@ -5,8 +5,8 @@ HistoryDatasetCollectionAssociations (HDCAs) are datasets contained or created i
 history.
 """
 import logging
-from typing import Dict
 import os
+from typing import Dict
 
 from galaxy import model
 from galaxy.managers import (
@@ -28,8 +28,7 @@ from galaxy.util.zipstream import ZipstreamWrapper
 log = logging.getLogger(__name__)
 
 
-def stream_dataset_collection(dataset_collection_instance, upstream_mod_zip=False,
-                              upstream_gzip=False, trans=None):
+def stream_dataset_collection(dataset_collection_instance, upstream_mod_zip=False, upstream_gzip=False, trans=None):
     archive_name = f"{dataset_collection_instance.hid}: {dataset_collection_instance.name}"
     archive = ZipstreamWrapper(
         archive_name=archive_name,

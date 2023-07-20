@@ -11,7 +11,7 @@ import time
 
 from galaxy import model
 from galaxy.jobs import JobDestination
-from galaxy.jobs.handler import DEFAULT_JOB_PUT_FAILURE_MESSAGE
+from galaxy.jobs.handler import DEFAULT_JOB_RUNNER_FAILURE_MESSAGE
 from galaxy.jobs.runners import (
     AsynchronousJobRunner,
     AsynchronousJobState,
@@ -70,9 +70,7 @@ class DRMAAJobRunner(AsynchronousJobRunner):
             drmaa = __import__("drmaa")
         except (ImportError, RuntimeError) as exc:
             raise exc.__class__(
-                "The Python drmaa package is required to use this "
-                "feature, please install it or correct the "
-                "following error:\n%s: %s" % (exc.__class__.__name__, str(exc))
+                f"The Python drmaa package is required to use this feature, please install it or correct the following error:\n{exc.__class__.__name__}: {str(exc)}"
             )
         from pulsar.managers.util.drmaa import DrmaaSessionFactory
 
@@ -201,10 +199,11 @@ class DRMAAJobRunner(AsynchronousJobRunner):
             else:
                 log.error(f"({galaxy_id_tag}) All attempts to submit job failed")
                 if not fail_msg:
-                    fail_msg = DEFAULT_JOB_PUT_FAILURE_MESSAGE
+                    fail_msg = DEFAULT_JOB_RUNNER_FAILURE_MESSAGE
                 job_wrapper.fail(fail_msg)
                 return
         else:
+            filename = self.store_jobtemplate(job_wrapper, jt)
             job_wrapper.change_ownership_for_run()
             # if user credentials are not available, use galaxy credentials (if permitted)
             allow_guests = asbool(job_wrapper.job_destination.params.get("allow_guests", False))
@@ -218,7 +217,6 @@ class DRMAAJobRunner(AsynchronousJobRunner):
                     return
                 pwent = job_wrapper.galaxy_system_pwent
             log.debug(f"({galaxy_id_tag}) submitting with credentials: {pwent[0]} [uid: {pwent[2]}]")
-            filename = self.store_jobtemplate(job_wrapper, jt)
             self.userid = pwent[2]
             external_job_id = self.external_runjob(external_runjob_script, filename, pwent[2])
             if external_job_id is None:
@@ -420,11 +418,9 @@ class DRMAAJobRunner(AsynchronousJobRunner):
             self.monitor_queue.put(ajs)
 
     def store_jobtemplate(self, job_wrapper, jt):
-        """Stores the content of a DRMAA JobTemplate object in a file as a JSON string.
-        Path is hard-coded, but it's no worse than other path in this module.
-        Uses Galaxy's JobID, so file is expected to be unique."""
-        filename = f"{self.app.config.cluster_files_directory}/{job_wrapper.get_id_tag()}.jt_json"
-        with open(filename, "w+") as fp:
+        """Stores the content of a DRMAA JobTemplate object in a file as a JSON string."""
+        filename = os.path.join(job_wrapper.working_directory, f"{job_wrapper.get_id_tag()}.jt_json")
+        with open(filename, "w") as fp:
             json.dump(jt, fp)
         log.debug(f"({job_wrapper.job_id}) Job script for external submission is: {filename}")
         return filename

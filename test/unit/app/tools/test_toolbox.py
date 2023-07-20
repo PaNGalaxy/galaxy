@@ -4,7 +4,6 @@ import logging
 import os
 import string
 import time
-import unittest
 from typing import Optional
 
 import pytest
@@ -14,6 +13,7 @@ from galaxy import model
 from galaxy.app_unittest_utils.tools_support import UsesTools
 from galaxy.config_watchers import ConfigWatchers
 from galaxy.model import tool_shed_install
+from galaxy.model.base import transaction
 from galaxy.model.tool_shed_install import mapping
 from galaxy.tool_util.unittest_utils import mock_trans
 from galaxy.tool_util.unittest_utils.sample_data import (
@@ -22,6 +22,7 @@ from galaxy.tool_util.unittest_utils.sample_data import (
 )
 from galaxy.tools import ToolBox
 from galaxy.tools.cache import ToolCache
+from galaxy.util.unittest import TestCase
 
 log = logging.getLogger(__name__)
 
@@ -48,14 +49,11 @@ DEFAULT_TEST_REPO = REPO_TYPE("github.com", "galaxyproject", "example", "1", "1"
 
 
 class SimplifiedToolBox(ToolBox):
-    def __init__(self, test_case):
+    def __init__(self, test_case: "BaseToolBoxTestCase"):
         app = test_case.app
         app.watchers.tool_config_watcher.reload_callback = lambda: reload_callback(test_case)
         # Handle app/config stuff needed by toolbox but not by tools.
         app.tool_cache = ToolCache() if not hasattr(app, "tool_cache") else app.tool_cache
-        app.job_config.get_tool_resource_parameters = lambda tool_id: None
-        app.config.update_integrated_tool_panel = True
-        app.config.schema.defaults = {"tool_dependency_dir": "dependencies"}
         config_files = test_case.config_files
         tool_root_dir = test_case.test_directory
         super().__init__(
@@ -67,15 +65,15 @@ class SimplifiedToolBox(ToolBox):
         self.app.watchers.start()
 
 
-class BaseToolBoxTestCase(unittest.TestCase, UsesTools):
+class BaseToolBoxTestCase(TestCase, UsesTools):
     _toolbox: Optional[SimplifiedToolBox] = None
 
     @property
-    def integerated_tool_panel_path(self):
+    def integrated_tool_panel_path(self):
         return os.path.join(self.test_directory, "integrated_tool_panel.xml")
 
     def assert_integerated_tool_panel(self, exists=True):
-        does_exist = os.path.exists(self.integerated_tool_panel_path)
+        does_exist = os.path.exists(self.integrated_tool_panel_path)
         if exists:
             assert does_exist
         else:
@@ -93,7 +91,7 @@ class BaseToolBoxTestCase(unittest.TestCase, UsesTools):
         install_model = mapping.init("sqlite:///:memory:", create_tables=True)
         self.app.tool_cache = ToolCache()
         self.app.install_model = install_model
-        self.app.reindex_tool_search = self.__reindex
+        self.app.reindex_tool_search = self.__reindex  # type: ignore[assignment]
         itp_config = os.path.join(self.test_directory, "integrated_tool_panel.xml")
         self.app.config.integrated_tool_panel_config = itp_config
         self.app.watchers = ConfigWatchers(self.app)
@@ -108,7 +106,7 @@ class BaseToolBoxTestCase(unittest.TestCase, UsesTools):
             "tools": [
                 {
                     "add_to_tool_panel": False,  # to have repository.includes_tools_for_display_in_tool_panel=False in InstalledRepositoryManager.activate_repository()
-                    "guid": "github.com/galaxyproject/example/test_tool/0.%s" % changeset,
+                    "guid": f"github.com/galaxyproject/example/test_tool/0.{changeset}",
                     "tool_config": "tool.xml",
                 }
             ],
@@ -124,7 +122,9 @@ class BaseToolBoxTestCase(unittest.TestCase, UsesTools):
         repository.deleted = False
         repository.uninstalled = False
         self.app.install_model.context.add(repository)
-        self.app.install_model.context.flush()
+        session = self.app.install_model.context
+        with transaction(session):
+            session.commit()
         return repository
 
     def _setup_two_versions(self):
@@ -132,20 +132,26 @@ class BaseToolBoxTestCase(unittest.TestCase, UsesTools):
         version1 = tool_shed_install.ToolVersion()
         version1.tool_id = "github.com/galaxyproject/example/test_tool/0.1"
         self.app.install_model.context.add(version1)
-        self.app.install_model.context.flush()
+        session = self.app.install_model.context
+        with transaction(session):
+            session.commit()
 
         self._repo_install(changeset="2")
         version2 = tool_shed_install.ToolVersion()
         version2.tool_id = "github.com/galaxyproject/example/test_tool/0.2"
         self.app.install_model.context.add(version2)
-        self.app.install_model.context.flush()
+        session = self.app.install_model.context
+        with transaction(session):
+            session.commit()
 
         version_association = tool_shed_install.ToolVersionAssociation()
         version_association.parent_id = version1.id
         version_association.tool_id = version2.id
 
         self.app.install_model.context.add(version_association)
-        self.app.install_model.context.flush()
+        session = self.app.install_model.context
+        with transaction(session):
+            session.commit()
 
     def _setup_two_versions_in_config(self, section=False):
         if section:
@@ -176,7 +182,7 @@ class BaseToolBoxTestCase(unittest.TestCase, UsesTools):
 
     def _init_dynamic_tool_conf(self):
         # Add a dynamic tool conf (such as a ToolShed managed one) to list of configs.
-        self._add_config("""<toolbox tool_path="%s"></toolbox>""" % self.test_directory)
+        self._add_config(f"""<toolbox tool_path="{self.test_directory}"></toolbox>""")
 
     def _tool_conf_path(self, name="tool_conf.xml"):
         path = os.path.join(self.test_directory, name)
@@ -190,7 +196,7 @@ class BaseToolBoxTestCase(unittest.TestCase, UsesTools):
         self.reindexed = True
 
 
-class ToolBoxTestCase(BaseToolBoxTestCase):
+class TestToolBox(BaseToolBoxTestCase):
     def test_load_file(self):
         self._init_tool()
         self._add_config("""<toolbox><tool file="tool.xml" /></toolbox>""")
@@ -387,14 +393,14 @@ class ToolBoxTestCase(BaseToolBoxTestCase):
         self._add_config("""<toolbox><tool file="tool.xml" /></toolbox>""")
 
         self.assert_integerated_tool_panel(exists=False)
-        self.toolbox
+        self.toolbox  # noqa: B018
         self.assert_integerated_tool_panel(exists=True)
 
     def test_groups_tools_in_section(self):
         self._init_tool()
         self._setup_two_versions_in_config(section=True)
         self._setup_two_versions()
-        self.toolbox
+        self.toolbox  # noqa: B018
         self.__verify_two_test_tools()
 
         # Assert only newer version of the tool loaded into the panel.
@@ -450,7 +456,7 @@ class ToolBoxTestCase(BaseToolBoxTestCase):
 
     def test_tool_dir(self):
         self._init_tool()
-        self._add_config("""<toolbox><tool_dir dir="%s" /></toolbox>""" % self.test_directory)
+        self._add_config(f"""<toolbox><tool_dir dir="{self.test_directory}" /></toolbox>""")
 
         toolbox = self.toolbox
         assert toolbox.get_tool("test_tool") is not None
@@ -465,7 +471,7 @@ class ToolBoxTestCase(BaseToolBoxTestCase):
     def test_workflow_in_panel(self):
         stored_workflow = self.__test_workflow()
         encoded_id = self.app.security.encode_id(stored_workflow.id)
-        self._add_config("""<toolbox><workflow id="%s" /></toolbox>""" % encoded_id)
+        self._add_config(f"""<toolbox><workflow id="{encoded_id}" /></toolbox>""")
         assert len(self.toolbox._tool_panel) == 1
         panel_workflow = next(iter(self.toolbox._tool_panel.values()))
         assert panel_workflow == stored_workflow.latest_workflow
@@ -475,7 +481,7 @@ class ToolBoxTestCase(BaseToolBoxTestCase):
         stored_workflow = self.__test_workflow()
         encoded_id = self.app.security.encode_id(stored_workflow.id)
         self._add_config(
-            """<toolbox><section id="tid" name="TID"><workflow id="%s" /></section></toolbox>""" % encoded_id
+            f"""<toolbox><section id="tid" name="TID"><workflow id="{encoded_id}" /></section></toolbox>"""
         )
         assert len(self.toolbox._tool_panel) == 1
         section = self.toolbox._tool_panel["tid"]
@@ -530,7 +536,9 @@ class ToolBoxTestCase(BaseToolBoxTestCase):
         stored_workflow.user = user
         self.app.model.context.add(workflow)
         self.app.model.context.add(stored_workflow)
-        self.app.model.context.flush()
+        session = self.app.model.context
+        with transaction(session):
+            session.commit()
         return stored_workflow
 
     def __verify_two_test_tools(self):
@@ -605,10 +613,10 @@ class ToolBoxTestCase(BaseToolBoxTestCase):
     def __setup_shed_tool_conf(self):
         self._add_config("""<toolbox tool_path="."></toolbox>""")
 
-        self.toolbox  # create toolbox
+        self.toolbox  # noqa: B018 create toolbox
         assert not self.reindexed
 
-        os.remove(self.integerated_tool_panel_path)
+        os.remove(self.integrated_tool_panel_path)
 
 
 def reload_callback(test_case):

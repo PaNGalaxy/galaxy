@@ -8,37 +8,36 @@ import Ui from "mvc/ui/ui-misc";
 import SelectContent from "mvc/ui/ui-select-content";
 import SelectLibrary from "mvc/ui/ui-select-library";
 import SelectFtp from "mvc/ui/ui-select-ftp";
-import RulesEdit from "mvc/ui/ui-rules-edit";
 import DataPicker from "mvc/ui/ui-data-picker";
 
 // create form view
 export default Backbone.View.extend({
     /** Available parameter types */
     types: {
-        text: "_fieldText",
-        password: "_fieldText",
         select: "_fieldSelect",
         data_column: "_fieldSelect",
         genomebuild: "_fieldSelect",
         data: "_fieldData",
         data_collection: "_fieldData",
-        drill_down: "_fieldDrilldown",
         group_tag: "_fieldSelect",
         library_data: "_fieldLibrary",
         ftpfile: "_fieldFtp",
-        upload: "_fieldUpload",
         rules: "_fieldRulesEdit",
         data_dialog: "_fieldDialog",
     },
 
+    remove: function () {
+        this.field.remove();
+        Backbone.View.prototype.remove.call(this);
+    },
+
     /** Returns an input field for a given field type */
     create: function (input_def) {
-        const Galaxy = getGalaxyInstance();
         var fieldClass = this.types[input_def.type];
         this.field = typeof this[fieldClass] === "function" ? this[fieldClass].call(this, input_def) : null;
         if (!this.field) {
             this.field = input_def.options ? this._fieldSelect(input_def) : this._fieldText(input_def);
-            Galaxy.emit.debug("form-parameters::_addRow()", `Auto matched field type (${input_def.type}).`);
+            console.debug("form-parameters::_addRow()", `Auto matched field type (${input_def.type}).`);
         }
         if (input_def.value === undefined) {
             input_def.value = null;
@@ -111,23 +110,6 @@ export default Backbone.View.extend({
         });
     },
 
-    /** Drill down options field */
-    _fieldDrilldown: function (input_def) {
-        // show text field e.g. in workflow editor
-        if (input_def.is_workflow) {
-            return this._fieldText(input_def);
-        }
-
-        // create drill down field
-        return new Ui.Drilldown.View({
-            id: input_def.id,
-            data: input_def.options,
-            display: input_def.display,
-            optional: input_def.optional,
-            onchange: input_def.onchange,
-        });
-    },
-
     /** Text input field */
     _fieldText: function (input_def) {
         // field replaces e.g. a select field
@@ -193,22 +175,6 @@ export default Backbone.View.extend({
             id: input_def.id,
             optional: input_def.optional,
             multiple: input_def.multiple,
-            onchange: input_def.onchange,
-        });
-    },
-
-    _fieldRulesEdit: function (input_def) {
-        return new RulesEdit.View({
-            id: input_def.id,
-            onchange: input_def.onchange,
-            target: input_def.target,
-        });
-    },
-
-    /** Upload file field */
-    _fieldUpload: function (input_def) {
-        return new Ui.Upload({
-            id: input_def.id,
             onchange: input_def.onchange,
         });
     },

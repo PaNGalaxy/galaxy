@@ -24,7 +24,6 @@ import "libs/jquery/jquery.form";
 import "libs/jquery/jquery.rating";
 import "ui/editable-text";
 
-//import "style/scss/autocomplete_tagging.scss";
 //import "static/style/jquery-ui/smoothness/jquery-ui.css";
 //import "static/style/library.css";
 //import "static/style/trackster.css";
@@ -136,14 +135,6 @@ export class TracksterUI extends Backbone.Model {
                                 name: "New Group",
                             })
                         );
-                    },
-                },
-                {
-                    icon_class: "bookmarks",
-                    title: _l("Bookmarks"),
-                    on_click: () => {
-                        // HACK -- use style to determine if panel is hidden and hide/show accordingly.
-                        window.force_right_panel($("div#right").css("right") == "0px" ? "hide" : "show");
                     },
                 },
                 {
@@ -394,9 +385,6 @@ export class TracksterUIView extends Backbone.View {
         $("#right-border").click(() => {
             this.ui.view.resize_window();
         });
-
-        // hide right panel
-        window.force_right_panel("hide");
 
         // check if id is available
         if (window.galaxy_config.app.id) {

@@ -22,6 +22,7 @@ from galaxy.model import (
     JobToOutputDatasetAssociation,
     LibraryDatasetDatasetAssociation,
 )
+from galaxy.model.base import transaction
 from galaxy.model.dataset_collections import builder
 from galaxy.model.dataset_collections.structure import UninitializedTree
 from galaxy.model.dataset_collections.type_description import COLLECTION_TYPE_DESCRIPTION_FACTORY
@@ -29,11 +30,9 @@ from galaxy.model.store.discover import (
     discover_target_directory,
     DiscoveredFile,
     JsonCollectedDatasetMatch,
-)
-from galaxy.model.store.discover import MetadataSourceProvider as AbstractMetadataSourceProvider
-from galaxy.model.store.discover import ModelPersistenceContext
-from galaxy.model.store.discover import PermissionProvider as AbstractPermissionProvider
-from galaxy.model.store.discover import (
+    MetadataSourceProvider as AbstractMetadataSourceProvider,
+    ModelPersistenceContext,
+    PermissionProvider as AbstractPermissionProvider,
     persist_elements_to_folder,
     persist_elements_to_hdca,
     persist_hdas,
@@ -191,7 +190,6 @@ def collect_dynamic_outputs(
 
 
 class BaseJobContext(ModelPersistenceContext):
-
     max_discovered_files: Union[int, float]
     tool_provided_metadata: BaseToolProvidedMetadata
     job_working_directory: str
@@ -295,14 +293,15 @@ class JobContext(BaseJobContext):
         self.sa_session.add(obj)
 
     def flush(self):
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
 
     def get_library_folder(self, destination):
         app = self.app
         library_folder_manager = app.library_folder_manager
-        library_folder = library_folder_manager.get(
-            self.work_context, app.security.decode_id(destination.get("library_folder_id"))
-        )
+        folder_id = destination.get("library_folder_id")
+        decoded_folder_id = app.security.decode_id(folder_id) if isinstance(folder_id, str) else folder_id
+        library_folder = library_folder_manager.get(self.work_context, decoded_folder_id)
         return library_folder
 
     def get_hdca(self, object_id):
@@ -335,20 +334,23 @@ class JobContext(BaseJobContext):
         trans = self.work_context
         trans.app.security_agent.copy_library_permissions(trans, library_folder, ld)
         trans.sa_session.add(ld)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
 
         # Permissions must be the same on the LibraryDatasetDatasetAssociation and the associated LibraryDataset
         trans.app.security_agent.copy_library_permissions(trans, ld, ldda)
         # Copy the current user's DefaultUserPermissions to the new LibraryDatasetDatasetAssociation.dataset
         trans.app.security_agent.set_all_dataset_permissions(
-            ldda.dataset, trans.app.security_agent.user_get_default_permissions(trans.user)
+            ldda.dataset, trans.app.security_agent.user_get_default_permissions(trans.user), flush=False, new=True
         )
         library_folder.add_library_dataset(ld, genome_build=ldda.dbkey)
         trans.sa_session.add(library_folder)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
 
         trans.sa_session.add(ld)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
 
     def add_datasets_to_history(self, datasets, for_output_dataset=None):
         sa_session = self.sa_session
@@ -577,7 +579,7 @@ def discover_files(output_name, tool_provided_metadata, extra_file_collectors, j
                 JsonCollectedDatasetMatch(dataset, extra_file_collector, filename, path=path),
             )
     else:
-        for (match, collector) in walk_over_file_collectors(extra_file_collectors, job_working_directory, matchable):
+        for match, collector in walk_over_file_collectors(extra_file_collectors, job_working_directory, matchable):
             yield DiscoveredFile(match.path, collector, match)
 
 
@@ -616,10 +618,9 @@ def walk_over_extra_files(target_dir, extra_file_collector, job_working_director
                     if match:
                         yield match
 
-    for match in extra_file_collector.sort(
+    yield from extra_file_collector.sort(
         _walk(target_dir, extra_file_collector, job_working_directory, matchable, parent_paths)
-    ):
-        yield match
+    )
 
 
 def dataset_collector(dataset_collection_description):
@@ -648,7 +649,7 @@ class DatasetCollector:
     def __init__(self, dataset_collection_description):
         self.discover_via = dataset_collection_description.discover_via
         # dataset_collection_description is an abstract description
-        # built from the tool parsing module - see galaxy.tool_util.parser.output_colleciton_def
+        # built from the tool parsing module - see galaxy.tool_util.parser.output_collection_def
         self.sort_key = dataset_collection_description.sort_key
         self.sort_reverse = dataset_collection_description.sort_reverse
         self.sort_comp = dataset_collection_description.sort_comp

@@ -19,15 +19,16 @@ from social_core.utils import (
 from sqlalchemy.exc import IntegrityError
 
 from galaxy.exceptions import MalformedContents
-from galaxy.util import DEFAULT_SOCKET_TIMEOUT
-from ..authnz import IdentityProvider
-from ..model import (
+from galaxy.model import (
     PSAAssociation,
     PSACode,
     PSANonce,
     PSAPartial,
     UserAuthnzToken,
 )
+from galaxy.model.base import transaction
+from galaxy.util import DEFAULT_SOCKET_TIMEOUT
+from . import IdentityProvider
 
 # key: a component name which PSA requests.
 # value: is the name of a class associated with that key.
@@ -478,4 +479,5 @@ def disconnect(
     sa_session.delete(user_authnz)
     # option B
     # user_authnz.extra_data = None
-    sa_session.flush()
+    with transaction(sa_session):
+        sa_session.commit()

@@ -26,7 +26,7 @@ define({
         Login: false,
         Register: false,
         "Login or Register": false,
-        "Logged in as": false,
+        "Signed in as": false,
         Preferences: false,
         "Custom Builds": false,
         Logout: false,
@@ -451,6 +451,14 @@ define({
         // ---------------------------------------------------------------------------- workflow_editor_tests
         "tool tooltip": false,
         // ----------------------------------------------------------------------------
+        "Subscribe to mailing list": false,
+        "Already have an account?": false,
+        "Log in here.": false,
+        "Create a Galaxy account": false,
+        "Or, register with email": false,
+        "Forgot password?": false,
+        "Register here.": false,
+        "Click here to reset your password.": false,
     },
     ja: true,
     fr: true,

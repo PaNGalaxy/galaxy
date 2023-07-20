@@ -6,7 +6,7 @@ from .framework import (
 )
 
 
-class UploadFtpSeleniumIntegrationTestCase(SeleniumIntegrationTestCase):
+class TestUploadFtpSeleniumIntegration(SeleniumIntegrationTestCase):
     ensure_registered = True
 
     @classmethod
@@ -35,7 +35,7 @@ class UploadFtpSeleniumIntegrationTestCase(SeleniumIntegrationTestCase):
         self.wait_for_history()
 
     def _create_ftp_dir(self):
-        email = self.get_logged_in_user()["email"]
+        email = self.get_user_email()
         user_ftp_dir = os.path.join(self.ftp_dir(), email)
         os.makedirs(user_ftp_dir)
         return user_ftp_dir

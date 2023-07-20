@@ -39,7 +39,7 @@ from galaxy.managers.jobs import (
     summarize_job_metrics,
     summarize_job_parameters,
 )
-from galaxy.schema.fields import EncodedDatabaseIdField
+from galaxy.schema.fields import DecodedDatabaseIdField
 from galaxy.schema.schema import JobIndexSortByEnum
 from galaxy.schema.types import OffsetNaiveDatetime
 from galaxy.web import (
@@ -79,10 +79,10 @@ StateQueryParam = Query(
 UserDetailsQueryParam: bool = Query(
     default=False,
     title="Include user details",
-    description="If true, and requestor is an admin, will return external job id and user email. This is only available to admins.",
+    description="If true, and requester is an admin, will return external job id and user email. This is only available to admins.",
 )
 
-UserIdQueryParam: Optional[EncodedDatabaseIdField] = Query(
+UserIdQueryParam: Optional[DecodedDatabaseIdField] = Query(
     default=None,
     title="User ID",
     description="an encoded user id to restrict query to, must be own id if not admin user",
@@ -122,19 +122,19 @@ DateRangeMaxQueryParam: Optional[Union[OffsetNaiveDatetime, date]] = Query(
     description="Limit listing of jobs to those that are updated before specified date (e.g. '2014-01-01')",
 )
 
-HistoryIdQueryParam: Optional[EncodedDatabaseIdField] = Query(
+HistoryIdQueryParam: Optional[DecodedDatabaseIdField] = Query(
     default=None,
     title="History ID",
     description="Limit listing of jobs to those that match the history_id. If none, jobs from any history may be returned.",
 )
 
-WorkflowIdQueryParam: Optional[EncodedDatabaseIdField] = Query(
+WorkflowIdQueryParam: Optional[DecodedDatabaseIdField] = Query(
     default=None,
     title="Workflow ID",
     description="Limit listing of jobs to those that match the specified workflow ID. If none, jobs from any workflow (or from no workflows) may be returned.",
 )
 
-InvocationIdQueryParam: Optional[EncodedDatabaseIdField] = Query(
+InvocationIdQueryParam: Optional[DecodedDatabaseIdField] = Query(
     default=None,
     title="Invocation ID",
     description="Limit listing of jobs to those that match the specified workflow invocation ID. If none, jobs from any workflow invocation (or from no workflows) may be returned.",
@@ -175,7 +175,7 @@ class FastAPIJobs:
     @router.get("/api/jobs/{id}")
     def show(
         self,
-        id: EncodedDatabaseIdField,
+        id: DecodedDatabaseIdField,
         trans: ProvidesUserContext = DependsOnTrans,
         full: Optional[bool] = False,
         stdout_start_pos: Optional[int] = None,
@@ -190,7 +190,13 @@ class FastAPIJobs:
         - stdout_start_pos: The index of the character to begine reading stdout from
         - stdout_count: How many characters of stdout to read
         """
-        return self.service.show(trans, id, bool(full), int(stdout_start_pos) if stdout_start_pos else 0, int(stdout_count) if stdout_count else 0)
+        return self.service.show(
+            trans,
+            id,
+            bool(full),
+            int(stdout_start_pos) if stdout_start_pos else 0,
+            int(stdout_count) if stdout_count else 0,
+        )
 
     @router.get("/api/jobs")
     def index(
@@ -198,21 +204,21 @@ class FastAPIJobs:
         trans: ProvidesUserContext = DependsOnTrans,
         states: Optional[List[str]] = Depends(query_parameter_as_list(StateQueryParam)),
         user_details: bool = UserDetailsQueryParam,
-        user_id: Optional[EncodedDatabaseIdField] = UserIdQueryParam,
+        user_id: Optional[DecodedDatabaseIdField] = UserIdQueryParam,
         view: JobIndexViewEnum = ViewQueryParam,
         tool_ids: Optional[List[str]] = Depends(query_parameter_as_list(ToolIdQueryParam)),
         tool_ids_like: Optional[List[str]] = Depends(query_parameter_as_list(ToolIdLikeQueryParam)),
         date_range_min: Optional[Union[datetime, date]] = DateRangeMinQueryParam,
         date_range_max: Optional[Union[datetime, date]] = DateRangeMaxQueryParam,
-        history_id: Optional[EncodedDatabaseIdField] = HistoryIdQueryParam,
-        workflow_id: Optional[EncodedDatabaseIdField] = WorkflowIdQueryParam,
-        invocation_id: Optional[EncodedDatabaseIdField] = InvocationIdQueryParam,
+        history_id: Optional[DecodedDatabaseIdField] = HistoryIdQueryParam,
+        workflow_id: Optional[DecodedDatabaseIdField] = WorkflowIdQueryParam,
+        invocation_id: Optional[DecodedDatabaseIdField] = InvocationIdQueryParam,
         order_by: JobIndexSortByEnum = SortByQueryParam,
         search: Optional[str] = SearchQueryParam,
         limit: int = LimitQueryParam,
         offset: int = OffsetQueryParam,
     ) -> List[Dict[str, Any]]:
-        payload = JobIndexPayload(
+        payload = JobIndexPayload.construct(
             states=states,
             user_details=user_details,
             user_id=user_id,
@@ -264,7 +270,7 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
         return {"has_empty_inputs": has_empty_inputs, "has_duplicate_inputs": has_duplicate_inputs}
 
     @expose_api
-    def inputs(self, trans: ProvidesUserContext, id, **kwd):
+    def inputs(self, trans: ProvidesUserContext, id, **kwd) -> List[dict]:
         """
         GET /api/jobs/{id}/inputs
 
@@ -273,14 +279,14 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
         :type   id: string
         :param  id: Encoded job id
 
-        :rtype:     dictionary
-        :returns:   dictionary containing input dataset associations
+        :rtype:     list of dicts
+        :returns:   list of dictionaries containing input dataset associations
         """
         job = self.__get_job(trans, id)
         return self.__dictify_associations(trans, job.input_datasets, job.input_library_datasets)
 
     @expose_api
-    def outputs(self, trans: ProvidesUserContext, id, **kwd):
+    def outputs(self, trans: ProvidesUserContext, id, **kwd) -> List[dict]:
         """
         outputs( trans, id )
         * GET /api/jobs/{id}/outputs
@@ -289,8 +295,8 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
         :type   id: string
         :param  id: Encoded job id
 
-        :rtype:     dictionary
-        :returns:   dictionary containing output dataset associations
+        :rtype:     list of dicts
+        :returns:   list of dictionaries containing output dataset associations
         """
         job = self.__get_job(trans, id)
         return self.__dictify_associations(trans, job.output_datasets, job.output_library_datasets)
@@ -313,7 +319,7 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
         return self.job_manager.stop(job, message=message)
 
     @expose_api
-    def resume(self, trans: ProvidesUserContext, id, **kwd):
+    def resume(self, trans: ProvidesUserContext, id, **kwd) -> List[dict]:
         """
         * PUT /api/jobs/{id}/resume
             Resumes a paused job
@@ -321,12 +327,12 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
         :type   id: string
         :param  id: Encoded job id
 
-        :rtype:     dictionary
-        :returns:   dictionary containing output dataset associations
+        :rtype:     list of dicts
+        :returns:   list of dictionaries containing output dataset associations
         """
         job = self.__get_job(trans, id)
         if not job:
-            raise exceptions.ObjectNotFound(f"Could not access job with id '{id}'")
+            raise exceptions.ObjectNotFound("Could not access job with the given id")
         if job.state == job.states.PAUSED:
             job.resume()
         else:
@@ -421,7 +427,7 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
 
         job = self.__get_job(trans, id)
         if not job:
-            raise exceptions.ObjectNotFound(f"Could not access job with id '{id}'")
+            raise exceptions.ObjectNotFound("Could not access job with the given id")
         tool = self.app.toolbox.get_tool(job.tool_id, kwd.get("tool_version") or job.tool_version)
         if tool is None:
             raise exceptions.ObjectNotFound("Requested tool not found")
@@ -429,13 +435,13 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
             raise exceptions.ConfigDoesNotAllowException(f"Tool '{job.tool_id}' cannot be rerun.")
         return tool.to_json(trans, {}, job=job)
 
-    def __dictify_associations(self, trans, *association_lists):
-        rval = []
+    def __dictify_associations(self, trans, *association_lists) -> List[dict]:
+        rval: List[dict] = []
         for association_list in association_lists:
             rval.extend(self.__dictify_association(trans, a) for a in association_list)
         return rval
 
-    def __dictify_association(self, trans, job_dataset_association):
+    def __dictify_association(self, trans, job_dataset_association) -> dict:
         dataset_dict = None
         dataset = job_dataset_association.dataset
         if dataset:

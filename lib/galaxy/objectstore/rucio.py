@@ -6,35 +6,38 @@ try:
 except ImportError:
     provider_name_to_backend = None
     pass
-from ..objectstore import ConcreteObjectStore
-
-import os
-
 import logging
+import os
+import shutil
 
-from galaxy.util import (
-    directory_hash_id,
-    umask_fix_perms,
-    unlink, string_as_bool,
+import rucio.common
+from rucio.client import Client
+from rucio.client.downloadclient import DownloadClient
+from rucio.client.uploadclient import UploadClient
+from rucio.common import utils
+from rucio.common.exception import (  # type: ignore
+    InputValidationError,
+    NoFilesUploaded,
+    NotAllFilesUploaded,
+    RSENotFound,
+    RSEProtocolNotSupported,
+    RSEWriteBlocked,
 )
+from rucio.common.utils import generate_uuid
+from rucio.rse import rsemanager as rsemgr
+
 from galaxy.exceptions import (
     ObjectInvalid,
     ObjectNotFound,
 )
+from galaxy.util import (
+    directory_hash_id,
+    string_as_bool,
+    umask_fix_perms,
+    unlink,
+)
 from galaxy.util.path import safe_relpath
-
-from rucio.client.downloadclient import DownloadClient
-from rucio.common import utils
-from rucio.client import Client
-from rucio.client.uploadclient import UploadClient
-from rucio.common.exception import (RSEWriteBlocked, NoFilesUploaded, NotAllFilesUploaded,
-                                    RSENotFound, RSEProtocolNotSupported, InputValidationError)  # type: ignore
-from rucio.common.utils import (generate_uuid)
-from rucio.rse import rsemanager as rsemgr
-import rucio.common
-
-import shutil
-
+from ..objectstore import ConcreteObjectStore
 
 log = logging.getLogger(__name__)
 
@@ -74,11 +77,11 @@ class InPlaceIngestClient(UploadClient):
         # helper to get rse from rse_expression:
 
         logger = self.logger
-        self.trace['uuid'] = generate_uuid()
+        self.trace["uuid"] = generate_uuid()
 
         # check given sources, resolve dirs into files, and collect meta infos
         files = self._collect_and_validate_file_info(items)
-        logger(logging.DEBUG, 'Num. of files that upload client is processing: {}'.format(len(files)))
+        logger(logging.DEBUG, "Num. of files that upload client is processing: {}".format(len(files)))
 
         # check if RSE of every file is available for writing
         # and cache rse settings
@@ -86,72 +89,75 @@ class InPlaceIngestClient(UploadClient):
         registered_file_dids = set()
         rse_expression = None
         for file in files:
-            rse = file['rse']
+            rse = file["rse"]
             if not self.rses.get(rse):
                 rse_settings = self.rses.setdefault(rse, rsemgr.get_rse_info(rse, vo=self.client.vo))
-                if not ignore_availability and rse_settings['availability_write'] != 1:
-                    raise RSEWriteBlocked('%s is not available for writing. No actions have been taken' % rse)
+                if not ignore_availability and rse_settings["availability_write"] != 1:
+                    raise RSEWriteBlocked("%s is not available for writing. No actions have been taken" % rse)
 
-            dataset_scope = file.get('dataset_scope')
-            dataset_name = file.get('dataset_name')
-            file['rse'] = rse
+            dataset_scope = file.get("dataset_scope")
+            dataset_name = file.get("dataset_name")
+            file["rse"] = rse
             if dataset_scope and dataset_name:
-                dataset_did_str = ('%s:%s' % (dataset_scope, dataset_name))
-                file['dataset_did_str'] = dataset_did_str
+                dataset_did_str = "%s:%s" % (dataset_scope, dataset_name)
+                file["dataset_did_str"] = dataset_did_str
                 registered_dataset_dids.add(dataset_did_str)
 
-            registered_file_dids.add('%s:%s' % (file['did_scope'], file['did_name']))
+            registered_file_dids.add("%s:%s" % (file["did_scope"], file["did_name"]))
         wrong_dids = registered_file_dids.intersection(registered_dataset_dids)
         if len(wrong_dids):
-            raise InputValidationError('DIDs used to address both files and datasets: %s' % str(wrong_dids))
-        logger(logging.DEBUG, 'Input validation done.')
+            raise InputValidationError("DIDs used to address both files and datasets: %s" % str(wrong_dids))
+        logger(logging.DEBUG, "Input validation done.")
 
         # clear this set again to ensure that we only try to register datasets once
         registered_dataset_dids = set()
         num_succeeded = 0
         summary = []
         for file in files:
-            basename = file['basename']
-            logger(logging.INFO, 'Preparing upload for file %s' % basename)
+            basename = file["basename"]
+            logger(logging.INFO, "Preparing upload for file %s" % basename)
 
-            pfn = file.get('pfn')
-            force_scheme = file.get('force_scheme')
-            impl = file.get('impl')
+            pfn = file.get("pfn")
+            force_scheme = file.get("force_scheme")
+            impl = file.get("impl")
 
             trace = copy.deepcopy(self.trace)
             # appending trace to list reference, if the reference exists
             if traces_copy_out is not None:
                 traces_copy_out.append(trace)
 
-            rse = file['rse']
-            trace['scope'] = file['did_scope']
-            trace['datasetScope'] = file.get('dataset_scope', '')
-            trace['dataset'] = file.get('dataset_name', '')
-            trace['remoteSite'] = rse
-            trace['filesize'] = file['bytes']
+            rse = file["rse"]
+            trace["scope"] = file["did_scope"]
+            trace["datasetScope"] = file.get("dataset_scope", "")
+            trace["dataset"] = file.get("dataset_name", "")
+            trace["remoteSite"] = rse
+            trace["filesize"] = file["bytes"]
 
-            file_did = {'scope': file['did_scope'], 'name': file['did_name']}
-            dataset_did_str = file.get('dataset_did_str')
+            file_did = {"scope": file["did_scope"], "name": file["did_name"]}
+            dataset_did_str = file.get("dataset_did_str")
             rse_settings = self.rses[rse]
-            is_deterministic = rse_settings.get('deterministic', True)
+            is_deterministic = rse_settings.get("deterministic", True)
             if not is_deterministic and not pfn:
-                logger(logging.ERROR, 'PFN has to be defined for NON-DETERMINISTIC RSE.')
+                logger(logging.ERROR, "PFN has to be defined for NON-DETERMINISTIC RSE.")
                 continue
             if pfn and is_deterministic:
-                logger(logging.WARNING,
-                       'Upload with given pfn implies that no_register is True, except non-deterministic RSEs')
+                logger(
+                    logging.WARNING,
+                    "Upload with given pfn implies that no_register is True, except non-deterministic RSEs",
+                )
                 no_register = True
 
-            self._register_file(file, registered_dataset_dids, ignore_availability=ignore_availability,
-                                activity=activity)
+            self._register_file(
+                file, registered_dataset_dids, ignore_availability=ignore_availability, activity=activity
+            )
 
-            file['upload_result'] = {0: True, 1: None, 'success': True, 'pfn': pfn}  # needs to be removed
+            file["upload_result"] = {0: True, 1: None, "success": True, "pfn": pfn}  # needs to be removed
             num_succeeded += 1
-            trace['transferStart'] = time.time()
-            trace['transferEnd'] = time.time()
-            trace['clientState'] = 'DONE'
-            file['state'] = 'A'
-            logger(logging.INFO, 'Successfully uploaded file %s' % basename)
+            trace["transferStart"] = time.time()
+            trace["transferEnd"] = time.time()
+            trace["clientState"] = "DONE"
+            file["state"] = "A"
+            logger(logging.INFO, "Successfully uploaded file %s" % basename)
             self._send_trace(trace)
 
             if summary_file_path:
@@ -161,16 +167,16 @@ class InPlaceIngestClient(UploadClient):
             try:
                 self.client.update_replicas_states(rse, files=[replica_for_api])
             except Exception as error:
-                logger(logging.ERROR, 'Failed to update replica state for file {}'.format(basename))
-                logger(logging.DEBUG, 'Details: {}'.format(str(error)))
+                logger(logging.ERROR, "Failed to update replica state for file {}".format(basename))
+                logger(logging.DEBUG, "Details: {}".format(str(error)))
 
             # add file to dataset if needed
             if dataset_did_str and not no_register:
                 try:
-                    self.client.attach_dids(file['dataset_scope'], file['dataset_name'], [file_did])
+                    self.client.attach_dids(file["dataset_scope"], file["dataset_name"], [file_did])
                 except Exception as error:
-                    logger(logging.WARNING, 'Failed to attach file to the dataset')
-                    logger(logging.DEBUG, 'Attaching to dataset {}'.format(str(error)))
+                    logger(logging.WARNING, "Failed to attach file to the dataset")
+                    logger(logging.DEBUG, "Attaching to dataset {}".format(str(error)))
 
         if num_succeeded == 0:
             raise NoFilesUploaded()
@@ -209,8 +215,6 @@ def parse_config_xml(config_xml):
         if e_xml:
             rucio_download_schemes = [{k: e.get(k) for k in attrs} for e in e_xml]
 
-
-
         oidc_provider = config_xml.findtext("oidc_provider", None)
 
         e_xml = config_xml.findall("rucio")
@@ -244,7 +248,7 @@ def parse_config_xml(config_xml):
         raise
 
 
-class RucioBroker():
+class RucioBroker:
     def __init__(self, rucio_config):
         self.write_rse_name = rucio_config["rucio_write_rse_name"]
         self.write_rse_scheme = rucio_config["rucio_write_rse_scheme"]
@@ -308,13 +312,13 @@ class RucioBroker():
             repl = next(self.get_rucio_client().list_replicas(dids))["rses"].keys()
             item = None
             for rse_scheme in self.download_schemes:
-                if rse_scheme['rse'] in repl:
+                if rse_scheme["rse"] in repl:
                     item = {
                         "did": f"{self.scope}:{key}",
-                        "force_scheme": rse_scheme['scheme'],
-                        "rse": rse_scheme['rse'],
+                        "force_scheme": rse_scheme["scheme"],
+                        "rse": rse_scheme["rse"],
                         "base_dir": base_dir,
-                        "ignore_checksum": string_as_bool(rse_scheme['ignore_checksum']),
+                        "ignore_checksum": string_as_bool(rse_scheme["ignore_checksum"]),
                         "no_subdir": True,
                     }
                     break
@@ -337,7 +341,7 @@ class RucioBroker():
         dids = [{"scope": self.scope, "name": key}]
         try:
             repl = next(self.get_rucio_client().list_replicas(dids))
-            return "AVAILABLE" in repl['states'].values()
+            return "AVAILABLE" in repl["states"].values()
         except:
             return False
 
@@ -346,7 +350,7 @@ class RucioBroker():
         dids = [{"scope": self.scope, "name": key}]
         try:
             repl = next(self.get_rucio_client().list_replicas(dids))
-            return repl['bytes']
+            return repl["bytes"]
         except:
             return 0
 
@@ -366,6 +370,7 @@ class RucioObjectStore(ConcreteObjectStore):
     This implementation should be considered beta and may be dropped from
     Galaxy at some future point or significantly modified.
     """
+
     store_type = "rucio"
 
     def to_dict(self):
@@ -386,12 +391,12 @@ class RucioObjectStore(ConcreteObjectStore):
         self.rucio_config["rucio_scope"] = config_dict.get("rucio_scope", None)
         self.rucio_config["rucio_download_schemes"] = config_dict.get("rucio_download_schemes", [])
 
-        if 'RUCIO_WRITE_RSE_NAME' in os.environ:
-            self.rucio_config["rucio_write_rse_name"] = os.environ['RUCIO_WRITE_RSE_NAME']
-        if 'RUCIO_WRITE_RSE_SCHEME' in os.environ:
-            self.rucio_config["rucio_write_rse_scheme"] = os.environ['RUCIO_WRITE_RSE_SCHEME']
-        if 'RUCIO_REGISTER_ONLY' in os.environ:
-            self.rucio_config["rucio_register_only"] = string_as_bool(os.environ['RUCIO_REGISTER_ONLY'])
+        if "RUCIO_WRITE_RSE_NAME" in os.environ:
+            self.rucio_config["rucio_write_rse_name"] = os.environ["RUCIO_WRITE_RSE_NAME"]
+        if "RUCIO_WRITE_RSE_SCHEME" in os.environ:
+            self.rucio_config["rucio_write_rse_scheme"] = os.environ["RUCIO_WRITE_RSE_SCHEME"]
+        if "RUCIO_REGISTER_ONLY" in os.environ:
+            self.rucio_config["rucio_register_only"] = string_as_bool(os.environ["RUCIO_REGISTER_ONLY"])
         self.oidc_provider = config_dict.get("oidc_provider", None)
         self.rucio_broker = RucioBroker(self.rucio_config)
         cache_dict = config_dict["cache"]
@@ -415,15 +420,15 @@ class RucioObjectStore(ConcreteObjectStore):
         return os.path.exists(cache_path)
 
     def _construct_path(
-            self,
-            obj,
-            base_dir=None,
-            dir_only=None,
-            extra_dir=None,
-            extra_dir_at_root=False,
-            alt_name=None,
-            obj_dir=False,
-            **kwargs,
+        self,
+        obj,
+        base_dir=None,
+        dir_only=None,
+        extra_dir=None,
+        extra_dir_at_root=False,
+        alt_name=None,
+        obj_dir=False,
+        **kwargs,
     ):
         # extra_dir should never be constructed from provided data but just
         # make sure there are no shenanigans afoot
@@ -558,6 +563,7 @@ class RucioObjectStore(ConcreteObjectStore):
                 # need this line to set the dataset filename, not sure how this is done - filesystem is monitored?
                 open(os.path.join(self.staging_path, rel_path), "w").close()
             log.debug("rucio _create: " + rel_path)
+        return self
 
     def _empty(self, obj, **kwargs):
         log.debug("rucio _empty")
@@ -691,7 +697,8 @@ class RucioObjectStore(ConcreteObjectStore):
             if not os.path.islink(file_name):
                 raise ObjectInvalid(
                     f"rucio objectstore._register_file, rucio_register_only "
-                    f"is set, but file in cache is not a link ")
+                    f"is set, but file in cache is not a link "
+                )
         if os.path.islink(file_name):
             file_name = os.readlink(file_name)
         self.rucio_broker.register(rel_path, file_name)

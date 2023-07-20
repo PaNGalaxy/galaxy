@@ -167,7 +167,7 @@ class LintContext:
         return len(self.warn_messages) > 0
 
     def lint(self, name: str, lint_func: Callable[[LintTargetType, "LintContext"], None], lint_target: LintTargetType):
-        name = name.replace("tsts", "tests")[len("lint_") :]
+        name = name[len("lint_") :]
         if name in self.skip_types:
             return
 
@@ -323,11 +323,11 @@ def lint_tool_source_with(lint_context, tool_source, extra_modules=None) -> Lint
     linter_modules = submodules.import_submodules(galaxy.tool_util.linters)
     linter_modules.extend(extra_modules)
     for module in linter_modules:
-        lint_tool_types = getattr(module, "lint_tool_types", ["default"])
+        lint_tool_types = getattr(module, "lint_tool_types", ["default", "manage_data"])
         if not ("*" in lint_tool_types or tool_type in lint_tool_types):
             continue
 
-        for (name, value) in inspect.getmembers(module):
+        for name, value in inspect.getmembers(module):
             if callable(value) and name.startswith("lint_"):
                 # Look at the first argument to the linter to decide
                 # if we should lint the XML description or the abstract

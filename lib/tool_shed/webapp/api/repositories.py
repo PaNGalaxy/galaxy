@@ -5,6 +5,10 @@ import tarfile
 from collections import namedtuple
 from io import StringIO
 from time import strftime
+from typing import (
+    Callable,
+    Dict,
+)
 
 from sqlalchemy import (
     and_,
@@ -46,6 +50,7 @@ from tool_shed.util import (
     repository_util,
     tool_util,
 )
+from tool_shed.webapp import model
 from tool_shed.webapp.search.repo_search import RepoSearch
 
 log = logging.getLogger(__name__)
@@ -114,7 +119,7 @@ class RepositoriesController(BaseAPIController):
         if owner is None:
             owner = kwd.get("owner", None)
         tsr_id = kwd.get("tsr_id", None)
-        eagerload_columns = ["downloadable_revisions"]
+        eagerload_columns = [model.Repository.downloadable_revisions]
         if None not in [name, owner]:
             # Get the repository information.
             repository = repository_util.get_repository_by_name_and_owner(
@@ -213,7 +218,7 @@ class RepositoriesController(BaseAPIController):
         if name and owner and changeset_revision:
             # Get the repository information.
             repository = repository_util.get_repository_by_name_and_owner(
-                self.app, name, owner, eagerload_columns=["downloadable_revisions"]
+                self.app, name, owner, eagerload_columns=[model.Repository.downloadable_revisions]
             )
             if repository is None:
                 log.debug(f"Cannot locate repository {name} owned by {owner}")
@@ -257,8 +262,9 @@ class RepositoriesController(BaseAPIController):
                 return repository_dict, repository_metadata_dict, repo_info_dict
             else:
                 log.debug(
-                    "Unable to locate repository_metadata record for repository id %s and changeset_revision %s"
-                    % (str(repository.id), str(changeset_revision))
+                    "Unable to locate repository_metadata record for repository id %s and changeset_revision %s",
+                    repository.id,
+                    changeset_revision,
                 )
                 return repository_dict, {}, {}
         else:
@@ -280,7 +286,7 @@ class RepositoriesController(BaseAPIController):
         tsr_id = kwd.get("tsr_id", None)
         if tsr_id is not None:
             repository = repository_util.get_repository_in_tool_shed(
-                self.app, tsr_id, eagerload_columns=["downloadable_revisions"]
+                self.app, tsr_id, eagerload_columns=[model.Repository.downloadable_revisions]
             )
         else:
             error_message = "Error in the Tool Shed repositories API in get_ordered_installable_revisions: "
@@ -289,7 +295,7 @@ class RepositoriesController(BaseAPIController):
             return []
         return repository.installable_revisions(self.app)
 
-    def __get_value_mapper(self, trans):
+    def __get_value_mapper(self, trans) -> Dict[str, Callable]:
         value_mapper = {
             "id": trans.security.encode_id,
             "repository_id": trans.security.encode_id,
@@ -374,11 +380,17 @@ class RepositoriesController(BaseAPIController):
                     )
                 ]
                 repository = trans.sa_session.query(self.app.model.Repository).filter(*clause_list).first()
+                if not repository:
+                    log.warning(f"Repository {owner}/{name} does not exist, skipping")
+                    continue
                 for changeset, changehash in repository.installable_revisions(self.app):
                     metadata = metadata_util.get_current_repository_metadata_for_changeset_revision(
                         self.app, repository, changehash
                     )
-                    tools = metadata.metadata["tools"]
+                    tools = metadata.metadata.get("tools")
+                    if not tools:
+                        log.warning(f"Repository {owner}/{name}/{changehash} does not contain valid tools, skipping")
+                        continue
                     for tool in tools:
                         if tool["guid"] in tool_ids:
                             repository_found.append("%d:%s" % (int(changeset), changehash))
@@ -528,37 +540,6 @@ class RepositoriesController(BaseAPIController):
         return response_dict
 
     @web.legacy_expose_api
-    def repository_ids_for_setting_metadata(self, trans, my_writable=False, **kwd):
-        """
-        GET /api/repository_ids_for_setting_metadata
-
-        Displays a collection (list) of repository ids ordered for setting metadata.
-
-        :param key: the API key of the Tool Shed user.
-        :param my_writable (optional): if the API key is associated with an admin user in the Tool Shed, setting this param value
-                                       to True will restrict resetting metadata to only repositories that are writable by the user
-                                       in addition to those repositories of type tool_dependency_definition.  This param is ignored
-                                       if the current user is not an admin user, in which case this same restriction is automatic.
-        """
-        if trans.user_is_admin:
-            my_writable = util.asbool(my_writable)
-        else:
-            my_writable = True
-        handled_repository_ids = []
-        repository_ids = []
-        rmm = repository_metadata_manager.RepositoryMetadataManager(self.app, trans.user)
-        query = rmm.get_query_for_setting_metadata_on_repositories(my_writable=my_writable, order=False)
-        # Make sure repositories of type tool_dependency_definition are first in the list.
-        for repository in query:
-            if repository.type == rt_util.TOOL_DEPENDENCY_DEFINITION and repository.id not in handled_repository_ids:
-                repository_ids.append(trans.security.encode_id(repository.id))
-        # Now add all remaining repositories to the list.
-        for repository in query:
-            if repository.type != rt_util.TOOL_DEPENDENCY_DEFINITION and repository.id not in handled_repository_ids:
-                repository_ids.append(trans.security.encode_id(repository.id))
-        return repository_ids
-
-    @web.legacy_expose_api
     def reset_metadata_on_repositories(self, trans, payload, **kwd):
         """
         PUT /api/repositories/reset_metadata_on_repositories
@@ -583,10 +564,17 @@ class RepositoriesController(BaseAPIController):
 
         """
 
-        def handle_repository(trans, rmm, repository, results):
+        def handle_repository(trans, repository, results):
             log.debug(f"Resetting metadata on repository {repository.name}")
             try:
-                rmm.set_repository(repository)
+                rmm = repository_metadata_manager.RepositoryMetadataManager(
+                    app=self.app,
+                    user=trans.user,
+                    resetting_all_metadata_on_repository=True,
+                    updating_installed_repository=False,
+                    repository=repository,
+                    persist=False,
+                )
                 rmm.reset_all_metadata_on_repository_in_tool_shed()
                 rmm_invalid_file_tups = rmm.get_invalid_file_tups()
                 if rmm_invalid_file_tups:
@@ -606,13 +594,6 @@ class RepositoriesController(BaseAPIController):
             results["repository_status"].append(status)
             return results
 
-        rmm = repository_metadata_manager.RepositoryMetadataManager(
-            app=self.app,
-            user=trans.user,
-            resetting_all_metadata_on_repository=True,
-            updating_installed_repository=False,
-            persist=False,
-        )
         start_time = strftime("%Y-%m-%d %H:%M:%S")
         results = dict(start_time=start_time, repository_status=[], successful_count=0, unsuccessful_count=0)
         handled_repository_ids = []
@@ -631,27 +612,36 @@ class RepositoriesController(BaseAPIController):
             my_writable = util.asbool(payload.get("my_writable", False))
         else:
             my_writable = True
+        rmm = repository_metadata_manager.RepositoryMetadataManager(
+            app=self.app,
+            user=trans.user,
+            resetting_all_metadata_on_repository=True,
+            updating_installed_repository=False,
+            persist=False,
+        )
         query = rmm.get_query_for_setting_metadata_on_repositories(my_writable=my_writable, order=False)
         # First reset metadata on all repositories of type repository_dependency_definition.
         for repository in query:
             encoded_id = trans.security.encode_id(repository.id)
             if encoded_id in encoded_ids_to_skip:
                 log.debug(
-                    "Skipping repository with id %s because it is in encoded_ids_to_skip %s"
-                    % (str(repository.id), str(encoded_ids_to_skip))
+                    "Skipping repository with id %s because it is in encoded_ids_to_skip %s",
+                    repository.id,
+                    encoded_ids_to_skip,
                 )
             elif repository.type == rt_util.TOOL_DEPENDENCY_DEFINITION and repository.id not in handled_repository_ids:
-                results = handle_repository(trans, rmm, repository, results)
+                results = handle_repository(trans, repository, results)
         # Now reset metadata on all remaining repositories.
         for repository in query:
             encoded_id = trans.security.encode_id(repository.id)
             if encoded_id in encoded_ids_to_skip:
                 log.debug(
-                    "Skipping repository with id %s because it is in encoded_ids_to_skip %s"
-                    % (str(repository.id), str(encoded_ids_to_skip))
+                    "Skipping repository with id %s because it is in encoded_ids_to_skip %s",
+                    repository.id,
+                    encoded_ids_to_skip,
                 )
             elif repository.type != rt_util.TOOL_DEPENDENCY_DEFINITION and repository.id not in handled_repository_ids:
-                results = handle_repository(trans, rmm, repository, results)
+                results = handle_repository(trans, repository, results)
         stop_time = strftime("%Y-%m-%d %H:%M:%S")
         results["stop_time"] = stop_time
         return json.dumps(results, sort_keys=True, indent=4)
@@ -659,7 +649,7 @@ class RepositoriesController(BaseAPIController):
     @web.legacy_expose_api
     def reset_metadata_on_repository(self, trans, payload, **kwd):
         """
-        PUT /api/repositories/reset_metadata_on_repository
+        POST /api/repositories/reset_metadata_on_repository
 
         Resets all metadata on a specified repository in the Tool Shed.
 
@@ -758,7 +748,7 @@ class RepositoriesController(BaseAPIController):
         changeset_revision = kwd.get("changeset_revision", None)
         hexlify_this = util.asbool(kwd.get("hexlify", True))
         repository = repository_util.get_repository_by_name_and_owner(
-            trans.app, name, owner, eagerload_columns=["downloadable_revisions"]
+            trans.app, name, owner, eagerload_columns=[model.Repository.downloadable_revisions]
         )
         if repository and repository.downloadable_revisions:
             repository_metadata = metadata_util.get_repository_metadata_by_changeset_revision(
@@ -831,8 +821,9 @@ class RepositoriesController(BaseAPIController):
             return repository_metadata_dict
         else:
             log.debug(
-                "Unable to locate repository_metadata record for repository id %s and changeset_revision %s"
-                % (str(id), str(changeset))
+                "Unable to locate repository_metadata record for repository id %s and changeset_revision %s",
+                id,
+                changeset,
             )
             return {}
 
@@ -846,17 +837,23 @@ class RepositoriesController(BaseAPIController):
 
         :param id: the encoded id of the Repository object
 
+        :param downloadable_only: Return only downloadable revisions (defaults to True).
+                                  Added for test cases - shouldn't be considered part of the stable API.
+
         :returns:   A dictionary containing the specified repository's metadata, by changeset,
                     recursively including dependencies and their metadata.
 
         :not found:  Empty dictionary.
         """
         recursive = util.asbool(kwd.get("recursive", "True"))
+        downloadable_only = util.asbool(kwd.get("downloadable_only", "True"))
         all_metadata = {}
         repository = repository_util.get_repository_in_tool_shed(
-            self.app, id, eagerload_columns=["downloadable_revisions"]
+            self.app, id, eagerload_columns=[model.Repository.downloadable_revisions]
         )
-        for changeset, changehash in repository.installable_revisions(self.app):
+        for changeset, changehash in metadata_util.get_metadata_revisions(
+            self.app, repository, sort_revisions=True, downloadable=downloadable_only
+        ):
             metadata = metadata_util.get_current_repository_metadata_for_changeset_revision(
                 self.app, repository, changehash
             )
@@ -924,7 +921,7 @@ class RepositoriesController(BaseAPIController):
             category_ids=category_ids,
         )
 
-        repo, message = repository_util.update_repository(app=self.app, trans=trans, id=id, **update_kwds)
+        repo, message = repository_util.update_repository(trans, id, **update_kwds)
         if repo is None:
             if "You are not the owner" in message:
                 raise InsufficientPermissionsException(message)

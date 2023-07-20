@@ -15,7 +15,7 @@ from fastapi import (
 from starlette.responses import StreamingResponse
 
 from galaxy.managers.context import ProvidesUserContext
-from galaxy.schema.fields import EncodedDatabaseIdField
+from galaxy.schema.fields import DecodedDatabaseIdField
 from galaxy.schema.schema import (
     AsyncFile,
     CreatePagePayload,
@@ -29,12 +29,14 @@ from galaxy.schema.schema import (
     ShareWithStatus,
     SharingStatus,
 )
-from galaxy.webapps.galaxy.services.pages import PagesService
-from . import (
+from galaxy.webapps.galaxy.api import (
     depends,
     DependsOnTrans,
+    IndexQueryTag,
     Router,
+    search_query_param,
 )
+from galaxy.webapps.galaxy.services.pages import PagesService
 
 log = logging.getLogger(__name__)
 
@@ -44,12 +46,12 @@ DeletedQueryParam: bool = Query(
     default=False, title="Display deleted", description="Whether to include deleted pages in the result."
 )
 
-UserIdQueryParam: Optional[EncodedDatabaseIdField] = Query(
+UserIdQueryParam: Optional[DecodedDatabaseIdField] = Query(
     default=None,
     title="Encoded user ID to restrict query to, must be own id if not an admin user",
 )
 
-PageIdPathParam: EncodedDatabaseIdField = Path(
+PageIdPathParam: DecodedDatabaseIdField = Path(
     ..., title="Page ID", description="The encoded database identifier of the Page."  # Required
 )
 
@@ -59,14 +61,14 @@ ShowSharedQueryParam: bool = Query(default=False, title="Include pages shared wi
 
 
 SortByQueryParam: PageSortByEnum = Query(
-    default=PageSortByEnum.update_time,
+    default="update_time",
     title="Sort attribute",
     description="Sort page index by this specified attribute on the page model",
 )
 
 
 SortDescQueryParam: bool = Query(
-    default=True,
+    default=False,
     title="Sort Descending",
     description="Sort in descending order?",
 )
@@ -76,6 +78,19 @@ LimitQueryParam: int = Query(default=100, lt=1000, title="Limit number of querie
 OffsetQueryParam: int = Query(
     default=0,
     title="Number of pages to skip in sorted query (to enable pagination).",
+)
+
+query_tags = [
+    IndexQueryTag("title", "The page's title."),
+    IndexQueryTag("slug", "The page's slug.", "s"),
+    IndexQueryTag("tag", "The page's tags.", "t"),
+    IndexQueryTag("user", "The page's owner's username.", "u"),
+]
+
+SearchQueryParam: Optional[str] = search_query_param(
+    model_name="Page",
+    tags=query_tags,
+    free_text_fields=["title", "slug", "tag", "user"],
 )
 
 
@@ -90,18 +105,20 @@ class FastAPIPages:
     )
     async def index(
         self,
+        response: Response,
         trans: ProvidesUserContext = DependsOnTrans,
         deleted: bool = DeletedQueryParam,
-        user_id: Optional[EncodedDatabaseIdField] = UserIdQueryParam,
+        user_id: Optional[DecodedDatabaseIdField] = UserIdQueryParam,
         show_published: bool = ShowPublishedQueryParam,
         show_shared: bool = ShowSharedQueryParam,
         sort_by: PageSortByEnum = SortByQueryParam,
         sort_desc: bool = SortDescQueryParam,
         limit: int = LimitQueryParam,
         offset: int = OffsetQueryParam,
+        search: Optional[str] = SearchQueryParam,
     ) -> PageSummaryList:
         """Get a list with summary information of all Pages available to the user."""
-        payload = PageIndexQueryPayload(
+        payload = PageIndexQueryPayload.construct(
             deleted=deleted,
             user_id=user_id,
             show_published=show_published,
@@ -110,8 +127,11 @@ class FastAPIPages:
             sort_desc=sort_desc,
             limit=limit,
             offset=offset,
+            search=search,
         )
-        return self.service.index(trans, payload)
+        pages, total_matches = self.service.index(trans, payload, include_total_count=True)
+        response.headers["total_matches"] = str(total_matches)
+        return pages
 
     @router.post(
         "/api/pages",
@@ -134,7 +154,7 @@ class FastAPIPages:
     async def delete(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ):
         """Marks the Page with the given ID as deleted."""
         self.service.delete(trans, id)
@@ -155,7 +175,7 @@ class FastAPIPages:
     async def show_pdf(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ):
         """Return a PDF document of the last revision of the Page.
 
@@ -177,7 +197,7 @@ class FastAPIPages:
     async def prepare_pdf(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ) -> AsyncFile:
         """Return a STS download link for this page to be downloaded as a PDF.
 
@@ -193,7 +213,7 @@ class FastAPIPages:
     async def show(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ) -> PageDetails:
         """Return summary information about a specific Page and the content of the last revision."""
         return self.service.show(trans, id)
@@ -205,7 +225,7 @@ class FastAPIPages:
     def sharing(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ) -> SharingStatus:
         """Return the sharing status of the item."""
         return self.service.shareable_service.sharing(trans, id)
@@ -217,7 +237,7 @@ class FastAPIPages:
     def enable_link_access(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ) -> SharingStatus:
         """Makes this item accessible by a URL link and return the current sharing status."""
         return self.service.shareable_service.enable_link_access(trans, id)
@@ -229,7 +249,7 @@ class FastAPIPages:
     def disable_link_access(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ) -> SharingStatus:
         """Makes this item inaccessible by a URL link and return the current sharing status."""
         return self.service.shareable_service.disable_link_access(trans, id)
@@ -241,7 +261,7 @@ class FastAPIPages:
     def publish(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ) -> SharingStatus:
         """Makes this item publicly available by a URL link and return the current sharing status."""
         return self.service.shareable_service.publish(trans, id)
@@ -253,7 +273,7 @@ class FastAPIPages:
     def unpublish(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
     ) -> SharingStatus:
         """Removes this item from the published list and return the current sharing status."""
         return self.service.shareable_service.unpublish(trans, id)
@@ -265,7 +285,7 @@ class FastAPIPages:
     def share_with_users(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
         payload: ShareWithPayload = Body(...),
     ) -> ShareWithStatus:
         """Shares this item with specific users and return the current sharing status."""
@@ -279,7 +299,7 @@ class FastAPIPages:
     def set_slug(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
-        id: EncodedDatabaseIdField = PageIdPathParam,
+        id: DecodedDatabaseIdField = PageIdPathParam,
         payload: SetSlugPayload = Body(...),
     ):
         """Sets a new slug to access this item by URL. The new slug must be unique."""

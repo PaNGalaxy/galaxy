@@ -3,7 +3,7 @@
         <div unselectable="on">
             <div class="unified-panel-header-inner">
                 <nav class="d-flex justify-content-between mx-3 my-2">
-                    <h4 v-localize class="m-1">Tools</h4>
+                    <h2 v-localize class="m-1 h-sm">Tools</h2>
                     <div class="panel-header-buttons">
                         <panel-view-button
                             v-if="panelViews && Object.keys(panelViews).length > 1"
@@ -16,11 +16,20 @@
         </div>
         <div class="unified-panel-controls">
             <tool-search
+                v-b-tooltip.hover
+                aria-haspopup="true"
                 :current-panel-view="currentPanelView"
                 placeholder="search tools"
+                :toolbox="workflowTools"
                 :query="query"
                 @onQuery="onQuery"
                 @onResults="onResults" />
+            <div v-if="queryTooShort" class="pb-2">
+                <b-badge class="alert-danger w-100">Search string too short!</b-badge>
+            </div>
+            <div v-else-if="noResults" class="pb-2">
+                <b-badge class="alert-danger w-100">No results found!</b-badge>
+            </div>
         </div>
         <div class="unified-panel-body">
             <div class="toolMenuContainer">
@@ -52,6 +61,7 @@
                     :key="workflowSection.name"
                     :category="workflowSection"
                     section-name="workflows"
+                    :sort-items="false"
                     operation-icon="fa fa-files-o"
                     operation-title="Insert individual steps."
                     :query-filter="query"
@@ -67,7 +77,7 @@
 import _l from "utils/localization";
 import ToolSection from "./Common/ToolSection";
 import ToolSearch from "./Common/ToolSearch";
-import { filterToolSections } from "./utilities";
+import { filterToolSections, removeDisabledTools } from "./utilities";
 import PanelViewButton from "./Buttons/PanelViewButton";
 
 export default {
@@ -108,6 +118,12 @@ export default {
         };
     },
     computed: {
+        queryTooShort() {
+            return this.query && this.query.length < 3;
+        },
+        noResults() {
+            return this.query && (!this.results || this.results.length === 0);
+        },
         hasWorkflowSection() {
             return this.workflows.length > 0;
         },
@@ -127,12 +143,13 @@ export default {
             };
         },
         sections() {
-            return filterToolSections(this.toolsLayout, this.results);
+            return filterToolSections(this.workflowTools, this.results);
         },
         toolsLayout() {
             return this.toolbox.map((section) => {
                 return {
                     ...section,
+                    disabled: !section.elems && !section.is_workflow_compatible,
                     elems:
                         section.elems &&
                         section.elems.map((el) => {
@@ -141,6 +158,9 @@ export default {
                         }),
                 };
             });
+        },
+        workflowTools() {
+            return removeDisabledTools(this.toolsLayout);
         },
     },
     methods: {

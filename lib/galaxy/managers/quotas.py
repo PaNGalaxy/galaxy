@@ -17,13 +17,13 @@ from galaxy import (
 )
 from galaxy.exceptions import ActionInputError
 from galaxy.managers import base
+from galaxy.model.base import transaction
 from galaxy.quota import DatabaseQuotaAgent
 from galaxy.quota._schema import (
     CreateQuotaParams,
     DefaultQuotaValues,
     QuotaOperation,
 )
-from galaxy.schema.fields import EncodedDatabaseIdField
 from galaxy.structured_app import StructuredApp
 
 log = logging.getLogger(__name__)
@@ -60,7 +60,11 @@ class QuotaManager:
             raise ActionInputError("Operation for an unlimited quota must be '='.")
         # Create the quota
         quota = model.Quota(
-            name=params.name, description=params.description, amount=create_amount, operation=params.operation
+            name=params.name,
+            description=params.description,
+            amount=create_amount,
+            operation=params.operation,
+            quota_source_label=params.quota_source_label,
         )
         self.sa_session.add(quota)
         # If this is a default quota, create the DefaultQuotaAssociation
@@ -89,7 +93,10 @@ class QuotaManager:
                 gqa = model.GroupQuotaAssociation(group, quota)
                 self.sa_session.add(gqa)
             message = f"Quota '{quota.name}' has been created with {len(in_users)} associated users and {len(in_groups)} associated groups."
-        self.sa_session.flush()
+
+        with transaction(self.sa_session):
+            self.sa_session.commit()
+
         return quota, message
 
     def _parse_amount(self, amount: str) -> Optional[Union[int, bool]]:
@@ -97,7 +104,7 @@ class QuotaManager:
             return None
         try:
             return util.size_to_bytes(amount)
-        except AssertionError:
+        except ValueError:
             return False
 
     def rename_quota(self, quota, params) -> str:
@@ -114,7 +121,8 @@ class QuotaManager:
             if params.description:
                 quota.description = params.description
             self.sa_session.add(quota)
-            self.sa_session.flush()
+            with transaction(self.sa_session):
+                self.sa_session.commit()
             message = f"Quota '{old_name}' has been renamed to '{params.name}'."
             return message
 
@@ -157,7 +165,8 @@ class QuotaManager:
             quota.amount = new_amount
             quota.operation = params.operation
             self.sa_session.add(quota)
-            self.sa_session.flush()
+            with transaction(self.sa_session):
+                self.sa_session.commit()
             message = f"Quota '{quota.name}' is now '{quota.operation}{quota.display_amount}'."
             return message
 
@@ -173,7 +182,8 @@ class QuotaManager:
                     message = f"Quota '{quota.name}' is no longer the default for {quota.default[0].type} users."
                     for dqa in quota.default:
                         self.sa_session.delete(dqa)
-                    self.sa_session.flush()
+                    with transaction(self.sa_session):
+                        self.sa_session.commit()
                 else:
                     message = f"Quota '{quota.name}' is not a default."
             return message
@@ -185,7 +195,8 @@ class QuotaManager:
             message = f"Quota '{quota.name}' is no longer the default for {quota.default[0].type} users."
             for dqa in quota.default:
                 self.sa_session.delete(dqa)
-            self.sa_session.flush()
+            with transaction(self.sa_session):
+                self.sa_session.commit()
             return message
 
     def delete_quota(self, quota, params=None) -> str:
@@ -205,7 +216,8 @@ class QuotaManager:
             q.deleted = True
             self.sa_session.add(q)
             names.append(q.name)
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
         message += ", ".join(names)
         return message
 
@@ -224,7 +236,8 @@ class QuotaManager:
             q.deleted = False
             self.sa_session.add(q)
             names.append(q.name)
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
         message += ", ".join(names)
         return message
 
@@ -253,9 +266,10 @@ class QuotaManager:
             for gqa in q.groups:
                 self.sa_session.delete(gqa)
             names.append(q.name)
-        self.sa_session.flush()
+        with transaction(self.sa_session):
+            self.sa_session.commit()
         message += ", ".join(names)
         return message
 
-    def get_quota(self, trans, id: EncodedDatabaseIdField, deleted: Optional[bool] = None) -> model.Quota:
+    def get_quota(self, trans, id: int, deleted: Optional[bool] = None) -> model.Quota:
         return base.get_object(trans, id, "Quota", check_ownership=False, check_accessible=False, deleted=deleted)

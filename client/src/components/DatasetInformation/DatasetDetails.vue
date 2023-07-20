@@ -3,55 +3,54 @@
         <DatasetProvider
             :id="datasetId"
             v-slot="{ result: dataset, loading: isDatasetLoading, error: datasetLoadingError }">
-            <div>
+            <div aria-labelledby="dataset-details-heading">
+                <h1 id="dataset-details-heading" class="sr-only">Dataset Details</h1>
                 <LoadingSpan v-if="isDatasetLoading" />
                 <Alert v-else-if="datasetLoadingError" :message="datasetLoadingError" variant="error" />
-                <CurrentUser v-else v-slot="{ user }">
+                <div v-else>
                     <JobDetailsProvider
                         v-if="!isDatasetLoading && dataset.creating_job !== null"
                         v-slot="{ result: job, loading: isJobLoading }"
-                        :jobId="dataset.creating_job"
+                        :job-id="dataset.creating_job"
                         auto-refresh>
-                        <div v-if="!isJobLoading">
-                            <dataset-information class="detail" :hda_id="datasetId" />
-                            <job-parameters class="detail" dataset_type="hda" :dataset-id="datasetId" />
-                            <job-information class="detail" :job_id="dataset.creating_job" />
-                            <dataset-storage class="detail" :dataset-id="datasetId" />
-                            <inheritance-chain class="detail" :dataset-id="datasetId" :dataset-name="dataset.name" />
+                        <div v-if="!isJobLoading" class="details">
+                            <dataset-information :hda_id="datasetId" />
+                            <job-parameters dataset_type="hda" :dataset-id="datasetId" />
+                            <job-information :job_id="dataset.creating_job" />
+                            <dataset-storage :dataset-id="datasetId" />
+                            <inheritance-chain :dataset-id="datasetId" :dataset-name="dataset.name" />
                             <job-metrics
                                 v-if="config"
-                                class="detail"
-                                :aws_estimate="config.aws_estimate"
+                                :should-show-aws-estimate="config.aws_estimate"
                                 :dataset-id="datasetId" />
-                            <job-destination-params
-                                v-if="user.is_admin"
-                                class="detail"
-                                :job-id="dataset.creating_job" />
-                            <job-dependencies class="detail" :dependencies="job.dependencies"></job-dependencies>
-                            <div v-if="dataset.peek" class="detail">
-                                <h3>Dataset Peek:</h3>
+                            <job-destination-params v-if="currentUser.is_admin" :job-id="dataset.creating_job" />
+                            <job-dependencies :dependencies="job.dependencies"></job-dependencies>
+                            <div v-if="dataset.peek">
+                                <h2 class="h-md">Dataset Peek</h2>
                                 <div v-html="dataset.peek" />
                             </div>
                         </div>
                     </JobDetailsProvider>
-                    <div v-else-if="!isDatasetLoading">
-                        <dataset-information class="detail" :hda_id="datasetId" />
-                        <dataset-storage class="detail" :dataset-id="datasetId" />
+                    <div v-else-if="!isDatasetLoading" class="details">
+                        <dataset-information :hda_id="datasetId" />
+                        <dataset-storage :dataset-id="datasetId" />
                         <div>
-                            <h3>Job Not Found</h3>
+                            <h2 class="h-md">Job Not Found</h2>
                             <p>
                                 No job associated with this dataset is recorded in Galaxy. Galaxy cannot determine full
                                 dataset provenance and history for this dataset.
                             </p>
                         </div>
                     </div>
-                </CurrentUser>
+                </div>
             </div>
         </DatasetProvider>
     </ConfigProvider>
 </template>
 
 <script>
+import { mapState } from "pinia";
+import { useUserStore } from "@/stores/userStore";
 import DatasetInformation from "components/DatasetInformation/DatasetInformation";
 import JobInformation from "components/JobInformation/JobInformation";
 import JobDestinationParams from "components/JobDestinationParams/JobDestinationParams";
@@ -64,13 +63,11 @@ import JobDependencies from "components/JobDependencies/JobDependencies";
 import { DatasetProvider } from "components/providers";
 import { JobDetailsProvider } from "components/providers/JobProvider";
 import ConfigProvider from "components/providers/ConfigProvider";
-import CurrentUser from "components/providers/CurrentUser";
 import Alert from "components/Alert";
 
 export default {
     components: {
         Alert,
-        CurrentUser,
         JobParameters,
         InheritanceChain,
         LoadingSpan,
@@ -90,6 +87,9 @@ export default {
             required: true,
         },
     },
+    computed: {
+        ...mapState(useUserStore, ["currentUser"]),
+    },
 };
 </script>
 
@@ -97,7 +97,9 @@ export default {
 .tool-title {
     text-align: center;
 }
-.detail {
-    padding-top: 0.6rem;
+.details {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
 }
 </style>
