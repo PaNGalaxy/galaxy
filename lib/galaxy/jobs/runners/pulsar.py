@@ -655,9 +655,12 @@ class PulsarJobRunner(AsynchronousJobRunner):
             remote_metadata_directory = run_results.get("metadata_directory", None)
             tool_stdout = run_results.get("stdout", "")
             if tool_stdout is None:
-                stdout_path = Path(job_wrapper.working_directory) / "outputs" / "tool_stdout"
-                stdout_file = open(stdout_path, "r")
-                tool_stdout = stdout_file.read()
+                try:
+                    stdout_path = Path(job_wrapper.working_directory) / "outputs" / "tool_stdout"
+                    stdout_file = open(stdout_path, "r")
+                    tool_stdout = stdout_file.read()
+                except Exception:
+                    pass
             tool_stderr = run_results.get("stderr", "")
             job_stdout = run_results.get("job_stdout")
             job_stderr = run_results.get("job_stderr")
