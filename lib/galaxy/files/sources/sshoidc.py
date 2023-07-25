@@ -7,7 +7,15 @@ import re
 
 import jwt
 from paramiko.transport import Transport
+from typing import (
+    Optional,
+    Union,
+)
 
+from . import (
+    FilesSourceOptions,
+    FilesSourceProperties,
+)
 from ._pyfilesystem2 import PyFilesystem2FilesSource
 
 log = logging.getLogger(__name__)
@@ -44,8 +52,9 @@ class SshOidcFilesSource(PyFilesystem2FilesSource):
     required_module = SSHFS
     required_package = "fs.sshfs"
 
-    def _open_fs(self, user_context):
+    def _open_fs(self, user_context, opts: Optional[FilesSourceOptions] = None):
         props = self._serialization_props(user_context)
+        extra_props: Union[FilesSourceProperties, dict] = opts.extra_props or {} if opts else {}
         path = props.pop("path")
         username_in_token = props.pop("username_in_token")
         username_template = props.pop("username_template")
@@ -57,7 +66,7 @@ class SshOidcFilesSource(PyFilesystem2FilesSource):
         props["transport_factory"] = OIDCTransport
         props["look_for_keys"] = False
 
-        handle = SSHFS(**props)
+        handle = SSHFS(**{**props, **extra_props})
         if path:
             handle = handle.opendir(path)
         return handle
