@@ -42,7 +42,6 @@ service-build:
 
 client-tests:
   stage: test
-  when: manual
   script:
     - >    
       docker run
