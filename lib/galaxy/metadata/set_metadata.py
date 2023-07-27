@@ -493,7 +493,7 @@ def set_metadata_portable(
         export_store._finalize()
     write_job_metadata(tool_job_working_directory, job_metadata, set_meta, tool_provided_metadata)
     if not set_meta_ok:
-        raise Exception("Cannot set metadata")
+        sys.exit(1)
 
 
 def validate_and_load_datatypes_config(datatypes_config):
