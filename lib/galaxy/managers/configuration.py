@@ -171,6 +171,7 @@ class ConfigSerializer(base.ModelSerializer):
             "version_minor": _defaults_to(None),
             "version_extra": _use_config,
             "require_login": _use_config,
+            "hide_sign_out": _use_config,
             "inactivity_box_content": _use_config,
             "visualizations_visible": _use_config,
             "interactivetools_enable": _use_config,

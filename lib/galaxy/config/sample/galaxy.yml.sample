@@ -1977,6 +1977,11 @@ galaxy:
   # Force everyone to log in (disable anonymous access).
   #require_login: false
 
+  # Hide the sign out link in the user menu (Useful if only third party
+  # authentication is enabled, and users should only sign out using the 
+  # authentication provider's sign out page.)
+  #hide_sign_out: true
+
   # Show the site's welcome page (see welcome_url) alongside the login
   # page (even if require_login is true).
   #show_welcome_with_login: false
