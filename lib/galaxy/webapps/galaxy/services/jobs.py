@@ -48,10 +48,10 @@ class JobsService:
         trans: ProvidesUserContext,
         id: DecodedDatabaseIdField,
         full: bool = False,
-        stdout_start_pos: int = 0,
-        stdout_count: int = 0,
+        stdout_position: int = 0,
+        stdout_length: int = 0,
     ) -> Dict[str, Any]:
-        job = self.job_manager.get_accessible_job(trans, id, stdout_start_pos, stdout_count)
+        job = self.job_manager.get_accessible_job(trans, id, stdout_position, stdout_length)
         return view_show_job(trans, job, bool(full))
 
     def index(

@@ -178,8 +178,8 @@ class FastAPIJobs:
         id: DecodedDatabaseIdField,
         trans: ProvidesUserContext = DependsOnTrans,
         full: Optional[bool] = False,
-        stdout_start_pos: Optional[int] = None,
-        stdout_count: Optional[int] = None,
+        stdout_position: Optional[int] = None,
+        stdout_length: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Return dictionary containing description of job data
@@ -187,15 +187,15 @@ class FastAPIJobs:
         Parameters
         - id: ID of job to return
         - full: Return extra information ?
-        - stdout_start_pos: The index of the character to begine reading stdout from
-        - stdout_count: How many characters of stdout to read
+        - stdout_position: The index of the character to begine reading stdout from
+        - stdout_length: How many characters of stdout to read
         """
         return self.service.show(
             trans,
             id,
             bool(full),
-            int(stdout_start_pos) if stdout_start_pos else 0,
-            int(stdout_count) if stdout_count else 0,
+            int(stdout_position) if stdout_position else 0,
+            int(stdout_length) if stdout_length else 0,
         )
 
     @router.get("/api/jobs")
