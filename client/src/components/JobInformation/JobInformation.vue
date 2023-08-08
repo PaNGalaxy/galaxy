@@ -1,6 +1,6 @@
 <template>
     <div>
-        <job-details-provider auto-refresh :jobId="job_id" :stdout_start=stdout_position :stdout_char_count=stdout_char_count @update:result="updateJob" />
+        <job-details-provider auto-refresh :jobId="job_id" :stdout_position=stdout_position :stdout_length=stdout_length @update:result="updateJob" />
         <h2 class="h-md">Job Information</h2>
         <table id="job-information" class="tabletip info_data_table">
             <tbody>
@@ -108,7 +108,7 @@ export default {
         return {
             job: null,
             stdout_position: 0,
-            stdout_char_count: 50000,
+            stdout_length: 50000,
             stdout_text: "",
         };
     },
@@ -127,9 +127,9 @@ export default {
             const stdout_block = document.querySelector("#stdout").querySelector(".code");
             // if user is scrolled above the bottom of the code element, then no need to update the stdout
             if (stdout_block.scrollTop <= stdout_block.scrollHeight - 3000) {
-                this.stdout_char_count = 0;
+                this.stdout_length = 0;
             } else {
-                this.stdout_char_count = 50000;
+                this.stdout_length = 50000;
             }
         } catch(exception) {
             console.log(exception);
