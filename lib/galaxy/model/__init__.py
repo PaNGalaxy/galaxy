@@ -4145,11 +4145,11 @@ class Dataset(Base, StorableObject, Serializable):
             and len(self.history_associations) == len(self.purged_history_associations)
         )
 
-    def full_delete(self):
+    def full_delete(self, user):
         """Remove the file and extra files, marks deleted and purged"""
         # os.unlink( self.file_name )
         try:
-            self.object_store.delete(self)
+            self.object_store.delete(self, user=user)
         except galaxy.exceptions.ObjectNotFound:
             pass
         rel_path = self._extra_files_rel_path

@@ -75,7 +75,7 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
     def copy(self, dataset, **kwargs):
         raise exceptions.NotImplemented("Datasets cannot be copied")
 
-    def purge(self, dataset, flush=True):
+    def purge(self, dataset, flush=True, user=None):
         """
         Remove the object_store/file for this dataset from storage and mark
         as purged.
@@ -85,7 +85,7 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
         self.error_unless_dataset_purge_allowed(dataset)
 
         # the following also marks dataset as purged and deleted
-        dataset.full_delete()
+        dataset.full_delete(user=user)
         self.session().add(dataset)
         if flush:
             session = self.session()
@@ -365,7 +365,7 @@ class DatasetAssociationManager(
 
         # more importantly, purge underlying dataset as well
         if dataset_assoc.dataset.user_can_purge:
-            self.dataset_manager.purge(dataset_assoc.dataset)
+            self.dataset_manager.purge(dataset_assoc.dataset, user=dataset_assoc.user)
         return dataset_assoc
 
     def by_user(self, user):
