@@ -93,7 +93,7 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
                 session.commit()
         return dataset
 
-    def purge_datasets(self, request: PurgeDatasetsTaskRequest):
+    def purge_datasets(self, request: PurgeDatasetsTaskRequest, user: model.User):
         """
         Caution: any additional security checks must be done before executing this action.
 
@@ -106,7 +106,7 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
                 dataset: model.Dataset = self.session().query(model.Dataset).get(dataset_id)
                 if dataset.user_can_purge:
                     try:
-                        dataset.full_delete()
+                        dataset.full_delete(user)
                     except Exception:
                         log.exception(f"Unable to purge dataset ({dataset.id})")
 
