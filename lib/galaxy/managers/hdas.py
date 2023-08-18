@@ -439,7 +439,7 @@ class HDAStorageCleanerManager(base.StorageCleanerManager):
             with transaction(session):
                 session.commit()
 
-        self._request_full_delete_all(dataset_ids_to_remove)
+        self._request_full_delete_all(dataset_ids_to_remove, user=user)
 
         return StorageItemsCleanupResult(
             total_item_count=len(item_ids),
@@ -448,15 +448,15 @@ class HDAStorageCleanerManager(base.StorageCleanerManager):
             errors=errors,
         )
 
-    def _request_full_delete_all(self, dataset_ids_to_remove: Set[int]):
+    def _request_full_delete_all(self, dataset_ids_to_remove: Set[int], user: model.User):
         use_tasks = self.dataset_manager.app.config.enable_celery_tasks
         request = PurgeDatasetsTaskRequest(dataset_ids=list(dataset_ids_to_remove))
         if use_tasks:
             from galaxy.celery.tasks import purge_datasets
 
-            purge_datasets.delay(request=request)
+            purge_datasets.delay(request=request, user=user)
         else:
-            self.dataset_manager.purge_datasets(request)
+            self.dataset_manager.purge_datasets(request, user=user)
 
 
 class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerializer,

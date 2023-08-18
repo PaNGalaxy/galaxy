@@ -91,8 +91,8 @@ def purge_hda(hda_manager: HDAManager, hda_id: int):
 
 
 @galaxy_task(ignore_result=True, action="completely removes a set of datasets from the object_store")
-def purge_datasets(dataset_manager: DatasetManager, request: PurgeDatasetsTaskRequest):
-    dataset_manager.purge_datasets(request)
+def purge_datasets(dataset_manager: DatasetManager, request: PurgeDatasetsTaskRequest, user: model.User):
+    dataset_manager.purge_datasets(request, user)
 
 
 @galaxy_task(ignore_result=True, action="materializing dataset instance")
