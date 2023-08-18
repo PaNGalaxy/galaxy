@@ -75,7 +75,6 @@ describe("JobInformation/JobInformation.vue", () => {
 
     it("job messages", async () => {
         const rendered_link = jobInfoTable.findAll(`#job-messages li`);
-        console.log(jobResponse)
         expect(rendered_link.length).toBe(jobResponse.job_messages.length);
         for (let i = 0; i < rendered_link.length; i++) {
             const msg = rendered_link.at(i).text();
