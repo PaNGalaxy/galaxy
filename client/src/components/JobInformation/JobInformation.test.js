@@ -10,6 +10,9 @@ import flushPromises from "flush-promises";
 jest.mock("app");
 
 const JOB_ID = "test_id";
+const STDOUT_POSITION = 0;
+const STDOUT_LENGTH = 6;
+const STDOUT_TEXT = "stdout";
 
 const localVue = getLocalVue();
 
@@ -21,7 +24,7 @@ describe("JobInformation/JobInformation.vue", () => {
     beforeEach(() => {
         axiosMock = new MockAdapter(axios);
         axiosMock.onGet(new RegExp(`api/configuration/decode/*`)).reply(200, { decoded_id: 123 });
-        axiosMock.onGet("/api/jobs/test_id?full=True").reply(200, jobResponse);
+        axiosMock.onGet("/api/jobs/test_id?full=True&stdout_position=0&stdout_length=50000").reply(200, jobResponse);
     });
 
     afterEach(() => {
@@ -42,6 +45,9 @@ describe("JobInformation/JobInformation.vue", () => {
     beforeEach(async () => {
         const propsData = {
             job_id: JOB_ID,
+            stdout_position: STDOUT_POSITION,
+            stdout_length: STDOUT_LENGTH,
+            stdout_text: STDOUT_TEXT,
         };
         wrapper = mount(JobInformation, {
             propsData,
@@ -69,6 +75,7 @@ describe("JobInformation/JobInformation.vue", () => {
 
     it("job messages", async () => {
         const rendered_link = jobInfoTable.findAll(`#job-messages li`);
+        console.log(jobResponse)
         expect(rendered_link.length).toBe(jobResponse.job_messages.length);
         for (let i = 0; i < rendered_link.length; i++) {
             const msg = rendered_link.at(i).text();
