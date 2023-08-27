@@ -314,10 +314,22 @@ class XmlToolSource(ToolSource):
             if label:
                 label = label.strip()
             requires_domain = string_as_bool(ep_el.attrib.get("requires_domain", False))
+            requires_path_in_url = string_as_bool(ep_el.attrib.get("requires_path_in_url", False))
+            requires_path_in_header_named = ep_el.get("requires_path_in_header_named", None)
             protocol = ep_el.attrib.get("protocol", "http")
             if protocol:
                 protocol = protocol.strip()
-            rtt.append(dict(port=port, url=url, name=name, requires_domain=requires_domain, protocol=protocol))
+            rtt.append(
+                dict(
+                    port=port,
+                    url=url,
+                    name=name,
+                    requires_domain=requires_domain,
+                    protocol=protocol,
+                    requires_path_in_url=requires_path_in_url,
+                    requires_path_in_header_named=requires_path_in_header_named,
+                )
+            )
         return rtt
 
     def parse_hidden(self):
