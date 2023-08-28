@@ -14,11 +14,7 @@ from babel import default_locale
 from babel.dates import format_timedelta
 from routes import url_for
 
-from galaxy.util import (
-    hash_util,
-    smart_str,
-    unicodify,
-)
+from galaxy.util import unicodify
 from galaxy.util.json import safe_dumps as dumps  # noqa: F401
 from .tags import (
     javascript_link,
@@ -39,7 +35,7 @@ def time_ago(x):
         kwargs = dict()
         if not default_locale("LC_TIME"):
             kwargs["locale"] = "en_US_POSIX"
-        return format_timedelta(x - datetime.utcnow(), threshold=1, add_direction=True, **kwargs)
+        return format_timedelta(x - datetime.utcnow(), threshold=1, add_direction=True, **kwargs)  # type: ignore[arg-type] # https://github.com/python/mypy/issues/9676
 
 
 def iff(a, b, c):
@@ -100,16 +96,6 @@ def dist_js(*args):
     string of script tags.
     """
     return js_helper("static/dist/", *args)
-
-
-# Hashes
-def md5(s):
-    """
-    Return hex encoded md5 hash of string s
-    """
-    m = hash_util.md5()
-    m.update(smart_str(s))
-    return m.hexdigest()
 
 
 # Unicode help

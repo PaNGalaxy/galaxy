@@ -1,5 +1,6 @@
 """This module contains a linting functions for tool inputs."""
 import re
+from typing import TYPE_CHECKING
 
 from galaxy.util import string_as_bool
 from ._util import (
@@ -7,6 +8,10 @@ from ._util import (
     is_valid_cheetah_placeholder,
 )
 from ..parser.util import _parse_name
+
+if TYPE_CHECKING:
+    from galaxy.tool_util.lint import LintContext
+    from galaxy.tool_util.parser import ToolSource
 
 FILTER_TYPES = [
     "data_meta",
@@ -35,6 +40,7 @@ ATTRIB_VALIDATOR_COMPATIBILITY = {
         "dataset_metadata_in_data_table",
         "dataset_metadata_not_in_data_table",
         "dataset_metadata_in_file",
+        "dataset_metadata_in_range",
     ],
     "metadata_column": [
         "dataset_metadata_in_data_table",
@@ -57,6 +63,7 @@ PARAMETER_VALIDATOR_TYPE_COMPATIBILITY = {
     "float": ["in_range", "expression"],
     "data": [
         "metadata",
+        "no_options",
         "unspecified_build",
         "dataset_ok_validator",
         "dataset_metadata_in_range",
@@ -67,6 +74,7 @@ PARAMETER_VALIDATOR_TYPE_COMPATIBILITY = {
     ],
     "data_collection": [
         "metadata",
+        "no_options",
         "unspecified_build",
         "dataset_ok_validator",
         "dataset_metadata_in_range",
@@ -106,15 +114,20 @@ PARAMETER_VALIDATOR_TYPE_COMPATIBILITY = {
 }
 
 PARAM_TYPE_CHILD_COMBINATIONS = [
-    ("./options", ["select", "drill_down"]),
+    ("./options", ["data", "select", "drill_down"]),
     ("./options/option", ["drill_down"]),
     ("./column", ["data_column"]),
 ]
 
 
-def lint_inputs(tool_xml, lint_ctx):
+def lint_inputs(tool_source: "ToolSource", lint_ctx: "LintContext"):
     """Lint parameters in a tool's inputs block."""
+    tool_xml = getattr(tool_source, "xml_tree", None)
+    if tool_xml is None:
+        return
+    profile = tool_source.parse_profile()
     datasource = is_datasource(tool_xml)
+    input_names = set()
     inputs = tool_xml.findall("./inputs//param")
     # determine node to report for general problems with outputs
     tool_node = tool_xml.find("./inputs")
@@ -139,7 +152,24 @@ def lint_inputs(tool_xml, lint_ctx):
         elif not is_valid_cheetah_placeholder(param_name):
             lint_ctx.warn(f"Param input [{param_name}] is not a valid Cheetah placeholder.", node=param)
 
-        # TODO lint for params with duplicated name (in inputs & outputs)
+        # check for parameters with duplicate names
+        path = [param_name]
+        parent = param
+        while True:
+            parent = parent.getparent()
+            if parent.tag == "inputs":
+                break
+            # parameters of the same name in different when branches are allowed
+            # just add the value of the when branch to the path (this also allows
+            # that the conditional select has the same name as params in the whens)
+            if parent.tag == "when":
+                path.append(str(parent.attrib.get("value")))
+            else:
+                path.append(str(parent.attrib.get("name")))
+        path_str = ".".join(reversed(path))
+        if path_str in input_names:
+            lint_ctx.error(f"Tool defines multiple parameters with the same name: '{path_str}'", node=param)
+        input_names.add(path_str)
 
         if "type" not in param_attrib:
             lint_ctx.error(f"Param input [{param_name}] input with no type specified.", node=param)
@@ -165,6 +195,37 @@ def lint_inputs(tool_xml, lint_ctx):
                 lint_ctx.warn(
                     f"Param input [{param_name}] with no format specified - 'data' format will be assumed.", node=param
                 )
+            options = param.findall("./options")
+            has_options_filter_attribute = False
+            if len(options) == 1:
+                for oa in options[0].attrib:
+                    if oa == "options_filter_attribute":
+                        has_options_filter_attribute = True
+                    else:
+                        lint_ctx.error(f"Data parameter [{param_name}] uses invalid attribute: {oa}", node=param)
+            elif len(options) > 1:
+                lint_ctx.error(f"Data parameter [{param_name}] contains multiple options elements.", node=options[1])
+            # for data params only filters with key='build' of type='data_meta' are allowed
+            filters = param.findall("./options/filter")
+            for f in filters:
+                if not f.get("ref"):
+                    lint_ctx.error(
+                        f"Data parameter [{param_name}] filter needs to define a ref attribute",
+                        node=f,
+                    )
+                if has_options_filter_attribute:
+                    if f.get("type") != "data_meta":
+                        lint_ctx.error(
+                            f'Data parameter [{param_name}] for filters only type="data_meta" is allowed, found type="{f.get("type")}"',
+                            node=f,
+                        )
+                else:
+                    if f.get("key") != "dbkey" or f.get("type") != "data_meta":
+                        lint_ctx.error(
+                            f'Data parameter [{param_name}] for filters only type="data_meta" and key="dbkey" are allowed, found type="{f.get("type")}" and key="{f.get("key")}"',
+                            node=f,
+                        )
+
         elif param_type == "select":
             # get dynamic/statically defined options
             dynamic_options = param.get("dynamic_options", None)
@@ -274,6 +335,20 @@ def lint_inputs(tool_xml, lint_ctx):
             if len(set(select_options_values)) != len(select_options_values):
                 lint_ctx.error(f"Select parameter [{param_name}] has multiple options with the same value", node=param)
 
+        if param_type == "boolean":
+            truevalue = param_attrib.get("truevalue", "true")
+            falsevalue = param_attrib.get("falsevalue", "false")
+            problematic_booleans_allowed = profile < "23.1"
+            lint_level = lint_ctx.warn if problematic_booleans_allowed else lint_ctx.error
+            if truevalue == falsevalue:
+                lint_level(
+                    f"Boolean parameter [{param_name}] needs distinct 'truevalue' and 'falsevalue' values.", node=param
+                )
+            if truevalue.lower() == "false":
+                lint_level(f"Boolean parameter [{param_name}] has invalid truevalue [{truevalue}].", node=param)
+            if falsevalue.lower() == "true":
+                lint_level(f"Boolean parameter [{param_name}] has invalid falsevalue [{falsevalue}].", node=param)
+
         if param_type in ["select", "data_column", "drill_down"]:
             multiple = string_as_bool(param_attrib.get("multiple", "false"))
             optional = string_as_bool(param_attrib.get("optional", multiple))
@@ -359,6 +434,20 @@ def lint_inputs(tool_xml, lint_ctx):
                     f"Parameter [{param_name}]: '{vtype}' validators need to define the 'table_name' attribute",
                     node=validator,
                 )
+            if (
+                vtype
+                in [
+                    "dataset_metadata_in_data_table",
+                    "dataset_metadata_not_in_data_table",
+                    "dataset_metadata_in_file",
+                    "dataset_metadata_in_range",
+                ]
+                and "metadata_name" not in validator.attrib
+            ):
+                lint_ctx.error(
+                    f"Parameter [{param_name}]: '{vtype}' validators need to define the 'metadata_name' attribute",
+                    node=validator,
+                )
 
     conditional_selects = tool_xml.findall("./inputs//conditional")
     for conditional in conditional_selects:
@@ -437,6 +526,16 @@ def lint_inputs(tool_xml, lint_ctx):
             lint_ctx.info("No input parameters, OK for data sources", node=tool_node)
         else:
             lint_ctx.warn("Found no input parameters.", node=tool_node)
+
+    # check if there is an output with the same name as an input
+    outputs = tool_xml.find("./outputs")
+    if outputs is not None:
+        for output in outputs:
+            if output.get("name") in input_names:
+                lint_ctx.error(
+                    f'Tool defines an output with a name equal to the name of an input: \'{output.get("name")}\'',
+                    node=output,
+                )
 
 
 def lint_repeats(tool_xml, lint_ctx):

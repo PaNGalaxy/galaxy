@@ -1,5 +1,7 @@
-from pathlib import Path
-from typing import cast
+from typing import (
+    Any,
+    Dict,
+)
 
 from a2wsgi import WSGIMiddleware
 from fastapi import (
@@ -7,16 +9,13 @@ from fastapi import (
     Request,
 )
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import (
-    FileResponse,
-    Response,
-)
+from starlette.responses import Response
 
 from galaxy.version import VERSION
 from galaxy.webapps.base.api import (
-    add_empty_response_middleware,
     add_exception_handler,
     add_request_id_middleware,
+    GalaxyFileResponse,
     include_all_package_routers,
 )
 from galaxy.webapps.base.webapp import config_allows_origin
@@ -52,7 +51,7 @@ api_tags_metadata = [
     },
     {"name": "histories"},
     {"name": "libraries"},
-    {"name": "folders"},
+    {"name": "data libraries folders"},
     {"name": "job_lock"},
     {"name": "metrics"},
     {"name": "default"},
@@ -105,28 +104,8 @@ def add_galaxy_middleware(app: FastAPI, gx_app):
             response.headers["X-Frame-Options"] = x_frame_options
             return response
 
-    nginx_x_accel_redirect_base = gx_app.config.nginx_x_accel_redirect_base
-    apache_xsendfile = gx_app.config.apache_xsendfile
-
-    if gx_app.config.sentry_dsn:
-        from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
-
-        app.add_middleware(SentryAsgiMiddleware)
-
-    if nginx_x_accel_redirect_base or apache_xsendfile:
-
-        @app.middleware("http")
-        async def add_send_file_header(request: Request, call_next) -> Response:
-            response = await call_next(request)
-            if not isinstance(response, FileResponse):
-                return response
-            response = cast(FileResponse, response)
-            if nginx_x_accel_redirect_base:
-                full_path = Path(nginx_x_accel_redirect_base) / response.path
-                response.headers["X-Accel-Redirect"] = str(full_path)
-            if apache_xsendfile:
-                response.headers["X-Sendfile"] = str(response.path)
-            return response
+    GalaxyFileResponse.nginx_x_accel_redirect_base = gx_app.config.nginx_x_accel_redirect_base
+    GalaxyFileResponse.apache_xsendfile = gx_app.config.apache_xsendfile
 
     if gx_app.config.get("allowed_origin_hostnames", None):
         app.add_middleware(
@@ -137,7 +116,6 @@ def add_galaxy_middleware(app: FastAPI, gx_app):
             max_age=600,
         )
     else:
-
         # handle CORS preflight requests - synchronize with wsgi behavior.
         @app.options("/api/{rest_of_path:path}")
         async def preflight_handler(request: Request, rest_of_path: str) -> Response:
@@ -163,12 +141,36 @@ def include_legacy_openapi(app, gx_app):
     return app.openapi_schema
 
 
-def initialize_fast_app(gx_wsgi_webapp, gx_app):
-    app = FastAPI(
+def get_fastapi_instance(root_path="") -> FastAPI:
+    return FastAPI(
         title="Galaxy API",
         docs_url="/api/docs",
+        redoc_url="/api/redoc",
         openapi_tags=api_tags_metadata,
+        license_info={"name": "MIT", "url": "https://github.com/galaxyproject/galaxy/blob/dev/LICENSE.txt"},
+        root_path=root_path,
     )
+
+
+def get_openapi_schema() -> Dict[str, Any]:
+    """
+    Dumps openAPI schema without starting a full app and webserver.
+    """
+    app = get_fastapi_instance()
+    include_all_package_routers(app, "galaxy.webapps.galaxy.api")
+    return get_openapi(
+        title=app.title,
+        version=app.version,
+        openapi_version="3.1.0",
+        description=app.description,
+        routes=app.routes,
+        license_info=app.license_info,
+    )
+
+
+def initialize_fast_app(gx_wsgi_webapp, gx_app):
+    root_path = "" if gx_app.config.galaxy_url_prefix == "/" else gx_app.config.galaxy_url_prefix
+    app = get_fastapi_instance(root_path=root_path)
     add_exception_handler(app)
     add_galaxy_middleware(app, gx_app)
     add_request_id_middleware(app)
@@ -177,7 +179,6 @@ def initialize_fast_app(gx_wsgi_webapp, gx_app):
     wsgi_handler = WSGIMiddleware(gx_wsgi_webapp)
     gx_app.haltables.append(("WSGI Middleware threadpool", wsgi_handler.executor.shutdown))
     app.mount("/", wsgi_handler)
-    add_empty_response_middleware(app)
     if gx_app.config.galaxy_url_prefix != "/":
         parent_app = FastAPI()
         parent_app.mount(gx_app.config.galaxy_url_prefix, app=app)

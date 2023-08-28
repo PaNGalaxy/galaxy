@@ -15,6 +15,9 @@ import galaxy.webapps.base.webapp
 from galaxy import util
 from galaxy.util import asbool
 from galaxy.util.properties import load_app_properties
+from galaxy.web.framework.middleware.error import ErrorMiddleware
+from galaxy.web.framework.middleware.request_id import RequestIDMiddleware
+from galaxy.web.framework.middleware.xforwardedhost import XForwardedHostMiddleware
 from galaxy.webapps.base.webapp import build_url_map
 from galaxy.webapps.util import wrap_if_allowed
 
@@ -22,7 +25,7 @@ log = logging.getLogger(__name__)
 
 
 class CommunityWebApplication(galaxy.webapps.base.webapp.WebApplication):
-    pass
+    injection_aware: bool = True
 
 
 def add_ui_controllers(webapp, app):
@@ -142,7 +145,6 @@ def app_pair(global_conf, load_app_kwds=None, **kwargs):
             "get_ordered_installable_revisions": "GET",
             "get_installable_revisions": "GET",
             "remove_repository_registry_entry": "POST",
-            "repository_ids_for_setting_metadata": "GET",
             "reset_metadata_on_repositories": "POST",
             "reset_metadata_on_repository": "POST",
         },
@@ -202,8 +204,14 @@ def app_pair(global_conf, load_app_kwds=None, **kwargs):
         action="create",
         conditions=dict(method=["POST"]),
     )
+    webapp.mapper.connect(
+        "tools",
+        "/api/tools/build_search_index",
+        controller="tools",
+        action="build_search_index",
+        conditions=dict(method=["PUT"]),
+    )
     webapp.mapper.connect("tools", "/api/tools", controller="tools", action="index", conditions=dict(method=["GET"]))
-    webapp.mapper.connect("json", "/api/tools/json", controller="tools", action="json", conditions=dict(method=["GET"]))
     webapp.mapper.connect(
         "version", "/api/version", controller="configuration", action="version", conditions=dict(method=["GET"])
     )
@@ -223,7 +231,6 @@ def wrap_in_middleware(app, global_conf, application_stack, **local_conf):
     # Merge the global and local configurations
     conf = global_conf.copy()
     conf.update(local_conf)
-    debug = asbool(conf.get("debug", False))
     # First put into place httpexceptions, which must be most closely
     # wrapped around the application (it can interact poorly with
     # other middleware):
@@ -263,36 +270,13 @@ def wrap_in_middleware(app, global_conf, application_stack, **local_conf):
         from paste.translogger import TransLogger
 
         app = wrap_if_allowed(app, stack, TransLogger)
-    # If sentry logging is enabled, log here before propogating up to
-    # the error middleware
-    # TODO sentry config is duplicated between tool_shed/galaxy, refactor this.
-    sentry_dsn = conf.get("sentry_dsn", None)
-    if sentry_dsn:
-        from sentry_sdk.integrations.wsgi import SentryWsgiMiddleware
 
-        app = wrap_if_allowed(app, stack, SentryWsgiMiddleware)
     # X-Forwarded-Host handling
-    from galaxy.web.framework.middleware.xforwardedhost import XForwardedHostMiddleware
-
     app = wrap_if_allowed(app, stack, XForwardedHostMiddleware)
-    # Various debug middleware that can only be turned on if the debug
-    # flag is set, either because they are insecure or greatly hurt
-    # performance.
-    if debug:
-        # Middleware to check for WSGI compliance
-        if asbool(conf.get("use_lint", True)):
-            from paste import lint
-
-            app = wrap_if_allowed(app, stack, lint.make_middleware, name="paste.lint", args=(conf,))
-        # Middleware to run the python profiler on each request
-        if asbool(conf.get("use_profile", False)):
-            from paste.debug import profile
-
-            app = wrap_if_allowed(app, stack, profile.ProfileMiddleware, args=(conf,))
+    # Request ID handling
+    app = wrap_if_allowed(app, stack, RequestIDMiddleware)
     # Error middleware
-    import galaxy.web.framework.middleware.error
-
-    app = wrap_if_allowed(app, stack, galaxy.web.framework.middleware.error.ErrorMiddleware, args=(conf,))
+    app = wrap_if_allowed(app, stack, ErrorMiddleware, args=(conf,))
     return app
 
 

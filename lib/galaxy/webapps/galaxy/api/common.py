@@ -18,6 +18,7 @@ from galaxy.schema import (
     ValueFilterQueryParams,
 )
 from galaxy.schema.schema import UpdateDatasetPermissionsPayload
+from galaxy.util import listify
 
 SerializationViewQueryParam: Optional[str] = Query(
     None,
@@ -43,6 +44,30 @@ FilterValueQueryParam: Optional[List[str]] = Query(
     title="Filter Value",
     description="The value to filter by.",
     example="2015-01-29",
+)
+
+OffsetQueryParam: Optional[int] = Query(
+    default=0,
+    ge=0,
+    title="Offset",
+    description="Starts at the beginning skip the first ( offset - 1 ) items and begin returning at the Nth item",
+)
+
+LimitQueryParam: Optional[int] = Query(
+    default=None,
+    ge=1,
+    title="Limit",
+    description="The maximum number of items to return.",
+)
+
+OrderQueryParam: Optional[str] = Query(
+    default=None,
+    title="Order",
+    description=(
+        "String containing one of the valid ordering attributes followed (optionally) "
+        "by '-asc' or '-dsc' for ascending and descending order respectively. "
+        "Orders can be stacked as a comma-separated list of values."
+    ),
 )
 
 
@@ -82,28 +107,9 @@ def get_value_filter_query_params(
 def get_filter_query_params(
     q: Optional[List[str]] = FilterQueryQueryParam,
     qv: Optional[List[str]] = FilterValueQueryParam,
-    offset: Optional[int] = Query(
-        default=0,
-        ge=0,
-        title="Offset",
-        description="Starts at the beginning skip the first ( offset - 1 ) items and begin returning at the Nth item",
-    ),
-    limit: Optional[int] = Query(
-        default=None,
-        ge=1,
-        title="Limit",
-        description="The maximum number of items to return.",
-    ),
-    order: Optional[str] = Query(
-        default=None,
-        title="Order",
-        description=(
-            "String containing one of the valid ordering attributes followed (optionally) "
-            "by '-asc' or '-dsc' for ascending and descending order respectively. "
-            "Orders can be stacked as a comma-separated list of values."
-        ),
-        example="name-dsc,create_time",
-    ),
+    offset: Optional[int] = OffsetQueryParam,
+    limit: Optional[int] = LimitQueryParam,
+    order: Optional[str] = OrderQueryParam,
 ) -> FilterQueryParams:
     """
     This function is meant to be used as a Dependency.
@@ -142,3 +148,43 @@ def get_query_parameters_from_request_excluding(request: Request, exclude: Set[s
     for param_name in exclude:
         extra_params.pop(param_name, None)
     return extra_params
+
+
+def query_parameter_as_list(query):
+    """Used as FastAPI dependable for query parameters that need to behave as a list of values separated by comma
+    or as multiple instances of the same parameter.
+
+    .. important:: the ``query`` annotation provided must define the ``alias`` exactly as the name of the actual parameter name.
+
+    Usage example::
+
+        ValueQueryParam = Query(
+            default=None,
+            alias="value", # Important! this is the parameter name that will be displayed in the API docs
+            title="My Value",
+            description="A single value, a comma-separated list of values or a list of values.",
+        )
+
+        @router.get("/api/my_route")
+        def index(
+            self,
+            values: Optional[List[str]] = Depends(query_parameter_as_list(ValueQueryParam)),
+        ):
+            ...
+
+    This will render in the API docs as a single string query parameter but will make the following requests equivalent:
+
+    - ``api/my_route?value=val1,val2,val3``
+    - ``api/my_route?value=val1&value=val2&value=val3``
+    """
+
+    def parse_elements(
+        elements: Optional[List[str]] = query,
+    ) -> Optional[List[Any]]:
+        if query.default != Ellipsis and not elements:
+            return query.default
+        if elements and len(elements) == 1:
+            return listify(elements[0])
+        return elements
+
+    return parse_elements

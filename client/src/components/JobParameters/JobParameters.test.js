@@ -1,12 +1,12 @@
 import Vuex from "vuex";
 import axios from "axios";
+import { createPinia } from "pinia";
 import MockAdapter from "axios-mock-adapter";
 import { mount, createLocalVue } from "@vue/test-utils";
 import flushPromises from "flush-promises";
 import JobParameters from "./JobParameters";
 import paramResponse from "./parameters-response.json";
 import raw from "components/providers/test/json/Dataset.json";
-import { userStore } from "store/userStore";
 import { configStore } from "store/configStore";
 
 const JOB_ID = "foo";
@@ -19,10 +19,10 @@ const DatasetProvider = {
     },
 };
 const localVue = createLocalVue();
-
+const pinia = createPinia();
 localVue.use(Vuex);
 
-describe("JobMetrics/JobMetrics.vue", () => {
+describe("JobParameters/JobParameters.vue", () => {
     let actions;
     let state;
     let store;
@@ -39,12 +39,6 @@ describe("JobMetrics/JobMetrics.vue", () => {
                     state,
                     actions,
                     getters: configStore.getters,
-                    namespaced: true,
-                },
-                user: {
-                    state,
-                    actions,
-                    getters: userStore.getters,
                     namespaced: true,
                 },
             },
@@ -66,6 +60,7 @@ describe("JobMetrics/JobMetrics.vue", () => {
             stubs: {
                 DatasetProvider: DatasetProvider,
             },
+            pinia,
         });
         await flushPromises();
 
@@ -87,7 +82,7 @@ describe("JobMetrics/JobMetrics.vue", () => {
         expect(elements.length).toBe(3);
 
         checkTableParameter(elements.at(0), "Add this value", "22");
-        checkTableParameter(elements.at(1), linkParam.text, `${raw.hid} : ${raw.name}`);
+        checkTableParameter(elements.at(1), linkParam.text, `${raw.hid}: ${raw.name}`);
         checkTableParameter(elements.at(2), "Iterate?", "NO");
     });
 
@@ -103,6 +98,7 @@ describe("JobMetrics/JobMetrics.vue", () => {
                 stubs: {
                     DatasetProvider: DatasetProvider,
                 },
+                pinia,
             });
             await flushPromises();
             return wrapper.find("#single-param");

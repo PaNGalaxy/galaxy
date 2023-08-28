@@ -1,11 +1,11 @@
 <template>
-    <CurrentUser v-slot="{ user }">
+    <ConfigProvider v-slot="{ config }">
         <div>
             <div class="h4 clearfix mb-3">
                 <b>Workflow: {{ model.name }}</b>
                 <ButtonSpinner id="run-workflow" class="float-right" title="Run Workflow" @onClick="onExecute" />
                 <b-dropdown
-                    v-if="showRuntimeSettings(user)"
+                    v-if="showRuntimeSettings(currentUser)"
                     id="dropdown-form"
                     ref="dropdown"
                     class="workflow-run-settings float-right"
@@ -20,11 +20,21 @@
                             >Send results to a new history</b-form-checkbox
                         >
                         <b-form-checkbox
-                            v-if="reuseAllowed(user)"
+                            v-if="reuseAllowed(currentUser)"
                             v-model="useCachedJobs"
                             title="This may skip executing jobs that you have already run."
                             >Attempt to re-use jobs with identical parameters?</b-form-checkbox
                         >
+                        <b-form-checkbox v-if="config.object_store_allows_id_selection" v-model="splitObjectStore"
+                            >Send outputs and intermediate to different object stores?</b-form-checkbox
+                        >
+                        <WorkflowStorageConfiguration
+                            v-if="config.object_store_allows_id_selection"
+                            :split-object-store="splitObjectStore"
+                            :invocation-preferred-object-store-id="preferredObjectStoreId"
+                            :invocation-intermediate-preferred-object-store-id="preferredIntermediateObjectStoreId"
+                            @updated="onStorageUpdate">
+                        </WorkflowStorageConfiguration>
                     </b-dropdown-form>
                 </b-dropdown>
             </div>
@@ -34,23 +44,27 @@
                 >Expand to full workflow form.</a
             >
         </div>
-    </CurrentUser>
+    </ConfigProvider>
 </template>
 
 <script>
-import CurrentUser from "components/providers/CurrentUser";
+import ConfigProvider from "components/providers/ConfigProvider";
+import { mapState } from "pinia";
+import { useUserStore } from "@/stores/userStore";
 import FormDisplay from "components/Form/FormDisplay";
 import ButtonSpinner from "components/Common/ButtonSpinner";
 import { invokeWorkflow } from "./services";
 import { isWorkflowInput } from "components/Workflow/constants";
 import { errorMessageAsString } from "utils/simple-error";
 import { allowCachedJobs } from "components/Tool/utilities";
+import WorkflowStorageConfiguration from "./WorkflowStorageConfiguration";
 
 export default {
     components: {
         ButtonSpinner,
-        CurrentUser,
+        ConfigProvider,
         FormDisplay,
+        WorkflowStorageConfiguration,
     },
     props: {
         model: {
@@ -73,9 +87,13 @@ export default {
             inputTypes: {},
             sendToNewHistory: newHistory,
             useCachedJobs: this.useJobCache, // TODO:
+            splitObjectStore: false,
+            preferredObjectStoreId: null,
+            preferredIntermediateObjectStoreId: null,
         };
     },
     computed: {
+        ...mapState(useUserStore, ["currentUser"]),
         formInputs() {
             const inputs = [];
             // Add workflow parameters.
@@ -114,6 +132,13 @@ export default {
         onChange(data) {
             this.formData = data;
         },
+        onStorageUpdate: function (objectStoreId, intermediate) {
+            if (intermediate) {
+                this.preferredIntermediateObjectStoreId = objectStoreId;
+            } else {
+                this.preferredObjectStoreId = objectStoreId;
+            }
+        },
         onExecute() {
             const replacementParams = {};
             const inputs = {};
@@ -139,6 +164,18 @@ export default {
             } else {
                 data.history_id = this.model.historyId;
             }
+            if (this.splitObjectStore) {
+                if (this.preferredObjectStoreId != null) {
+                    data.preferred_outputs_object_store_id = this.preferredObjectStoreId;
+                }
+                if (this.preferredIntermediateObjectStoreId != null && this.splitObjectStore) {
+                    data.preferred_intermediate_object_store_id = this.preferredIntermediateObjectStoreId;
+                }
+            } else {
+                if (this.preferredObjectStoreId != null) {
+                    data.preferred_object_store_id = this.preferredObjectStoreId;
+                }
+            }
             invokeWorkflow(this.model.workflowId, data)
                 .then((invocations) => {
                     this.$emit("submissionSuccess", invocations);
@@ -150,9 +187,3 @@ export default {
     },
 };
 </script>
-
-<style scoped>
-.workflow-settings-botton {
-    margin-right: 10px;
-}
-</style>

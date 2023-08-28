@@ -147,6 +147,10 @@ class AuthnzManager:
             "redirect_uri": config_xml.find("redirect_uri").text,
             "enable_idp_logout": asbool(config_xml.findtext("enable_idp_logout", "false")),
         }
+        if config_xml.find("label") is not None:
+            rtv["label"] = config_xml.find("label").text
+        if config_xml.find("require_create_confirmation") is not None:
+            rtv["require_create_confirmation"] = asbool(config_xml.find("require_create_confirmation").text)
         if config_xml.find("prompt") is not None:
             rtv["prompt"] = config_xml.find("prompt").text
         if config_xml.find("api_url") is not None:
@@ -157,6 +161,8 @@ class AuthnzManager:
             rtv["icon"] = config_xml.find("icon").text
         if config_xml.find("extra_scopes") is not None:
             rtv["extra_scopes"] = listify(config_xml.find("extra_scopes").text)
+        if config_xml.find("tenant_id") is not None:
+            rtv["tenant_id"] = config_xml.find("tenant_id").text
         if config_xml.find("pkce_support") is not None:
             rtv["pkce_support"] = asbool(config_xml.find("pkce_support").text)
 
@@ -170,6 +176,10 @@ class AuthnzManager:
             "redirect_uri": config_xml.find("redirect_uri").text,
             "enable_idp_logout": asbool(config_xml.findtext("enable_idp_logout", "false")),
         }
+        if config_xml.find("label") is not None:
+            rtv["label"] = config_xml.find("label").text
+        if config_xml.find("require_create_confirmation") is not None:
+            rtv["require_create_confirmation"] = asbool(config_xml.find("require_create_confirmation").text)
         if config_xml.find("credential_url") is not None:
             rtv["credential_url"] = config_xml.find("credential_url").text
         if config_xml.find("well_known_oidc_config_uri") is not None:
@@ -309,6 +319,31 @@ class AuthnzManager:
             raise exceptions.ItemAccessibilityException(msg)
         return qres
 
+    def refresh_expiring_oidc_tokens_for_provider(self, trans, auth):
+        try:
+            success, message, backend = self._get_authnz_backend(auth.provider)
+            if success is False:
+                msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
+                log.error(msg)
+                return False
+            refreshed = backend.refresh(trans, auth)
+            if refreshed:
+                log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
+            return True
+        except Exception as e:
+            msg = f"An error occurred when refreshing user token: {e}"
+            log.error(msg)
+            return False
+
+    def refresh_expiring_oidc_tokens(self, trans, user=None):
+        user = trans.user or user
+        if not isinstance(user, model.User):
+            return
+        for auth in user.custos_auth or []:
+            self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
+        for auth in user.social_auth or []:
+            self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
+
     def authenticate(self, provider, trans, idphint=None):
         """
         :type provider: string
@@ -369,7 +404,7 @@ class AuthnzManager:
             log.exception(msg)
             return False, msg, (None, None)
 
-    def logout(self, provider, trans, post_logout_redirect_url=None):
+    def logout(self, provider, trans, post_user_logout_href=None):
         """
         Log the user out of the identity provider.
 
@@ -377,8 +412,8 @@ class AuthnzManager:
         :param provider: set the name of the identity provider.
         :type trans: GalaxyWebTransaction
         :param trans: Galaxy web transaction.
-        :type post_logout_redirect_url: string
-        :param post_logout_redirect_url: (Optional) URL for identity provider
+        :type post_user_logout_href: string
+        :param post_user_logout_href: (Optional) URL for identity provider
             to redirect to after logging user out.
         :return: a tuple (success boolean, message, redirect URI)
         """
@@ -391,7 +426,7 @@ class AuthnzManager:
             success, message, backend = self._get_authnz_backend(provider)
             if success is False:
                 return False, message, None
-            return True, message, backend.logout(trans, post_logout_redirect_url)
+            return True, message, backend.logout(trans, post_user_logout_href)
         except Exception:
             msg = f"An error occurred when logging out from `{provider}` identity provider.  Please contact an administrator for assistance."
             log.exception(msg)
@@ -501,7 +536,7 @@ class AuthnzManager:
         )
         credentials = self.get_cloud_access_credentials(cloudauthz, sa_session, user_id, request)
         log.info(
-            "Writting credentials generated using CloudAuthz with config id `{}` to the following file: `{}`"
+            "Writing credentials generated using CloudAuthz with config id `{}` to the following file: `{}`"
             "".format(cloudauthz.id, filename)
         )
         with open(filename, "w") as f:

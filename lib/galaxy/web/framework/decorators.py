@@ -273,7 +273,7 @@ def expose_api(func, to_json=True, user_required=True, user_or_session_required=
 
     @wraps(func)
     def decorator(self, trans, *args, **kwargs):
-        # errors passed in from trans._authenicate_api
+        # errors passed in from trans._authenticate_api
         if trans.error_message:
             return __api_error_response(
                 trans, status_code=403, err_code=error_codes.USER_NO_API_KEY, err_msg=trans.error_message
@@ -381,7 +381,7 @@ def format_return_as_json(rval, jsonp_callback=None, pretty=False):
     return json
 
 
-def validation_error_to_message_exception(e):
+def validation_error_to_message_exception(e: ValidationError) -> MessageException:
     invalid_found = False
     missing_found = False
     for error in e.errors():

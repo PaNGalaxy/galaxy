@@ -8,14 +8,19 @@ from typing import (
     Any,
     AsyncGenerator,
     cast,
+    MutableMapping,
     NamedTuple,
     Optional,
     Tuple,
     Type,
     TypeVar,
 )
-from urllib.parse import urlencode
+from urllib.parse import (
+    urlencode,
+    urljoin,
+)
 
+from a2wsgi.wsgi import build_environ
 from fastapi import (
     Form,
     Header,
@@ -48,20 +53,19 @@ try:
 except ImportError:
     request_context = None  # type: ignore[assignment]
 
-from galaxy import app as galaxy_app
 from galaxy import (
+    app as galaxy_app,
     model,
     web,
 )
 from galaxy.exceptions import (
     AdminRequiredException,
     UserCannotRunAsException,
-    UserInvalidRunAsException,
 )
 from galaxy.managers.session import GalaxySessionManager
 from galaxy.managers.users import UserManager
 from galaxy.model import User
-from galaxy.schema.fields import EncodedDatabaseIdField
+from galaxy.schema.fields import DecodedDatabaseIdField
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.structured_app import StructuredApp
 from galaxy.web.framework.decorators import require_admin_message
@@ -91,7 +95,7 @@ async def get_app_with_request_session() -> AsyncGenerator[StructuredApp, None]:
         app.model.unset_request_id(request_id)
 
 
-DependsOnApp = Depends(get_app_with_request_session)
+DependsOnApp = cast(StructuredApp, Depends(get_app_with_request_session))
 
 
 T = TypeVar("T")
@@ -118,7 +122,7 @@ def get_session_manager(app: StructuredApp = DependsOnApp) -> GalaxySessionManag
 
 
 def get_session(
-    session_manager: GalaxySessionManager = Depends(get_session_manager),
+    session_manager=cast(GalaxySessionManager, Depends(get_session_manager)),
     security: IdEncodingHelper = depends(IdEncodingHelper),
     galaxysession: str = Security(api_key_cookie),
 ) -> Optional[model.GalaxySession]:
@@ -131,11 +135,10 @@ def get_session(
 
 
 def get_api_user(
-    security: IdEncodingHelper = depends(IdEncodingHelper),
     user_manager: UserManager = depends(UserManager),
     key: str = Security(api_key_query),
     x_api_key: str = Security(api_key_header),
-    run_as: Optional[EncodedDatabaseIdField] = Header(
+    run_as: Optional[DecodedDatabaseIdField] = Header(
         default=None,
         title="Run as User",
         description=(
@@ -150,19 +153,15 @@ def get_api_user(
     user = user_manager.by_api_key(api_key=api_key)
     if run_as:
         if user_manager.user_can_do_run_as(user):
-            try:
-                decoded_run_as_id = security.decode_id(run_as)
-            except Exception:
-                raise UserInvalidRunAsException
-            return user_manager.by_id(decoded_run_as_id)
+            return user_manager.by_id(run_as)
         else:
             raise UserCannotRunAsException
     return user
 
 
 def get_user(
-    galaxy_session: Optional[model.GalaxySession] = Depends(get_session),
-    api_user: Optional[User] = Depends(get_api_user),
+    galaxy_session=cast(Optional[model.GalaxySession], Depends(get_session)),
+    api_user=cast(Optional[User], Depends(get_api_user)),
 ) -> Optional[User]:
     if galaxy_session:
         return galaxy_session.user
@@ -179,7 +178,7 @@ class UrlBuilder:
         query_params = path_params.pop("query_params", None)
         try:
             if qualified:
-                url = self.request.url_for(name, **path_params)
+                url = str(self.request.url_for(name, **path_params))
             else:
                 url = self.request.app.url_path_for(name, **path_params)
             if query_params:
@@ -200,16 +199,37 @@ class GalaxyASGIRequest(GalaxyAbstractRequest):
 
     def __init__(self, request: Request):
         self.__request = request
+        self.__environ: Optional[MutableMapping[str, Any]] = None
 
     @property
     def base(self) -> str:
         return str(self.__request.base_url)
 
     @property
+    def url_path(self) -> str:
+        scope = self.__request.scope
+        root_path = scope.get("root_path")
+        url = self.base
+        if root_path:
+            url = urljoin(url, root_path)
+        return url
+
+    @property
     def host(self) -> str:
         client = self.__request.client
         assert client is not None
         return str(client.host)
+
+    @property
+    def environ(self) -> MutableMapping[str, Any]:
+        """
+        Fallback WSGI environ.
+
+        This is not a full environ, there is no body. This is only meant to make routes.url_for work.
+        """
+        if self.__environ is None:
+            self.__environ = build_environ(self.__request.scope, None)  # type: ignore[arg-type]
+        return self.__environ
 
 
 class GalaxyASGIResponse(GalaxyAbstractResponse):
@@ -226,7 +246,7 @@ class GalaxyASGIResponse(GalaxyAbstractResponse):
         return self.__response.headers
 
 
-DependsOnUser = Depends(get_user)
+DependsOnUser = cast(Optional[User], Depends(get_user))
 
 
 def get_current_history_from_session(galaxy_session: Optional[model.GalaxySession]) -> Optional[model.History]:
@@ -239,8 +259,8 @@ def get_trans(
     request: Request,
     response: Response,
     app: StructuredApp = DependsOnApp,
-    user: Optional[User] = Depends(get_user),
-    galaxy_session: Optional[model.GalaxySession] = Depends(get_session),
+    user=cast(Optional[User], Depends(get_user)),
+    galaxy_session=cast(Optional[model.GalaxySession], Depends(get_session)),
 ) -> SessionRequestContext:
     url_builder = UrlBuilder(request)
     galaxy_request = GalaxyASGIRequest(request)
@@ -256,7 +276,7 @@ def get_trans(
     )
 
 
-DependsOnTrans = Depends(get_trans)
+DependsOnTrans: SessionRequestContext = cast(SessionRequestContext, Depends(get_trans))
 
 
 def get_admin_user(trans: SessionRequestContext = DependsOnTrans):
@@ -275,6 +295,7 @@ class BaseGalaxyAPIController(BaseAPIController):
 
 class RestVerb(str, Enum):
     get = "GET"
+    head = "HEAD"
     post = "POST"
     put = "PUT"
     patch = "PATCH"
@@ -293,31 +314,45 @@ class Router(InferringRouter):
         routes for /api/thing and /api/deprecated_thing.
         """
         kwd = self._handle_galaxy_kwd(kwd)
+        include_in_schema = kwd.pop("include_in_schema", True)
 
-        def decorate_route(route):
-
+        def decorate_route(route, include_in_schema=include_in_schema):
             # Decorator solely exists to allow passing `route_class_override` to add_api_route
             def decorated_route(func):
                 self.add_api_route(
                     route,
                     endpoint=func,
                     methods=[verb],
+                    include_in_schema=include_in_schema,
                     **kwd,
                 )
                 return func
 
             return decorated_route
 
-        route = decorate_route(args[0])
+        routes = []
+        for path in self.construct_aliases(args[0], alias):
+            if path != "/" and path.endswith("/"):
+                routes.append(decorate_route(path, include_in_schema=False))
+            else:
+                routes.append(decorate_route(path))
 
+        def dec(f):
+            for route in routes:
+                f = route(f)
+            return f
+
+        return dec
+
+    @staticmethod
+    def construct_aliases(path: str, alias: Optional[str]):
+        yield path
+        if path != "/" and not path.endswith("/"):
+            yield f"{path}/"
         if alias:
-            redecorated_route = decorate_route(alias)
-
-            def dec(f):
-                return route(redecorated_route(f))
-
-            return dec
-        return route
+            yield alias
+            if not alias == "/" and not alias.endswith("/"):
+                yield f"{alias}/"
 
     def get(self, *args, **kwd):
         """Extend FastAPI.get to accept a require_admin Galaxy flag."""
@@ -341,6 +376,9 @@ class Router(InferringRouter):
 
     def options(self, *args, **kwd):
         return self.wrap_with_alias(RestVerb.options, *args, **kwd)
+
+    def head(self, *args, **kwd):
+        return self.wrap_with_alias(RestVerb.head, *args, **kwd)
 
     def _handle_galaxy_kwd(self, kwd):
         require_admin = kwd.pop("require_admin", False)
@@ -439,7 +477,7 @@ If the tag is quoted, the attribute will be filtered exactly. If the tag is unqu
 generally a partial match will be used to filter the query (i.e. in terms of the implementation
 this means the database operation `ILIKE` will typically be used).
 
-Once the tagged filters are extracted from the search query, the remaing text is just
+Once the tagged filters are extracted from the search query, the remaining text is just
 used to search various documented attributes of the object.
 
 ## GitHub-style Tags Available

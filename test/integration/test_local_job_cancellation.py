@@ -4,6 +4,7 @@ import time
 
 import psutil
 
+from galaxy.model.base import transaction
 from galaxy_test.base.populators import DatasetPopulator
 from galaxy_test.driver import integration_util
 
@@ -25,14 +26,13 @@ class CancelsJob:
 
     def _wait_for_job_running(self, job_id):
         self.galaxy_interactor.wait_for(
-            lambda: self._get("jobs/%s" % job_id).json()["state"] != "running",
+            lambda: self._get(f"jobs/{job_id}").json()["state"] != "running",
             what="Wait for job to start running",
             maxseconds=60,
         )
 
 
-class LocalJobCancellationTestCase(CancelsJob, integration_util.IntegrationTestCase):
-
+class TestLocalJobCancellation(CancelsJob, integration_util.IntegrationTestCase):
     framework_tool_and_types = True
 
     def setUp(self):
@@ -49,11 +49,12 @@ class LocalJobCancellationTestCase(CancelsJob, integration_util.IntegrationTestC
             job = sa_session.query(Job).filter_by(tool_id="cat_data_and_sleep").order_by(Job.create_time.desc()).first()
             # This is how the admin controller code cancels a job
             job.job_stderr = "admin cancelled job"
-            job.set_state(app.model.Job.states.DELETED_NEW)
+            job.set_state(app.model.Job.states.DELETING)
             sa_session.add(job)
-            sa_session.flush()
+            with transaction(sa_session):
+                sa_session.commit()
             self.galaxy_interactor.wait_for(
-                lambda: self._get("jobs/%s" % job_id).json()["state"] != "error",
+                lambda: self._get(f"jobs/{job_id}").json()["state"] != "error",
                 what="Wait for job to end in error",
                 maxseconds=60,
             )

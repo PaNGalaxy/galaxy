@@ -1,13 +1,14 @@
+import { createPinia } from "pinia";
 import MockAdapter from "axios-mock-adapter";
 import axios from "axios";
 import UploadModal from "./UploadModal";
 import UploadModalContent from "./UploadModalContent";
-import store from "../../store";
 import { mount } from "@vue/test-utils";
-import { getLocalVue } from "jest/helpers";
-
-import MockCurrentUser from "../providers/MockCurrentUser";
-import MockCurrentHistory from "../providers/MockCurrentHistory";
+import { getLocalVue, mockModule } from "tests/jest/helpers";
+import { configStore } from "store/configStore";
+import Vuex from "vuex";
+import { useUserStore } from "stores/userStore";
+import { useHistoryStore } from "stores/historyStore";
 
 jest.mock("app");
 
@@ -17,9 +18,19 @@ const propsData = {
     fileSourcesConfigured: true,
 };
 
+const createStore = () => {
+    return new Vuex.Store({
+        modules: {
+            config: mockModule(configStore, { config: {} }),
+        },
+    });
+};
+
 describe("UploadModal.vue", () => {
     let wrapper;
     let axiosMock;
+    let userStore;
+    let historyStore;
 
     beforeEach(async () => {
         axiosMock = new MockAdapter(axios);
@@ -47,17 +58,15 @@ describe("UploadModal.vue", () => {
         axiosMock.onGet(`/api/datatypes?extension_only=False`).reply(200, datatypesResponse);
 
         const localVue = getLocalVue();
+        const pinia = createPinia();
+        const store = createStore();
 
         wrapper = await mount(UploadModal, {
             store,
+            provide: { store },
             propsData,
             localVue,
             stubs: {
-                // Need to stub all this horrible-ness because of the last 2 tests
-                // which need to dig into the first layer of the mount tree, will remove
-                // all of this shortly with a PR that completely replaces Upload
-                CurrentUser: MockCurrentUser({ id: "fakeuser" }),
-                UserHistories: MockCurrentHistory({ id: "fakehistory" }),
                 BTabs: true,
                 BTab: true,
                 Collection: true,
@@ -65,7 +74,16 @@ describe("UploadModal.vue", () => {
                 Default: true,
                 RulesInput: true,
             },
+            pinia,
         });
+
+        userStore = useUserStore();
+        userStore.currentUser = { id: "fakeUser" };
+        historyStore = useHistoryStore();
+        historyStore.setHistories([{ id: "fakeHistory" }]);
+        historyStore.setCurrentHistoryId("fakeHistory");
+
+        await wrapper.vm.open();
     });
 
     afterEach(() => {
@@ -74,8 +92,9 @@ describe("UploadModal.vue", () => {
     });
 
     it("should load with correct defaults", async () => {
-        expect(wrapper.vm.auto.id).toBe("auto");
-        expect(wrapper.vm.datatypesDisableAuto).toBe(false);
+        const contentWrapper = wrapper.findComponent(UploadModalContent);
+        expect(contentWrapper.vm.auto.id).toBe("auto");
+        expect(contentWrapper.vm.datatypesDisableAuto).toBe(false);
     });
 
     it("should fetch datatypes and parse them", async () => {

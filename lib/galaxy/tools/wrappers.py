@@ -1,3 +1,4 @@
+import abc
 import logging
 import os
 import shlex
@@ -27,13 +28,18 @@ from galaxy.model import (
     HasTags,
     HistoryDatasetCollectionAssociation,
 )
+from galaxy.model.metadata import FileParameter
 from galaxy.model.none_like import NoneDataset
 from galaxy.security.object_wrapper import wrap_with_safe_string
+from galaxy.tools.parameters.basic import BooleanToolParameter
 from galaxy.tools.parameters.wrapped_json import (
     data_collection_input_to_staging_path_and_source_path,
     data_input_to_staging_path_and_source_path,
 )
-from galaxy.util import filesystem_safe_string
+from galaxy.util import (
+    filesystem_safe_string,
+    string_as_bool,
+)
 
 if TYPE_CHECKING:
     from galaxy.datatypes.registry import Registry
@@ -59,7 +65,7 @@ class ToolParameterValueWrapper:
     Base class for object that Wraps a Tool Parameter and Value.
     """
 
-    value: Union[str, List[str]]
+    value: Optional[Union[str, List[str]]]
     input: "ToolParameter"
 
     def __bool__(self) -> bool:
@@ -113,32 +119,46 @@ class InputValueWrapper(ToolParameterValueWrapper):
     def __init__(
         self,
         input: "ToolParameter",
-        value: str,
+        value: Optional[str],
         other_values: Optional[Dict[str, str]] = None,
+        profile: Optional[float] = None,
     ) -> None:
         self.input = input
+        if (
+            value is None
+            and input.type == "text"
+            and input.optional
+            and input.optionality_inferred
+            and (profile is None or profile < 23.0)
+        ):
+            # Tools with old profile versions may treat an optional text parameter as `""`
+            value = ""
         self.value = value
         self._other_values: Dict[str, str] = other_values or {}
 
-    def _get_cast_value(self, other: Any) -> Union[str, int, float, bool, None]:
-        if self.input.type == "boolean" and isinstance(other, str):
-            return str(self)
+    def _get_cast_values(self, other: Any) -> Tuple[Union[str, int, float, bool, None], Any]:
+        if isinstance(self.input, BooleanToolParameter) and isinstance(other, str):
+            if other in (self.input.truevalue, self.input.falsevalue):
+                return str(self), other
+            else:
+                return bool(self), string_as_bool(other)
         # For backward compatibility, allow `$wrapper != ""` for optional non-text param
         if self.input.optional and self.value is None:
             if isinstance(other, str):
-                return str(self)
+                return str(self), other
             else:
-                return None
+                return None, other
         cast_table = {
             "text": str,
             "integer": int,
             "float": float,
             "boolean": bool,
         }
-        return cast(Union[str, int, float, bool], cast_table.get(self.input.type, str)(self))
+        return cast(Union[str, int, float, bool], cast_table.get(self.input.type, str)(self)), other
 
     def __eq__(self, other: Any) -> bool:
-        return bool(self._get_cast_value(other) == other)
+        casted_self, casted_other = self._get_cast_values(other)
+        return casted_self == casted_other
 
     def __ne__(self, other: Any) -> bool:
         return not self == other
@@ -161,7 +181,8 @@ class InputValueWrapper(ToolParameterValueWrapper):
         return getattr(self.value, key)
 
     def __gt__(self, other: Any) -> bool:
-        return bool(self._get_cast_value(other) > other)
+        casted_self, casted_other = self._get_cast_values(other)
+        return casted_self > casted_other
 
     def __int__(self) -> int:
         return int(float(self))
@@ -224,7 +245,7 @@ class SelectToolParameterWrapper(ToolParameterValueWrapper):
         compute_environment: Optional["ComputeEnvironment"] = None,
     ):
         self.input = input
-        self.value = value
+        self.value: Union[str, List[str]] = value
         self.input.value_label = input.value_to_display_text(value)
         self._other_values = other_values or {}
         self.compute_environment = compute_environment
@@ -289,7 +310,6 @@ class DatasetFilenameWrapper(ToolParameterValueWrapper):
                 if rval is None:
                     rval = self.metadata.spec[name].no_value
                 metadata_param = self.metadata.spec[name].param
-                from galaxy.model.metadata import FileParameter
 
                 rval = metadata_param.to_safe_string(rval)
                 if isinstance(metadata_param, FileParameter) and self.compute_environment:
@@ -327,7 +347,7 @@ class DatasetFilenameWrapper(ToolParameterValueWrapper):
 
     def __init__(
         self,
-        dataset: Optional[DatasetInstance],
+        dataset: Optional[Union[DatasetInstance, DatasetCollectionElement]],
         datatypes_registry: Optional["Registry"] = None,
         tool: Optional["Tool"] = None,
         name: Optional[str] = None,
@@ -336,16 +356,12 @@ class DatasetFilenameWrapper(ToolParameterValueWrapper):
         io_type: str = "input",
         formats: Optional[List[str]] = None,
     ) -> None:
+        dataset_instance: Optional[DatasetInstance] = None
         if not dataset:
-            try:
-                # TODO: allow this to work when working with grouping
-                ext = tool.inputs[name].extensions[0]  # type: ignore[union-attr]
-            except Exception:
-                ext = "data"
             self.dataset = cast(
                 DatasetInstance,
                 wrap_with_safe_string(
-                    NoneDataset(datatypes_registry=datatypes_registry, ext=ext),
+                    NoneDataset(datatypes_registry=datatypes_registry),
                     no_wrap_classes=ToolParameterValueWrapper,
                 ),
             )
@@ -353,34 +369,41 @@ class DatasetFilenameWrapper(ToolParameterValueWrapper):
             # Tool wrappers should not normally be accessing .dataset directly,
             # so we will wrap it and keep the original around for file paths
             # Should we name this .value to maintain consistency with most other ToolParameterValueWrapper?
+            if isinstance(dataset, DatasetCollectionElement):
+                identifier = dataset.element_identifier
+                dataset_instance = dataset.hda
+            else:
+                dataset_instance = dataset
+            assert dataset_instance
             if formats:
-                direct_match, target_ext, converted_dataset = dataset.find_conversion_destination(formats)
+                direct_match, target_ext, converted_dataset = dataset_instance.find_conversion_destination(formats)
                 if not direct_match and target_ext and converted_dataset:
-                    dataset = converted_dataset
-            self.unsanitized: DatasetInstance = dataset
-            self.dataset = wrap_with_safe_string(dataset, no_wrap_classes=ToolParameterValueWrapper)
-            assert dataset
-            self.metadata = self.MetadataWrapper(dataset, compute_environment)
-            if isinstance(dataset, HasTags):
-                self.groups = {tag.user_value.lower() for tag in dataset.tags if tag.user_tname == "group"}
+                    dataset_instance = converted_dataset
+            self.unsanitized: DatasetInstance = dataset_instance
+            self.dataset = wrap_with_safe_string(dataset_instance, no_wrap_classes=ToolParameterValueWrapper)
+            self.metadata = self.MetadataWrapper(dataset_instance, compute_environment)
+            if isinstance(dataset_instance, HasTags):
+                self.groups = {tag.user_value.lower() for tag in dataset_instance.tags if tag.user_tname == "group"}
             else:
                 # May be a 'FakeDatasetAssociation'
                 self.groups = set()
         self.compute_environment = compute_environment
         # TODO: lazy initialize this...
         self.__io_type = io_type
-        if self.__io_type == "input":
-            path_rewrite = compute_environment and dataset and compute_environment.input_path_rewrite(dataset)
-            if path_rewrite:
-                self.false_path = path_rewrite
+        self.false_path: Optional[str] = None
+        if dataset_instance:
+            if self.__io_type == "input":
+                path_rewrite = (
+                    compute_environment
+                    and dataset_instance
+                    and compute_environment.input_path_rewrite(dataset_instance)
+                )
+                if path_rewrite:
+                    self.false_path = path_rewrite
             else:
-                self.false_path = None
-        else:
-            path_rewrite = compute_environment and compute_environment.output_path_rewrite(dataset)
-            if path_rewrite:
-                self.false_path = path_rewrite
-            else:
-                self.false_path = None
+                path_rewrite = compute_environment and compute_environment.output_path_rewrite(dataset_instance)
+                if path_rewrite:
+                    self.false_path = path_rewrite
         self.datatypes_registry = datatypes_registry
         self._element_identifier = identifier
 
@@ -492,13 +515,15 @@ class DatasetFilenameWrapper(ToolParameterValueWrapper):
 
 
 class HasDatasets:
-
     job_working_directory: Optional[str]
 
+    @abc.abstractmethod
     def __iter__(self) -> Iterator[Any]:
         pass
 
-    def _dataset_wrapper(self, dataset: DatasetInstance, **kwargs: Any) -> DatasetFilenameWrapper:
+    def _dataset_wrapper(
+        self, dataset: Union[DatasetInstance, DatasetCollectionElement], **kwargs: Any
+    ) -> DatasetFilenameWrapper:
         return DatasetFilenameWrapper(dataset, **kwargs)
 
     def paths_as_file(self, sep: str = "\n") -> str:
@@ -563,6 +588,8 @@ class DatasetListWrapper(List[DatasetFilenameWrapper], ToolParameterValueWrapper
             if dataset_instance_source is None:
                 dataset_instances.append(dataset_instance_source)
             elif getattr(dataset_instance_source, "history_content_type", None) == "dataset":
+                dataset_instances.append(dataset_instance_source)
+            elif getattr(dataset_instance_source, "hda", None):
                 dataset_instances.append(dataset_instance_source)
             elif hasattr(dataset_instance_source, "child_collection"):
                 dataset_instances.extend(dataset_instance_source.child_collection.dataset_elements)

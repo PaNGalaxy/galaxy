@@ -5,8 +5,8 @@ import { rethrowSimple } from "utils/simple-error";
 import { stateIsTerminal } from "./utils";
 import { cleanPaginationParameters } from "./utils";
 
-async function jobDetails({ jobId }) {
-    const url = `${getAppRoot()}api/jobs/${jobId}?full=True`;
+async function jobDetails({ jobId, stdout_position = 0, stdout_length = 0 }) {
+    const url = `${getAppRoot()}api/jobs/${jobId}?full=True&stdout_position=${stdout_position}&stdout_length=${stdout_length}`;
     try {
         const { data } = await axios.get(url);
         return data;

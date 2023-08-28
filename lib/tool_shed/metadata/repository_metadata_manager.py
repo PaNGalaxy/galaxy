@@ -7,20 +7,22 @@ from sqlalchemy import (
 )
 
 from galaxy import util
+from galaxy.model.base import transaction
 from galaxy.util import inflector
 from galaxy.web.form_builder import SelectField
 from tool_shed.metadata import metadata_generator
 from tool_shed.repository_types import util as rt_util
 from tool_shed.repository_types.metadata import TipOnly
+from tool_shed.structured_app import ToolShedApp
 from tool_shed.util import (
     basic_util,
     common_util,
     hg_util,
     metadata_util,
     repository_util,
+    shed_util_common as suc,
+    tool_util,
 )
-from tool_shed.util import shed_util_common as suc
-from tool_shed.util import tool_util
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ log = logging.getLogger(__name__)
 class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
     def __init__(
         self,
-        app,
+        app: ToolShedApp,
         user,
         repository=None,
         changeset_revision=None,
@@ -77,7 +79,9 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
         if tool_versions_dict:
             repository_metadata.tool_versions = tool_versions_dict
             self.sa_session.add(repository_metadata)
-            self.sa_session.flush()
+            session = self.sa_session()
+            with transaction(session):
+                session.commit()
 
     def build_repository_ids_select_field(
         self, name="repository_ids", multiple=True, display="checkboxes", my_writable=False
@@ -110,7 +114,9 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
             changeset_revision = repository_metadata.changeset_revision
             if changeset_revision in changeset_revisions_checked or changeset_revision not in changeset_revisions:
                 self.sa_session.delete(repository_metadata)
-                self.sa_session.flush()
+                session = self.sa_session()
+                with transaction(session):
+                    session.commit()
 
     def compare_changeset_revisions(self, ancestor_changeset_revision, ancestor_metadata_dict):
         """
@@ -399,10 +405,8 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
         """Create or update a repository_metadata record in the tool shed."""
         has_repository_dependencies = False
         has_repository_dependencies_only_if_compiling_contained_td = False
-        includes_datatypes = False
         includes_tools = False
         includes_tool_dependencies = False
-        includes_workflows = False
         if metadata_dict:
             repository_dependencies_dict = metadata_dict.get("repository_dependencies", {})
             repository_dependencies = repository_dependencies_dict.get("repository_dependencies", [])
@@ -410,21 +414,15 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
                 has_repository_dependencies,
                 has_repository_dependencies_only_if_compiling_contained_td,
             ) = repository_util.get_repository_dependency_types(repository_dependencies)
-            if "datatypes" in metadata_dict:
-                includes_datatypes = True
             if "tools" in metadata_dict:
                 includes_tools = True
             if "tool_dependencies" in metadata_dict:
                 includes_tool_dependencies = True
-            if "workflows" in metadata_dict:
-                includes_workflows = True
         if (
             has_repository_dependencies
             or has_repository_dependencies_only_if_compiling_contained_td
-            or includes_datatypes
             or includes_tools
             or includes_tool_dependencies
-            or includes_workflows
         ):
             downloadable = True
         else:
@@ -436,10 +434,10 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
             repository_metadata.metadata = metadata_dict
             repository_metadata.downloadable = downloadable
             repository_metadata.has_repository_dependencies = has_repository_dependencies
-            repository_metadata.includes_datatypes = includes_datatypes
+            repository_metadata.includes_datatypes = False
             repository_metadata.includes_tools = includes_tools
             repository_metadata.includes_tool_dependencies = includes_tool_dependencies
-            repository_metadata.includes_workflows = includes_workflows
+            repository_metadata.includes_workflows = False
         else:
             repository_metadata = self.app.model.RepositoryMetadata(
                 repository_id=self.repository.id,
@@ -447,16 +445,19 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
                 metadata=metadata_dict,
                 downloadable=downloadable,
                 has_repository_dependencies=has_repository_dependencies,
-                includes_datatypes=includes_datatypes,
+                includes_datatypes=False,
                 includes_tools=includes_tools,
                 includes_tool_dependencies=includes_tool_dependencies,
-                includes_workflows=includes_workflows,
+                includes_workflows=False,
             )
+        assert repository_metadata
         # Always set the default values for the following columns.  When resetting all metadata
         # on a repository this will reset the values.
         repository_metadata.missing_test_components = False
         self.sa_session.add(repository_metadata)
-        self.sa_session.flush()
+        session = self.sa_session()
+        with transaction(session):
+            session.commit()
 
         return repository_metadata
 
@@ -499,6 +500,7 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
             repository_metadata = metadata_util.get_repository_metadata_by_changeset_revision(
                 self.app, id, changeset_revision
             )
+            assert repository_metadata
             metadata = repository_metadata.metadata
             tools_dicts = metadata.get("tools", [])
             for tool_dict in tools_dicts:
@@ -934,6 +936,7 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
             repository_metadata = metadata_util.get_repository_metadata_by_changeset_revision(
                 self.app, encoded_repository_id, changeset_revision
             )
+            assert repository_metadata
             metadata = repository_metadata.metadata
             tool_dicts = metadata["tools"]
             if index == 0:
@@ -955,7 +958,9 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
             if tool_versions_dict:
                 repository_metadata.tool_versions = tool_versions_dict
                 self.sa_session.add(repository_metadata)
-                self.sa_session.flush()
+                session = self.sa_session()
+                with transaction(session):
+                    session.commit()
 
     def reset_metadata_on_selected_repositories(self, **kwd):
         """
@@ -982,8 +987,9 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
                         unsuccessful_count += 1
                     else:
                         log.debug(
-                            "Successfully reset metadata on repository %s owned by %s"
-                            % (str(repository.name), str(repository.user.username))
+                            "Successfully reset metadata on repository %s owned by %s",
+                            repository.name,
+                            repository.user.username,
                         )
                         successful_count += 1
                 except Exception:
@@ -1042,10 +1048,7 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
                     repository_metadata.changeset_revision = self.repository.tip()
                     repository_metadata.metadata = self.metadata_dict
                     repository_metadata.downloadable = downloadable
-                    if "datatypes" in self.metadata_dict:
-                        repository_metadata.includes_datatypes = True
-                    else:
-                        repository_metadata.includes_datatypes = False
+                    repository_metadata.includes_datatypes = False
                     # We don't store information about the special type of repository dependency that is needed only for
                     # compiling a tool dependency defined for the dependent repository.
                     repository_dependencies_dict = self.metadata_dict.get("repository_dependencies", {})
@@ -1063,13 +1066,12 @@ class RepositoryMetadataManager(metadata_generator.MetadataGenerator):
                         repository_metadata.includes_tools = True
                     else:
                         repository_metadata.includes_tools = False
-                    if "workflows" in self.metadata_dict:
-                        repository_metadata.includes_workflows = True
-                    else:
-                        repository_metadata.includes_workflows = False
+                    repository_metadata.includes_workflows = False
                     repository_metadata.missing_test_components = False
                     self.sa_session.add(repository_metadata)
-                    self.sa_session.flush()
+                    session = self.sa_session()
+                    with transaction(session):
+                        session.commit()
                 else:
                     # There are no metadata records associated with the repository.
                     repository_metadata = self.create_or_update_repository_metadata(

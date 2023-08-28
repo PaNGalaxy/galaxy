@@ -17,7 +17,24 @@ from galaxy.util import safe_makedirs
 
 log = getLogger(__name__)
 
-SET_METADATA_SCRIPT = "from galaxy_ext.metadata.set_metadata import set_metadata; set_metadata()"
+SET_METADATA_SCRIPT = """
+import os
+import traceback
+try:
+    from galaxy_ext.metadata.set_metadata import set_metadata; set_metadata()
+except Exception:
+    WORKING_DIRECTORY = os.getcwd()
+    WORKING_PARENT = os.path.join(WORKING_DIRECTORY, os.path.pardir)
+    if not os.path.isdir("working") and os.path.isdir(os.path.join(WORKING_PARENT, "working")):
+        # We're probably in pulsar
+        WORKING_DIRECTORY = WORKING_PARENT
+    METADATA_DIRECTORY = os.path.join(WORKING_DIRECTORY, "metadata")
+    EXPORT_STORE_DIRECTORY = os.path.join(METADATA_DIRECTORY, "outputs_populated")
+    os.makedirs(EXPORT_STORE_DIRECTORY, exist_ok=True)
+    with open(os.path.join(EXPORT_STORE_DIRECTORY, "traceback.txt"), "w") as out:
+        out.write(traceback.format_exc())
+    raise
+"""
 
 
 def get_metadata_compute_strategy(config, job_id, metadata_strategy_override=None, tool_id=None):
@@ -34,15 +51,6 @@ class MetadataCollectionStrategy(metaclass=abc.ABCMeta):
     """Interface describing the abstract process of writing out and collecting output metadata."""
 
     extended = False
-
-    def invalidate_external_metadata(self, datasets, sa_session):
-        """Invalidate written files."""
-
-    def set_job_runner_external_pid(self, pid, sa_session):
-        pass
-
-    def cleanup_external_metadata(self, sa_session):
-        pass
 
     @abc.abstractmethod
     def setup_external_metadata(
@@ -137,6 +145,7 @@ class PortableDirectoryMetadataGenerator(MetadataCollectionStrategy):
         job_metadata=None,
         provided_metadata_style=None,
         compute_tmp_dir=None,
+        compute_version_path=None,
         include_command=True,
         max_metadata_value_size=0,
         max_discovered_files=None,
@@ -170,7 +179,7 @@ class PortableDirectoryMetadataGenerator(MetadataCollectionStrategy):
             key = name
 
             def _metadata_path(what):
-                return os.path.join(metadata_dir, f"metadata_{what}_{key}")
+                return os.path.join(metadata_dir, f"metadata_{what}_{key}")  # noqa: B023
 
             _initialize_metadata_inputs(
                 dataset, _metadata_path, tmp_dir, kwds, real_metadata_object=self.write_object_store_conf
@@ -240,6 +249,8 @@ class PortableDirectoryMetadataGenerator(MetadataCollectionStrategy):
             )
             metadata_params["job_params"] = job.raw_param_dict()
             metadata_params["output_collections"] = output_collections
+            if compute_version_path:
+                metadata_params["compute_version_path"] = compute_version_path
 
         with open(metadata_params_path, "w") as f:
             json.dump(metadata_params, f)
@@ -252,7 +263,7 @@ class PortableDirectoryMetadataGenerator(MetadataCollectionStrategy):
                 script_path = os.path.join(metadata_dir, "set.py")
                 with open(script_path, "w") as f:
                     f.write(SET_METADATA_SCRIPT)
-                return 'python "metadata/set.py"'
+                return "python metadata/set.py"
         else:
             # return args to galaxy_ext.metadata.set_metadata required to build
             return ""
@@ -301,10 +312,14 @@ def _initialize_metadata_inputs(dataset, path_for_part, tmp_dir, kwds, real_meta
     filename_kwds = path_for_part("kwds")
     filename_override_metadata = path_for_part("override")
 
-    open(filename_out, "wt+")  # create the file on disk, so it cannot be reused by tempfile (unlikely, but possible)
     # create the file on disk, so it cannot be reused by tempfile (unlikely, but possible)
-    json.dump((False, "External set_meta() not called"), open(filename_results_code, "wt+"))
-    json.dump(kwds, open(filename_kwds, "wt+"), ensure_ascii=True)
+    with open(filename_out, "w+"):
+        pass
+    # create the file on disk, so it cannot be reused by tempfile (unlikely, but possible)
+    with open(filename_results_code, "w+") as f:
+        json.dump((False, "External set_meta() not called"), f)
+    with open(filename_kwds, "w+") as f:
+        json.dump(kwds, f, ensure_ascii=True)
 
     override_metadata = []
     for meta_key, spec_value in dataset.metadata.spec.items():
@@ -315,7 +330,8 @@ def _initialize_metadata_inputs(dataset, path_for_part, tmp_dir, kwds, real_meta
                 shutil.copy(dataset.metadata.get(meta_key, None).file_name, metadata_temp.file_name)
                 override_metadata.append((meta_key, metadata_temp.to_JSON()))
 
-    json.dump(override_metadata, open(filename_override_metadata, "wt+"))
+    with open(filename_override_metadata, "w+") as f:
+        json.dump(override_metadata, f)
 
     return filename_out, filename_results_code, filename_kwds, filename_override_metadata
 

@@ -12,9 +12,12 @@ A sharable Galaxy object:
 import logging
 import re
 from typing import (
+    Any,
+    List,
     Optional,
     Set,
     Type,
+    TYPE_CHECKING,
 )
 
 from sqlalchemy import (
@@ -35,6 +38,7 @@ from galaxy.model import (
     User,
     UserShareAssociation,
 )
+from galaxy.model.base import transaction
 from galaxy.model.tags import GalaxyTagHandler
 from galaxy.schema.schema import (
     ShareWithExtra,
@@ -42,6 +46,10 @@ from galaxy.schema.schema import (
 )
 from galaxy.structured_app import MinimalManagerApp
 from galaxy.util import ready_name_for_url
+from galaxy.util.hash_util import md5_hash_str
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Query
 
 log = logging.getLogger(__name__)
 
@@ -70,17 +78,17 @@ class SharableModelManager(
         self.tag_handler = app[GalaxyTagHandler]
 
     # .... has a user
-    def by_user(self, user, filters=None, **kwargs):
+    def by_user(self, user: User, **kwargs: Any) -> List[Any]:
         """
         Return list for all items (of model_class type) associated with the given
         `user`.
         """
         user_filter = self.model_class.table.c.user_id == user.id
-        filters = self._munge_filters(user_filter, filters)
+        filters = self._munge_filters(user_filter, kwargs.get("filters", None))
         return self.list(filters=filters, **kwargs)
 
     # .... owned/accessible interfaces
-    def is_owner(self, item, user, **kwargs):
+    def is_owner(self, item: "Query", user: Optional[User], **kwargs: Any) -> bool:
         """
         Return true if this sharable belongs to `user` (or `user` is an admin).
         """
@@ -89,7 +97,7 @@ class SharableModelManager(
             return True
         return item.user == user
 
-    def is_accessible(self, item, user, **kwargs):
+    def is_accessible(self, item: "Query", user: Optional[User], **kwargs: Any) -> bool:
         """
         If the item is importable, is owned by `user`, or (the valid) `user`
         is in 'users shared with' list for the item: return True.
@@ -196,7 +204,9 @@ class SharableModelManager(
             self.create_unique_slug(item)
 
         if flush:
-            self.session().flush()
+            session = self.session()
+            with transaction(session):
+                session.commit()
         return user_share_assoc
 
     def unshare_with(self, item, user: User, flush: bool = True):
@@ -207,7 +217,9 @@ class SharableModelManager(
         user_share_assoc = self.get_share_assocs(item, user=user)[0]
         self.session().delete(user_share_assoc)
         if flush:
-            self.session().flush()
+            session = self.session()
+            with transaction(session):
+                session.commit()
         return user_share_assoc
 
     def _query_shared_with(self, user, eagerloads=True, **kwargs):
@@ -215,7 +227,7 @@ class SharableModelManager(
         Return a query for this model already filtered to models shared
         with a particular user.
         """
-        query = self.session().query(self.model_class).join("users_shared_with")
+        query = self.session().query(self.model_class).join(self.model_class.users_shared_with)
         if eagerloads is False:
             query = query.enable_eagerloads(False)
         # TODO: as filter in FilterParser also
@@ -256,7 +268,6 @@ class SharableModelManager(
         This method must be overridden in managers that need to change permissions of internal elements
         contained associated with the given item.
         """
-        pass
 
     def update_current_sharing_with_users(self, item, new_users_shared_with: Set[User], flush=True):
         """Updates the currently list of users this item is shared with by adding new
@@ -273,8 +284,10 @@ class SharableModelManager(
             current_shares.remove(self.unshare_with(item, user, flush=False))
 
         if flush:
-            self.session().flush()
-        return current_shares
+            session = self.session()
+            with transaction(session):
+                session.commit()
+        return current_shares, needs_adding, needs_removing
 
     # .... slugs
     # slugs are human readable strings often used to link to sharable resources (replacing ids)
@@ -296,7 +309,9 @@ class SharableModelManager(
 
         item.slug = new_slug
         if flush:
-            self.session().flush()
+            session = self.session()
+            with transaction(session):
+                session.commit()
         return item
 
     def is_valid_slug(self, slug):
@@ -360,7 +375,9 @@ class SharableModelManager(
         item.slug = self.get_unique_slug(item)
         self.session().add(item)
         if flush:
-            self.session().flush()
+            session = self.session()
+            with transaction(session):
+                session.commit()
         return item
 
     # TODO: def by_slug( self, user, **kwargs ):
@@ -377,7 +394,19 @@ class SharableModelSerializer(
 
     def __init__(self, app, **kwargs):
         super().__init__(app, **kwargs)
-        self.add_view("sharing", ["id", "title", "importable", "published", "username_and_slug", "users_shared_with"])
+        self.add_view(
+            "sharing",
+            [
+                "id",
+                "title",
+                "email_hash",
+                "importable",
+                "published",
+                "username",
+                "username_and_slug",
+                "users_shared_with",
+            ],
+        )
 
     def add_serializers(self):
         super().add_serializers()
@@ -388,18 +417,28 @@ class SharableModelSerializer(
             {
                 "id": self.serialize_id,
                 "title": self.serialize_title,
+                "username": self.serialize_username,
                 "username_and_slug": self.serialize_username_and_slug,
                 "users_shared_with": self.serialize_users_shared_with,
+                "email_hash": self.serialize_email_hash,
             }
         )
         # these use the default serializer but must still be white-listed
         self.serializable_keyset.update(["importable", "published", "slug"])
+
+    def serialize_email_hash(self, item, key, **context):
+        if not (item.user and item.user.email):
+            return None
+        return md5_hash_str(item.user.email)
 
     def serialize_title(self, item, key, **context):
         if hasattr(item, "title"):
             return item.title
         elif hasattr(item, "name"):
             return item.name
+
+    def serialize_username(self, item, key, **context):
+        return item.user and item.user.username
 
     def serialize_username_and_slug(self, item, key, **context):
         if not (item.user and item.user.username and item.slug and self.SINGLE_CHAR_ABBR):
@@ -483,7 +522,7 @@ class SharableModelDeserializer(
         """
         unencoded_ids = [self.app.security.decode_id(id_) for id_ in val]
         new_users_shared_with = set(self.manager.user_manager.by_ids(unencoded_ids))
-        current_shares = self.manager.update_current_sharing_with_users(item, new_users_shared_with)
+        current_shares, _, _ = self.manager.update_current_sharing_with_users(item, new_users_shared_with)
         # TODO: or should this return the list of ids?
         return current_shares
 

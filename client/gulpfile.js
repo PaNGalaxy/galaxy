@@ -4,6 +4,7 @@ const del = require("del");
 const { src, dest, series, parallel, watch } = require("gulp");
 const child_process = require("child_process");
 const glob = require("glob");
+const buildIcons = require("./icons/build_icons");
 
 /*
  * We'll want a flexible glob down the road, but for now there are no
@@ -17,6 +18,8 @@ const STATIC_PLUGIN_BUILD_IDS = [
     "drawrna",
     "editor",
     "example",
+    "fits_image_viewer",
+    "h5web",
     "heatmap/heatmap_default",
     "hyphyvision",
     "jqplot/jqplot_bar",
@@ -32,6 +35,7 @@ const STATIC_PLUGIN_BUILD_IDS = [
     "pv",
     "nora",
     "venn",
+    "ts_visjs",
 ];
 const DIST_PLUGIN_BUILD_IDS = ["new_user"];
 const PLUGIN_BUILD_IDS = Array.prototype.concat(DIST_PLUGIN_BUILD_IDS, STATIC_PLUGIN_BUILD_IDS);
@@ -88,6 +92,10 @@ function fonts() {
     );
 }
 
+async function icons() {
+    await buildIcons("./src/assets/icons.json");
+}
+
 function stagePlugins() {
     return src(PATHS.pluginDirs).pipe(dest("../static/plugins/"));
 }
@@ -127,7 +135,7 @@ function buildPlugins(callback, forceRebuild) {
                             // Stage current hash to .orig for debugging and to
                             // force a plugin rebuild in the event of a failure
                             // (i.e. -- we're committed to a new build of this plugin).
-                            fs.renameSync(hashFilePath, `${hashFilePath}.orig`)
+                            fs.renameSync(hashFilePath, `${hashFilePath}.orig`);
                         }
                     } else {
                         console.log(`No build hashfile detected for ${pluginName}, generating now.`);
@@ -148,10 +156,20 @@ function buildPlugins(callback, forceRebuild) {
                         }
                     );
                     console.log(`Building ${pluginName}`);
-                    if (
-                        child_process.spawnSync("yarn", ["build"], { cwd: pluginDir, stdio: "inherit", shell: true })
-                            .status === 0
-                    ) {
+                    const opts = {
+                        cwd: pluginDir,
+                        stdio: "inherit",
+                        shell: true,
+                    };
+                    // if node version is >16, set NODE_OPTIONS to use legacy openssl provider
+                    if (process.versions.node.split(".")[0] > "16") {
+                        opts.env = {
+                            ...process.env,
+                            PARCEL_WORKER_BACKEND: "process",
+                            NODE_OPTIONS: "--openssl-legacy-provider",
+                        };
+                    }
+                    if (child_process.spawnSync("yarn", ["build"], opts).status === 0) {
                         console.log(`Successfully built, saving build state to ${hashFilePath}`);
                         child_process.exec(`(git rev-parse HEAD 2>/dev/null || echo \`\`) > ${hashFilePath}`);
                     } else {
@@ -174,7 +192,7 @@ function cleanPlugins() {
     return del(["../static/plugins/{visualizations,welcome_page}/*"], { force: true });
 }
 
-const client = parallel(fonts, stageLibs);
+const client = parallel(fonts, stageLibs, icons);
 const plugins = series(buildPlugins, cleanPlugins, stagePlugins);
 const pluginsRebuild = series(forceBuildPlugins, cleanPlugins, stagePlugins);
 

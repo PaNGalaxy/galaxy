@@ -1,11 +1,9 @@
 <template>
-    <div>
-        <SidePanel id="left" side="left">
-            <template v-slot:panel>
-                <MarkdownToolBox :get-manager="getManager" @onInsert="onInsert" />
-            </template>
-        </SidePanel>
-        <div id="center" class="workflow-markdown-editor">
+    <div id="columns" class="d-flex">
+        <FlexPanel side="left">
+            <MarkdownToolBox :steps="steps" @onInsert="onInsert" />
+        </FlexPanel>
+        <div id="center" class="overflow-auto w-100">
             <div class="markdown-editor h-100">
                 <div class="unified-panel-header" unselectable="on">
                     <div class="unified-panel-header-inner">
@@ -35,6 +33,7 @@
                 </div>
             </div>
         </div>
+        <MarkdownHelp ref="help" />
     </div>
 </template>
 
@@ -46,8 +45,8 @@ import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { library } from "@fortawesome/fontawesome-svg-core";
 import { faQuestion } from "@fortawesome/free-solid-svg-icons";
 import MarkdownToolBox from "./MarkdownToolBox";
-import SidePanel from "components/Panels/SidePanel";
-import { showMarkdownHelp } from "./markdownHelp";
+import FlexPanel from "components/Panels/FlexPanel";
+import MarkdownHelp from "./MarkdownHelp";
 
 Vue.use(BootstrapVue);
 
@@ -58,8 +57,9 @@ const FENCE = "```";
 export default {
     components: {
         MarkdownToolBox,
-        SidePanel,
+        FlexPanel,
         FontAwesomeIcon,
+        MarkdownHelp,
     },
     props: {
         markdownText: {
@@ -70,8 +70,8 @@ export default {
             type: Object,
             default: null,
         },
-        getManager: {
-            type: Function,
+        steps: {
+            type: Object,
             default: null,
         },
         title: {
@@ -111,7 +111,7 @@ export default {
             this.$emit("onUpdate", this.content);
         }, 300),
         onHelp() {
-            showMarkdownHelp();
+            this.$refs.help.showMarkdownHelp();
         },
     },
 };

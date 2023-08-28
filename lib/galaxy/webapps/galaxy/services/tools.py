@@ -24,6 +24,7 @@ from galaxy.managers.context import (
 )
 from galaxy.managers.histories import HistoryManager
 from galaxy.model import PostJobAction
+from galaxy.model.base import transaction
 from galaxy.schema.fetch_data import (
     FetchDataFormPayload,
     FetchDataPayload,
@@ -32,8 +33,8 @@ from galaxy.schema.fetch_data import (
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.tools import Tool
 from galaxy.tools.search import ToolBoxSearch
+from galaxy.webapps.galaxy.services._fetch_util import validate_and_normalize_targets
 from galaxy.webapps.galaxy.services.base import ServiceBase
-from ._fetch_util import validate_and_normalize_targets
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class ToolsService(ServiceBase):
                 with tempfile.NamedTemporaryFile(
                     dir=trans.app.config.new_file_path, prefix="upload_file_data_", delete=False
                 ) as dest:
-                    shutil.copyfileobj(upload_file.file, dest)
+                    shutil.copyfileobj(upload_file.file, dest)  # type: ignore[misc]  # https://github.com/python/mypy/issues/15031
                 upload_file.file.close()
                 files_payload[f"files_{i}|file_data"] = FilesPayload(
                     filename=upload_file.filename, local_filename=dest.name
@@ -132,8 +133,8 @@ class ToolsService(ServiceBase):
         # dataset upload.
         history_id = payload.get("history_id")
         if history_id:
-            decoded_id = self.decode_id(history_id)
-            target_history = self.history_manager.get_owned(decoded_id, trans.user, current_history=trans.history)
+            history_id = trans.security.decode_id(history_id) if isinstance(history_id, str) else history_id
+            target_history = self.history_manager.get_mutable(history_id, trans.user, current_history=trans.history)
         else:
             target_history = None
 
@@ -161,11 +162,17 @@ class ToolsService(ServiceBase):
         use_cached_job = payload.get("use_cached_job", False) or util.string_as_bool(
             inputs.get("use_cached_job", "false")
         )
-
+        preferred_object_store_id = payload.get("preferred_object_store_id")
         input_format = str(payload.get("input_format", "legacy"))
-
+        if "data_manager_mode" in payload:
+            incoming["__data_manager_mode"] = payload["data_manager_mode"]
         vars = tool.handle_input(
-            trans, incoming, history=target_history, use_cached_job=use_cached_job, input_format=input_format
+            trans,
+            incoming,
+            history=target_history,
+            use_cached_job=use_cached_job,
+            input_format=input_format,
+            preferred_object_store_id=preferred_object_store_id,
         )
 
         new_pja_flush = False
@@ -181,7 +188,8 @@ class ToolsService(ServiceBase):
                     new_pja_flush = True
 
         if new_pja_flush:
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
 
         return self._handle_inputs_output_to_api_response(trans, tool, target_history, vars)
 
@@ -244,32 +252,11 @@ class ToolsService(ServiceBase):
         :return type: dict
         """
         panel_view = view or self.config.default_panel_view
-        tool_name_boost = self.config.tool_name_boost
-        tool_id_boost = self.config.tool_id_boost
-        tool_section_boost = self.config.tool_section_boost
-        tool_description_boost = self.config.tool_description_boost
-        tool_label_boost = self.config.tool_label_boost
-        tool_stub_boost = self.config.tool_stub_boost
-        tool_help_boost = self.config.tool_help_boost
-        tool_search_limit = self.config.tool_search_limit
-        tool_enable_ngram_search = self.config.tool_enable_ngram_search
-        tool_ngram_minsize = self.config.tool_ngram_minsize
-        tool_ngram_maxsize = self.config.tool_ngram_maxsize
 
         results = self.toolbox_search.search(
             q=q,
             panel_view=panel_view,
-            tool_name_boost=tool_name_boost,
-            tool_id_boost=tool_id_boost,
-            tool_section_boost=tool_section_boost,
-            tool_description_boost=tool_description_boost,
-            tool_label_boost=tool_label_boost,
-            tool_stub_boost=tool_stub_boost,
-            tool_help_boost=tool_help_boost,
-            tool_search_limit=tool_search_limit,
-            tool_enable_ngram_search=tool_enable_ngram_search,
-            tool_ngram_minsize=tool_ngram_minsize,
-            tool_ngram_maxsize=tool_ngram_maxsize,
+            config=self.config,
         )
         return results
 

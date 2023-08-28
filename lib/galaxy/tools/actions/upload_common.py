@@ -29,6 +29,7 @@ from galaxy.model import (
     Role,
     tags,
 )
+from galaxy.model.base import transaction
 from galaxy.util import is_url
 from galaxy.util.path import external_chown
 
@@ -84,7 +85,7 @@ class LibraryParams:
 
 
 def handle_library_params(
-    trans, params, folder_id: str, replace_dataset: Optional[LibraryDataset] = None
+    trans, params, folder_id: int, replace_dataset: Optional[LibraryDataset] = None
 ) -> LibraryParams:
     # FIXME: the received params has already been parsed by util.Params() by the time it reaches here,
     # so no complex objects remain.  This is not good because it does not allow for those objects to be
@@ -93,7 +94,7 @@ def handle_library_params(
     # See if we have any template field contents
     template_field_contents = {}
     template_id = params.get("template_id", None)
-    folder = trans.sa_session.query(LibraryFolder).get(trans.security.decode_id(folder_id))
+    folder = trans.sa_session.query(LibraryFolder).get(folder_id)
     # We are inheriting the folder's info_association, so we may have received inherited contents or we may have redirected
     # here after the user entered template contents ( due to errors ).
     template: Optional[FormDefinition] = None
@@ -137,11 +138,13 @@ def __new_history_upload(trans, uploaded_dataset, history=None, state=None):
         hda.state = state
     else:
         hda.state = hda.states.QUEUED
-    trans.sa_session.flush()
+    with transaction(trans.sa_session):
+        trans.sa_session.commit()
     history.add_dataset(hda, genome_build=uploaded_dataset.dbkey, quota=False)
     permissions = trans.app.security_agent.history_get_default_permissions(history)
-    trans.app.security_agent.set_all_dataset_permissions(hda.dataset, permissions)
-    trans.sa_session.flush()
+    trans.app.security_agent.set_all_dataset_permissions(hda.dataset, permissions, new=True, flush=False)
+    with transaction(trans.sa_session):
+        trans.sa_session.commit()
     return hda
 
 
@@ -166,7 +169,8 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_h
                 new_folder.genome_build = trans.app.genome_builds.default_value
                 folder.add_folder(new_folder)
                 trans.sa_session.add(new_folder)
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
                 trans.app.security_agent.copy_library_permissions(trans, folder, new_folder)
                 folder = new_folder
     if library_bunch.replace_dataset:
@@ -174,7 +178,8 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_h
     else:
         ld = trans.app.model.LibraryDataset(folder=folder, name=uploaded_dataset.name)
         trans.sa_session.add(ld)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         trans.app.security_agent.copy_library_permissions(trans, folder, ld)
     ldda = trans.app.model.LibraryDatasetDatasetAssociation(
         name=uploaded_dataset.name,
@@ -200,7 +205,8 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_h
     else:
         ldda.state = ldda.states.QUEUED
     ldda.message = library_bunch.message
-    trans.sa_session.flush()
+    with transaction(trans.sa_session):
+        trans.sa_session.commit()
     # Permissions must be the same on the LibraryDatasetDatasetAssociation and the associated LibraryDataset
     trans.app.security_agent.copy_library_permissions(trans, ld, ldda)
     if library_bunch.replace_dataset:
@@ -211,14 +217,16 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_h
     else:
         # Copy the current user's DefaultUserPermissions to the new LibraryDatasetDatasetAssociation.dataset
         trans.app.security_agent.set_all_dataset_permissions(
-            ldda.dataset, trans.app.security_agent.user_get_default_permissions(trans.user)
+            ldda.dataset, trans.app.security_agent.user_get_default_permissions(trans.user), new=True
         )
         folder.add_library_dataset(ld, genome_build=uploaded_dataset.dbkey)
         trans.sa_session.add(folder)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
     ld.library_dataset_dataset_association_id = ldda.id
     trans.sa_session.add(ld)
-    trans.sa_session.flush()
+    with transaction(trans.sa_session):
+        trans.sa_session.commit()
     # Handle template included in the upload form, if any.  If the upload is not asynchronous ( e.g., URL paste ),
     # then the template and contents will be included in the library_bunch at this point.  If the upload is
     # asynchronous ( e.g., uploading a file ), then the template and contents will be included in the library_bunch
@@ -230,7 +238,8 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_h
         # Create a new FormValues object, using the template we previously retrieved
         form_values = trans.app.model.FormValues(library_bunch.template, library_bunch.template_field_contents)
         trans.sa_session.add(form_values)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         # Create a new info_association between the current ldda and form_values
         # TODO: Currently info_associations at the ldda level are not inheritable to the associated LibraryDataset,
         # we need to figure out if this is optimal
@@ -238,7 +247,8 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_h
             ldda, library_bunch.template, form_values
         )
         trans.sa_session.add(info_association)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
     # If roles were selected upon upload, restrict access to the Dataset to those roles
     if library_bunch.roles:
         for role in library_bunch.roles:
@@ -246,7 +256,8 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_h
                 trans.app.security_agent.permitted_actions.DATASET_ACCESS.action, ldda.dataset, role
             )
             trans.sa_session.add(dp)
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
     return ldda
 
 
@@ -295,7 +306,8 @@ def create_paramfile(trans, uploaded_datasets):
             for meta_name, meta_value in uploaded_dataset.metadata.items():
                 setattr(data.metadata, meta_name, meta_value)
             trans.sa_session.add(data)
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
             params = dict(
                 file_type=uploaded_dataset.file_type,
                 dataset_id=data.dataset.id,
@@ -425,7 +437,7 @@ def active_folders(trans, folder):
     return (
         trans.sa_session.query(LibraryFolder)
         .filter_by(parent=folder, deleted=False)
-        .options(joinedload("actions"))
+        .options(joinedload(LibraryFolder.actions))
         .order_by(LibraryFolder.table.c.name)
         .all()
     )

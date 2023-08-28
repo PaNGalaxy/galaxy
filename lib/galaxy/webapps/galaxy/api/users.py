@@ -5,8 +5,15 @@ import copy
 import json
 import logging
 import re
+from typing import (
+    List,
+    Optional,
+    Union,
+)
 
 from fastapi import (
+    Body,
+    Path,
     Response,
     status,
 )
@@ -16,6 +23,7 @@ from sqlalchemy import (
     or_,
     true,
 )
+from typing_extensions import Literal
 
 from galaxy import (
     exceptions,
@@ -24,13 +32,21 @@ from galaxy import (
 )
 from galaxy.exceptions import ObjectInvalid
 from galaxy.managers import (
-    api_keys,
+    base as managers_base,
     users,
 )
 from galaxy.managers.context import ProvidesUserContext
 from galaxy.model import (
     User,
     UserAddress,
+    UserQuotaUsage,
+)
+from galaxy.model.base import transaction
+from galaxy.schema import APIKeyModel
+from galaxy.schema.fields import DecodedDatabaseIdField
+from galaxy.schema.schema import (
+    AsyncTaskResultSummary,
+    UserBeaconSetting,
 )
 from galaxy.security.validate_user_input import (
     validate_email,
@@ -54,41 +70,200 @@ from galaxy.webapps.base.controller import (
     UsesTagsMixin,
 )
 from galaxy.webapps.base.webapp import GalaxyWebTransaction
-from galaxy.webapps.galaxy.services.users import UsersService
-from . import (
+from galaxy.webapps.galaxy.api import (
     BaseGalaxyAPIController,
     depends,
     DependsOnTrans,
     Router,
 )
+from galaxy.webapps.galaxy.services.users import UsersService
 
 log = logging.getLogger(__name__)
 
 router = Router(tags=["users"])
 
+FlexibleUserIdType = Union[DecodedDatabaseIdField, Literal["current"]]
+UserIdPathParam: DecodedDatabaseIdField = Path(..., title="User ID", description="The ID of the user to get.")
+APIKeyPathParam: str = Path(..., title="API Key", description="The API key of the user.")
+FlexibleUserIdPathParam: FlexibleUserIdType = Path(
+    ..., title="User ID", description="The ID of the user to get or 'current'."
+)
+QuotaSourceLabelPathParam: str = Path(
+    ...,
+    title="Quota Source Label",
+    description="The label corresponding to the quota source to fetch usage information about.",
+)
+
+RecalculateDiskUsageSummary = "Triggers a recalculation of the current user disk usage."
+RecalculateDiskUsageResponseDescriptions = {
+    200: {
+        "model": AsyncTaskResultSummary,
+        "description": "The asynchronous task summary to track the task state.",
+    },
+    204: {
+        "description": "The background task was submitted but there is no status tracking ID available.",
+    },
+}
+
 
 @router.cbv
-class FastAPIHistories:
+class FastAPIUsers:
     service: UsersService = depends(UsersService)
+    user_serializer: users.UserSerializer = depends(users.UserSerializer)
 
     @router.put(
+        "/api/users/current/recalculate_disk_usage",
+        summary=RecalculateDiskUsageSummary,
+        responses=RecalculateDiskUsageResponseDescriptions,
+    )
+    @router.put(
         "/api/users/recalculate_disk_usage",
-        summary="Triggers a recalculation of the current user disk usage.",
-        status_code=status.HTTP_204_NO_CONTENT,
+        summary=RecalculateDiskUsageSummary,
+        responses=RecalculateDiskUsageResponseDescriptions,
+        deprecated=True,
     )
     def recalculate_disk_usage(
         self,
         trans: ProvidesUserContext = DependsOnTrans,
     ):
-        self.service.recalculate_disk_usage(trans)
+        """This route will be removed in a future version.
+
+        Please use `/api/users/current/recalculate_disk_usage` instead.
+        """
+        result = self.service.recalculate_disk_usage(trans)
+        return Response(status_code=status.HTTP_204_NO_CONTENT) if result is None else result
+
+    @router.get(
+        "/api/users/{user_id}/api_key",
+        name="get_or_create_api_key",
+        summary="Return the user's API key",
+    )
+    def get_or_create_api_key(
+        self, trans: ProvidesUserContext = DependsOnTrans, user_id: DecodedDatabaseIdField = UserIdPathParam
+    ) -> str:
+        return self.service.get_or_create_api_key(trans, user_id)
+
+    @router.get(
+        "/api/users/{user_id}/api_key/detailed",
+        name="get_api_key_detailed",
+        summary="Return the user's API key with extra information.",
+        responses={
+            200: {
+                "model": APIKeyModel,
+                "description": "The API key of the user.",
+            },
+            204: {
+                "description": "The user doesn't have an API key.",
+            },
+        },
+    )
+    def get_api_key(
+        self, trans: ProvidesUserContext = DependsOnTrans, user_id: DecodedDatabaseIdField = UserIdPathParam
+    ):
+        api_key = self.service.get_api_key(trans, user_id)
+        return api_key if api_key else Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.post("/api/users/{user_id}/api_key", summary="Creates a new API key for the user")
+    def create_api_key(
+        self, trans: ProvidesUserContext = DependsOnTrans, user_id: DecodedDatabaseIdField = UserIdPathParam
+    ) -> str:
+        return self.service.create_api_key(trans, user_id).key
+
+    @router.delete(
+        "/api/users/{user_id}/api_key",
+        summary="Delete the current API key of the user",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_api_key(
+        self,
+        trans: ProvidesUserContext = DependsOnTrans,
+        user_id: DecodedDatabaseIdField = UserIdPathParam,
+    ):
+        self.service.delete_api_key(trans, user_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.get(
+        "/api/users/{user_id}/usage",
+        name="get_user_usage",
+        summary="Return the user's quota usage summary broken down by quota source",
+    )
+    def usage(
+        self,
+        trans: ProvidesUserContext = DependsOnTrans,
+        user_id: FlexibleUserIdType = FlexibleUserIdPathParam,
+    ) -> List[UserQuotaUsage]:
+        user = get_user_full(trans, user_id, False)
+        if user:
+            rval = self.user_serializer.serialize_disk_usage(user)
+            return rval
+        else:
+            return []
+
+    @router.get(
+        "/api/users/{user_id}/usage/{label}",
+        name="get_user_usage_for_label",
+        summary="Return the user's quota usage summary for a given quota source label",
+    )
+    def usage_for(
+        self,
+        trans: ProvidesUserContext = DependsOnTrans,
+        user_id: FlexibleUserIdType = FlexibleUserIdPathParam,
+        label: str = QuotaSourceLabelPathParam,
+    ) -> Optional[UserQuotaUsage]:
+        user = get_user_full(trans, user_id, False)
+        effective_label: Optional[str] = label
+        if label == "__null__":
+            effective_label = None
+        if user:
+            rval = self.user_serializer.serialize_disk_usage_for(user, effective_label)
+            return rval
+        else:
+            return None
+
+    @router.get(
+        "/api/users/{user_id}/beacon",
+        summary="Returns information about beacon share settings",
+    )
+    def get_beacon(
+        self,
+        trans: ProvidesUserContext = DependsOnTrans,
+        user_id: DecodedDatabaseIdField = UserIdPathParam,
+    ) -> UserBeaconSetting:
+        """
+        **Warning**: This endpoint is experimental and might change or disappear in future versions.
+        """
+        user = self.service._get_user(trans, user_id)
+
+        enabled = user.preferences["beacon_enabled"] if "beacon_enabled" in user.preferences else False
+
+        return UserBeaconSetting(enabled=enabled)
+
+    @router.post(
+        "/api/users/{user_id}/beacon",
+        summary="Changes beacon setting",
+    )
+    def set_beacon(
+        self,
+        trans: ProvidesUserContext = DependsOnTrans,
+        user_id: DecodedDatabaseIdField = UserIdPathParam,
+        payload: UserBeaconSetting = Body(...),
+    ) -> UserBeaconSetting:
+        """
+        **Warning**: This endpoint is experimental and might change or disappear in future versions.
+        """
+        user = self.service._get_user(trans, user_id)
+
+        user.preferences["beacon_enabled"] = payload.enabled
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
+
+        return payload
 
 
 class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController, UsesFormDefinitionsMixin):
     user_manager: users.UserManager = depends(users.UserManager)
     user_serializer: users.UserSerializer = depends(users.UserSerializer)
     user_deserializer: users.UserDeserializer = depends(users.UserDeserializer)
-    api_key_manager: api_keys.ApiKeyManager = depends(api_keys.ApiKeyManager)
 
     @expose_api
     def index(self, trans: ProvidesUserContext, deleted="False", f_email=None, f_name=None, f_any=None, **kwd):
@@ -175,36 +350,24 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
         return rval
 
     @expose_api_anonymous
-    def show(self, trans: ProvidesUserContext, id, deleted="False", **kwd):
+    def show(self, trans: ProvidesUserContext, id, **kwd):
         """
         GET /api/users/{encoded_id}
         GET /api/users/deleted/{encoded_id}
         GET /api/users/current
         Displays information about a user.
         """
-        deleted = util.string_as_bool(deleted)
-        try:
-            # user is requesting data about themselves
-            if id == "current":
-                # ...and is anonymous - return usage and quota (if any)
-                if not trans.user:
-                    item = self.anon_user_api_value(trans)
-                    return item
+        user = self._get_user_full(trans, id, **kwd)
+        if user is not None:
+            return self.user_serializer.serialize_to_view(user, view="detailed")
+        else:
+            return self.anon_user_api_value(trans)
 
-                # ...and is logged in - return full
-                else:
-                    user = trans.user
-            else:
-                user = self.get_user(trans, id, deleted=deleted)
-            # check that the user is requesting themselves (and they aren't del'd) unless admin
-            if not trans.user_is_admin:
-                assert trans.user == user
-                assert not user.deleted
-        except exceptions.ItemDeletionException:
-            raise
-        except Exception:
-            raise exceptions.RequestParameterInvalidException("Invalid user id specified", id=id)
-        return self.user_serializer.serialize_to_view(user, view="detailed")
+    def _get_user_full(self, trans, user_id, **kwd):
+        """Return referenced user or None if anonymous user is referenced."""
+        deleted = kwd.get("deleted", "False")
+        deleted = util.string_as_bool(deleted)
+        return get_user_full(trans, user_id, deleted)
 
     @expose_api
     def create(self, trans: GalaxyWebTransaction, payload: dict, **kwd):
@@ -253,14 +416,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             the serialized item after any changes
         """
         current_user = trans.user
-        user_to_update = self.user_manager.by_id(self.decode_id(id))
-
-        # only allow updating other users if they're admin
-        editing_someone_else = current_user != user_to_update
-        is_admin = self.user_manager.is_admin(current_user)
-        if editing_someone_else and not is_admin:
-            raise exceptions.InsufficientPermissionsException("You are not allowed to update that user", id=id)
-
+        user_to_update = self._get_user_full(trans, id, **kwd)
         self.user_deserializer.deserialize(user_to_update, payload, user=current_user, trans=trans)
         return self.user_serializer.serialize_to_view(user_to_update, view="detailed")
 
@@ -289,7 +445,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             if trans.user == user_to_update:
                 self.user_manager.delete(user_to_update)
             else:
-                raise exceptions.InsufficientPermissionsException("You may only delete your own account.", id=id)
+                raise exceptions.InsufficientPermissionsException("You may only delete your own account.")
         return self.user_serializer.serialize_to_view(user_to_update, view="detailed")
 
     @web.require_admin
@@ -312,7 +468,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
         if not trans.user and not trans.history:
             # Can't return info about this user, may not have a history yet.
             return {}
-        usage = trans.app.quota_agent.get_usage(trans)
+        usage = trans.app.quota_agent.get_usage(trans, history=trans.history)
         percent = trans.app.quota_agent.get_percent(trans=trans, usage=usage)
         return {
             "total_disk_usage": int(usage),
@@ -384,27 +540,34 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
         email = user.email
         username = user.username
         inputs = list()
-        inputs.append(
-            {
-                "id": "email_input",
-                "name": "email",
-                "type": "text",
-                "label": "Email address",
-                "value": email,
-                "help": "If you change your email address you will receive an activation link in the new mailbox and you have to activate your account by visiting it.",
-            }
-        )
-        if trans.webapp.name == "galaxy":
+        user_info = {
+            "email": email,
+            "username": username,
+        }
+        is_galaxy_app = trans.webapp.name == "galaxy"
+        if trans.app.config.enable_account_interface or not is_galaxy_app:
             inputs.append(
                 {
-                    "id": "name_input",
-                    "name": "username",
+                    "id": "email_input",
+                    "name": "email",
                     "type": "text",
-                    "label": "Public name",
-                    "value": username,
-                    "help": 'Your public name is an identifier that will be used to generate addresses for information you share publicly. Public names must be at least three characters in length and contain only lower-case letters, numbers, and the "-" character.',
+                    "label": "Email address",
+                    "value": email,
+                    "help": "If you change your email address you will receive an activation link in the new mailbox and you have to activate your account by visiting it.",
                 }
             )
+        if is_galaxy_app:
+            if trans.app.config.enable_account_interface:
+                inputs.append(
+                    {
+                        "id": "name_input",
+                        "name": "username",
+                        "type": "text",
+                        "label": "Public name",
+                        "value": username,
+                        "help": 'Your public name is an identifier that will be used to generate addresses for information you share publicly. Public names must be at least three characters in length and contain only lower-case letters, numbers, dots, underscores, and dashes (".", "_", "-").',
+                    }
+                )
             info_form_models = self.get_all_forms(
                 trans, filter=dict(deleted=False), form_type=trans.app.model.FormDefinition.types.USER_INFO
             )
@@ -432,25 +595,27 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                     info_field["cases"].append({"value": info_form["id"], "inputs": info_form["inputs"]})
                 inputs.append(info_field)
 
-            address_inputs = [{"type": "hidden", "name": "id", "hidden": True}]
-            for field in AddressField.fields():
-                address_inputs.append({"type": "text", "name": field[0], "label": field[1], "help": field[2]})
-            address_repeat = {
-                "title": "Address",
-                "name": "address",
-                "type": "repeat",
-                "inputs": address_inputs,
-                "cache": [],
-            }
-            address_values = [address.to_dict(trans) for address in user.addresses]
-            for address in address_values:
-                address_cache = []
-                for input in address_inputs:
-                    input_copy = input.copy()
-                    input_copy["value"] = address.get(input["name"])
-                    address_cache.append(input_copy)
-                address_repeat["cache"].append(address_cache)
-            inputs.append(address_repeat)
+            if trans.app.config.enable_account_interface:
+                address_inputs = [{"type": "hidden", "name": "id", "hidden": True}]
+                for field in AddressField.fields():
+                    address_inputs.append({"type": "text", "name": field[0], "label": field[1], "help": field[2]})
+                address_repeat = {
+                    "title": "Address",
+                    "name": "address",
+                    "type": "repeat",
+                    "inputs": address_inputs,
+                    "cache": [],
+                }
+                address_values = [address.to_dict(trans) for address in user.addresses]
+                for address in address_values:
+                    address_cache = []
+                    for input in address_inputs:
+                        input_copy = input.copy()
+                        input_copy["value"] = address.get(input["name"])
+                        address_cache.append(input_copy)
+                    address_repeat["cache"].append(address_cache)
+                inputs.append(address_repeat)
+                user_info["addresses"] = [address.to_dict(trans) for address in user.addresses]
 
             # Build input sections for extra user preferences
             extra_user_pref = self._build_extra_user_pref_inputs(trans, self._get_extra_user_preferences(trans), user)
@@ -476,15 +641,11 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                         label="Public name:",
                         type="text",
                         value=username,
-                        help='Your public name provides a means of identifying you publicly within this tool shed. Public names must be at least three characters in length and contain only lower-case letters, numbers, and the "-" character. You cannot change your public name after you have created a repository in this tool shed.',
+                        help='Your public name provides a means of identifying you publicly within this tool shed. Public names must be at least three characters in length and contain only lower-case letters, numbers, dots, underscores, and dashes (".", "_", "-"). You cannot change your public name after you have created a repository in this tool shed.',
                     )
                 )
-        return {
-            "email": email,
-            "username": username,
-            "addresses": [address.to_dict(trans) for address in user.addresses],
-            "inputs": inputs,
-        }
+        user_info["inputs"] = inputs
+        return user_info
 
     @expose_api
     def set_information(self, trans, id, payload=None, **kwd):
@@ -514,7 +675,8 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                 user.email = email
                 trans.sa_session.add(user)
                 trans.sa_session.add(private_role)
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
                 if trans.app.config.user_activation_on:
                     # Deactivate the user if email was changed and activation is on.
                     user.active = False
@@ -606,7 +768,8 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             user.addresses.append(user_address)
             trans.sa_session.add(user_address)
         trans.sa_session.add(user)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         trans.log_event("User information added")
         return {"message": "User information has been saved."}
 
@@ -641,7 +804,8 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                 favorite_tools.append(tool_id)
                 favorites["tools"] = favorite_tools
                 user.preferences["favorites"] = json.dumps(favorites)
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
         return favorites
 
     @expose_api
@@ -667,7 +831,8 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                     del favorite_tools[favorite_tools.index(object_id)]
                     favorites["tools"] = favorite_tools
                     user.preferences["favorites"] = json.dumps(favorites)
-                    trans.sa_session.flush()
+                    with transaction(trans.sa_session):
+                        trans.sa_session.commit()
                 else:
                     raise exceptions.ObjectNotFound("Given object is not in the list of favorites")
         return favorites
@@ -679,6 +844,23 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             raise exceptions.ObjectAttributeInvalidException(
                 f"This type is not supported. Given object_type: {object_type}"
             )
+
+    @expose_api
+    def set_theme(self, trans, id: str, theme: str, payload=None, **kwd) -> str:
+        """Sets the user's theme choice.
+        PUT /api/users/{id}/theme/{theme}
+
+        :param id: the encoded id of the user
+        :type  id: str
+        :param theme: the theme identifier/name that the user has selected as preference
+        :type  theme: str
+        """
+        payload = payload or {}
+        user = self._get_user(trans, id)
+        user.preferences["theme"] = theme
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
+        return theme
 
     @expose_api
     def get_password(self, trans, id, payload=None, **kwd):
@@ -793,7 +975,8 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                         new_filters.append(prefixed_name[len(prefix) :])
             user.preferences[filter_type] = ",".join(new_filters)
         trans.sa_session.add(user)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         return {"message": "Toolbox filters have been saved."}
 
     def _add_filter_inputs(self, factory, filter_types, inputs, errors, filter_type, saved_values):
@@ -842,59 +1025,6 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             "toolbox_section_filters": {"title": "Sections", "config": trans.app.config.user_tool_section_filters},
             "toolbox_label_filters": {"title": "Labels", "config": trans.app.config.user_tool_label_filters},
         }
-
-    @expose_api
-    def api_key(self, trans, id, payload=None, **kwd):
-        """
-        Create API key.
-        """
-        payload = payload or {}
-        user = self._get_user(trans, id)
-        return self.api_key_manager.create_api_key(user)
-
-    @expose_api
-    def get_or_create_api_key(self, trans, id, payload=None, **kwd):
-        """
-        Unified 'get or create' for API key
-        """
-        payload = payload or {}
-        user = self._get_user(trans, id)
-        return self.api_key_manager.get_or_create_api_key(user)
-
-    @expose_api
-    def get_api_key(self, trans, id, payload=None, **kwd):
-        """
-        Get API key inputs.
-        """
-        payload = payload or {}
-        user = self._get_user(trans, id)
-        return self._build_inputs_api_key(user)
-
-    @expose_api
-    def set_api_key(self, trans, id, payload=None, **kwd):
-        """
-        Get API key inputs with new API key.
-        """
-        payload = payload or {}
-        user = self._get_user(trans, id)
-        self.api_key_manager.create_api_key(user)
-        return self._build_inputs_api_key(user, message="Generated a new web API key.")
-
-    def _build_inputs_api_key(self, user, message=""):
-        """
-        Build API key inputs.
-        """
-        inputs = [
-            {
-                "name": "api-key",
-                "type": "text",
-                "label": "Current API key:",
-                "value": user.api_keys[0].key if user.api_keys else "Not available.",
-                "readonly": True,
-                "help": " An API key will allow you to access via web API. Please note that this key acts as an alternate means to access your account and should be treated with the same care as your login password.",
-            }
-        ]
-        return {"message": message, "inputs": inputs}
 
     @expose_api
     def get_custom_builds(self, trans, id, payload=None, **kwd):
@@ -980,7 +1110,8 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                     trans.app.object_store.create(new_len.dataset)
                 except ObjectInvalid:
                     raise exceptions.InternalServerError("Unable to create output dataset: object store is full.")
-                trans.sa_session.flush()
+                with transaction(trans.sa_session):
+                    trans.sa_session.commit()
                 counter = 0
                 lines_skipped = 0
                 with open(new_len.file_name, "w") as f:
@@ -1018,7 +1149,8 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                     raise exceptions.ToolExecutionError("Failed to convert dataset.")
             dbkeys[key] = build_dict
             user.preferences["dbkeys"] = json.dumps(dbkeys)
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
             return build_dict
 
     @expose_api
@@ -1039,7 +1171,8 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
         if key and key in dbkeys:
             del dbkeys[key]
             user.preferences["dbkeys"] = json.dumps(dbkeys)
-            trans.sa_session.flush()
+            with transaction(trans.sa_session):
+                trans.sa_session.commit()
             return {"message": f"Deleted {key}."}
         else:
             raise exceptions.ObjectNotFound(f"Could not find and delete build ({key}).")
@@ -1047,7 +1180,36 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
     def _get_user(self, trans, id):
         user = self.get_user(trans, id)
         if not user:
-            raise exceptions.RequestParameterInvalidException(f"Invalid user ({id}).")
+            raise exceptions.RequestParameterInvalidException("Invalid user id specified.")
         if user != trans.user and not trans.user_is_admin:
             raise exceptions.InsufficientPermissionsException("Access denied.")
         return user
+
+
+def get_user_full(trans: ProvidesUserContext, user_id: Union[FlexibleUserIdType, str], deleted: bool) -> Optional[User]:
+    try:
+        # user is requesting data about themselves
+        if user_id == "current":
+            # ...and is anonymous - return usage and quota (if any)
+            if not trans.user:
+                return None
+
+            # ...and is logged in - return full
+            else:
+                user = trans.user
+        else:
+            user = managers_base.get_object(
+                trans,
+                user_id,
+                "User",
+                deleted=deleted,
+            )
+        # check that the user is requesting themselves (and they aren't del'd) unless admin
+        if not trans.user_is_admin:
+            if trans.user != user or user.deleted:
+                raise exceptions.RequestParameterInvalidException("Invalid user id specified")
+        return user
+    except exceptions.MessageException:
+        raise
+    except Exception:
+        raise exceptions.RequestParameterInvalidException("Invalid user id specified")

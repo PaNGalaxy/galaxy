@@ -1,0 +1,9 @@
+.k8s_ci.Dockerfile
+.venv
+**/database
+**/node_modules
+.git
+lib/galaxy/jobs/rules/destinations.py
+config/*.yml
+config/*.xml
+dockerfiles/Dockerfile*

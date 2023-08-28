@@ -44,6 +44,11 @@ var View = Backbone.View.extend({
         this.render();
     },
 
+    remove: function () {
+        this.$select.select2("destroy");
+        Backbone.View.prototype.remove.call(this);
+    },
+
     render: function () {
         if (this.model.get("searchable")) {
             this._renderSearchable();
@@ -209,7 +214,7 @@ var View = Backbone.View.extend({
                             const isNametag = tag.indexOf("name:") === 0;
                             const tagDisplayText = isNametag ? `#${tag.slice(5)}` : tag;
                             const styleBlock = isNametag
-                                ? `style="background-color: ${tagColors.primary}; color: ${tagColors.contrasting}; border: 1px solid ${tagColors.darker}"`
+                                ? `style="background-color: ${tagColors.primary}; color: black; border: 1px solid ${tagColors.darker}"`
                                 : "";
                             return `${memo}&nbsp;<div ${styleBlock} class="badge badge-primary badge-tags">${_.escape(
                                 tagDisplayText

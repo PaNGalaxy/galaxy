@@ -30,18 +30,21 @@ from galaxy.structured_app import BasicSharedApp
 from galaxy.util.dbkeys import GenomeBuilds
 from galaxy.web_stack import application_stack_instance
 from tool_shed.grids.repository_grid_filter_manager import RepositoryGridFilterManager
+from tool_shed.structured_app import ToolShedApp
 from tool_shed.util.hgweb_config import hgweb_config_manager
+from tool_shed.webapp.model.migrations import verify_database
 from . import config
 
 log = logging.getLogger(__name__)
 
 
-class UniverseApplication(BasicSharedApp, SentryClientMixin, HaltableContainer):
+class UniverseApplication(ToolShedApp, SentryClientMixin, HaltableContainer):
     """Encapsulates the state of a Universe application"""
 
     def __init__(self, **kwd) -> None:
         super().__init__()
         self[BasicSharedApp] = self
+        self[ToolShedApp] = self
         log.debug("python path is: %s", ", ".join(sys.path))
         self.name = "tool_shed"
         # will be overwritten when building WSGI app
@@ -63,16 +66,14 @@ class UniverseApplication(BasicSharedApp, SentryClientMixin, HaltableContainer):
             db_url = self.config.database_connection
         else:
             db_url = f"sqlite:///{self.config.database}?isolation_level=IMMEDIATE"
-        # Initialize the Tool Shed database and check for appropriate schema version.
-        from tool_shed.webapp.model.migrate.check import create_or_verify_database
 
-        create_or_verify_database(db_url, self.config.database_engine_options)
+        # Initialize the Tool Shed database and check for appropriate schema version.
+        verify_database(db_url, self.config.database_engine_options)
+
         # Set up the Tool Shed database engine and ORM.
         from tool_shed.webapp.model import mapping
 
-        model: mapping.ToolShedModelMapping = mapping.init(
-            self.config.file_path, db_url, self.config.database_engine_options
-        )
+        model: mapping.ToolShedModelMapping = mapping.init(db_url, self.config.database_engine_options)
         self.model = model
         self.security = idencoding.IdEncodingHelper(id_secret=self.config.id_secret)
         self._register_singleton(idencoding.IdEncodingHelper, self.security)

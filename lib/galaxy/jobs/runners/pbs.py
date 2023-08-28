@@ -104,7 +104,7 @@ class PBSJobRunner(AsynchronousJobRunner):
 
         # Set the default server during startup
         self.__default_pbs_server = None
-        self.default_pbs_server  # this is a method with a property decorator, so this causes the default server to be set
+        self.default_pbs_server  # noqa: B018 this is a method with a property decorator, so this causes the default server to be set
 
         # Proceed with general initialization
         super().__init__(app, nworkers)
@@ -238,9 +238,9 @@ class PBSJobRunner(AsynchronousJobRunner):
             return
 
         # define job attributes
-        ofile = f"{self.app.config.cluster_files_directory}/{job_wrapper.job_id}.o"
-        efile = f"{self.app.config.cluster_files_directory}/{job_wrapper.job_id}.e"
-        ecfile = f"{self.app.config.cluster_files_directory}/{job_wrapper.job_id}.ec"
+        ofile = f"{job_wrapper.working_directory}/{job_wrapper.job_id}.o"
+        efile = f"{job_wrapper.working_directory}/{job_wrapper.job_id}.e"
+        ecfile = f"{job_wrapper.working_directory}/{job_wrapper.job_id}.ec"
 
         output_fnames = job_wrapper.job_io.get_output_fnames()
 
@@ -293,7 +293,7 @@ class PBSJobRunner(AsynchronousJobRunner):
         script = self.get_job_file(
             job_wrapper, exit_code_path=ecfile, env_setup_commands=env_setup_commands, shell=job_wrapper.shell
         )
-        job_file = f"{self.app.config.cluster_files_directory}/{job_wrapper.job_id}.sh"
+        job_file = f"{job_wrapper.working_directory}/{job_wrapper.job_id}.sh"
         self.write_executable_script(job_file, script, job_io=job_wrapper.job_io)
         # job was deleted while we were preparing it
         if job_wrapper.get_state() in (model.Job.states.DELETED, model.Job.states.STOPPED):
@@ -537,10 +537,10 @@ class PBSJobRunner(AsynchronousJobRunner):
         pbs_job_state = AsynchronousJobState(
             job_wrapper=job_wrapper,
             job_id=job_id,
-            job_file=f"{self.app.config.cluster_files_directory}/{job.id}.sh",
-            output_file=f"{self.app.config.cluster_files_directory}/{job.id}.o",
-            error_file=f"{self.app.config.cluster_files_directory}/{job.id}.e",
-            exit_code_file=f"{self.app.config.cluster_files_directory}/{job.id}.ec",
+            job_file=f"{job_wrapper.working_directory}/{job.id}.sh",
+            output_file=f"{job_wrapper.working_directory}/{job.id}.o",
+            error_file=f"{job_wrapper.working_directory}/{job.id}.e",
+            exit_code_file=f"{job_wrapper.working_directory}/{job.id}.ec",
             job_destination=job_wrapper.job_destination,
         )
         pbs_job_state.runner_url = job_wrapper.get_job_runner_url()

@@ -3,6 +3,7 @@ import logging
 import os
 
 from galaxy.exceptions import RequestParameterMissingException
+from galaxy.model.base import transaction
 from galaxy.model.dataset_collections.structure import UninitializedTree
 from galaxy.tools.actions import upload_common
 from galaxy.util import ExecutionTimer
@@ -39,6 +40,24 @@ class BaseUploadToolAction(ToolAction):
         rval = upload_common.create_job(*args, **kwds)
         log.debug(f"Created upload job {create_job_timer}")
         return rval
+
+
+class RegisterToolAction(BaseUploadToolAction):
+    produces_real_jobs = True
+
+    def execute(self, tool, trans, incoming=None, history=None, **kwargs):
+        outputs = []
+        for item in incoming.get("series", []):
+            name = item.get("input", None)
+            file_type = "_sniff_"
+            dbkey = "?"
+            uploaded_dataset = Bunch(type="file", name=name, file_type=file_type, dbkey=dbkey)
+            tag_list = []
+            data = upload_common.new_upload(
+                trans, "", uploaded_dataset, library_bunch=None, history=history, tag_list=tag_list
+            )
+            outputs.append(data)
+        return self._create_job(trans, incoming, tool, None, outputs, history=history)
 
 
 class UploadToolAction(BaseUploadToolAction):
@@ -150,5 +169,6 @@ def _precreate_fetched_collection_instance(trans, history, target, outputs):
     )
     outputs.append(hdca)
     # Following flushed needed for an ID.
-    trans.sa_session.flush()
+    with transaction(trans.sa_session):
+        trans.sa_session.commit()
     target["destination"]["object_id"] = hdca.id

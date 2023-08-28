@@ -1,10 +1,12 @@
 import json
 import logging
+import traceback
 import typing
 from datetime import (
     date,
     datetime,
 )
+from pathlib import Path
 
 from boltons.iterutils import remap
 from pydantic import (
@@ -35,6 +37,7 @@ from galaxy.managers.collections import DatasetCollectionManager
 from galaxy.managers.datasets import DatasetManager
 from galaxy.managers.hdas import HDAManager
 from galaxy.managers.lddas import LDDAManager
+from galaxy.model.base import transaction
 from galaxy.model.index_filter_util import (
     raw_text_column_filter,
     text_column_filter,
@@ -219,7 +222,7 @@ class JobManager:
         )
         return self.job_lock()
 
-    def get_accessible_job(self, trans, decoded_job_id):
+    def get_accessible_job(self, trans, decoded_job_id, stdout_position=-1, stdout_length=0):
         job = trans.sa_session.query(trans.app.model.Job).filter(trans.app.model.Job.id == decoded_job_id).first()
         if job is None:
             raise ObjectNotFound()
@@ -236,12 +239,28 @@ class JobManager:
                 if not self.dataset_manager.is_accessible(data_assoc.dataset.dataset, trans.user):
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
+
+        # If stdout_length and stdout_position are good values, then load standard out and add it to status
+        if job.state == job.states.RUNNING and stdout_length > 0 and stdout_position > -1:
+            try:
+                working_directory = trans.app.object_store.get_filename(
+                    job, base_dir="job_work", dir_only=True, obj_dir=True
+                )
+                stdout_path = Path(working_directory) / "outputs" / "tool_stdout"
+                stdout_file = open(stdout_path, "r")
+                stdout_file.seek(stdout_position)
+                job.job_stdout = stdout_file.read(stdout_length)
+                job.tool_stdout = job.job_stdout
+            except Exception as e:
+                log.error("Could not read STDOUT: %s", e)
         return job
 
     def stop(self, job, message=None):
         if not job.finished:
             job.mark_deleted(self.app.config.track_jobs_in_database)
-            self.app.model.session.flush()
+            session = self.app.model.session
+            with transaction(session):
+                session.commit()
             self.app.job_manager.stop(job, message=message)
             return True
         else:
@@ -441,6 +460,7 @@ class JobSearch:
                     )
                     data_conditions.append(
                         and_(
+                            a.job_id == model.Job.id,
                             a.name.in_(k),
                             a.dataset_id == b.id,  # b is the HDA used for the job
                             c.dataset_id == b.dataset_id,
@@ -902,7 +922,7 @@ def summarize_job_parameters(trans, job):
                             value=f"{len(param_values[input.name])} uploaded datasets",
                         )
                     )
-                elif input.type == "data":
+                elif input.type == "data" or input.type == "data_collection":
                     value = []
                     for element in listify(param_values[input.name]):
                         encoded_id = trans.security.encode_id(element.id)
