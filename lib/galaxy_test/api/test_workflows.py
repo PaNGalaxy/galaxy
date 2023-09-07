@@ -2042,6 +2042,66 @@ should_run:
             assert message["details"] == "Type is: str"
             assert message["workflow_step_id"] == 2
 
+    def test_run_workflow_subworkflow_conditional_with_simple_mapping_step(self):
+        with self.dataset_populator.test_history() as history_id:
+            summary = self._run_workflow(
+                """class: GalaxyWorkflow
+inputs:
+  should_run:
+    type: boolean
+  some_collection:
+    type: data_collection
+steps:
+  subworkflow:
+    run:
+      class: GalaxyWorkflow
+      inputs:
+        some_collection:
+          type: data_collection
+        should_run:
+          type: boolean
+      steps:
+        a_tool_step:
+          tool_id: cat1
+          in:
+            input1: some_collection
+    in:
+      some_collection: some_collection
+      should_run: should_run
+    outputs:
+      inner_out: a_tool_step/out_file1
+    when: $(inputs.should_run)
+outputs:
+  outer_output:
+    outputSource: subworkflow/inner_out
+""",
+                test_data="""
+some_collection:
+  collection_type: list
+  elements:
+    - identifier: true
+      content: A
+    - identifier: false
+      content: B
+  type: File
+should_run:
+  value: false
+  type: raw
+""",
+                history_id=history_id,
+                wait=True,
+                assert_ok=True,
+            )
+            invocation_details = self.workflow_populator.get_invocation(summary.invocation_id, step_details=True)
+            subworkflow_invocation_id = invocation_details["steps"][-1]["subworkflow_invocation_id"]
+            self.workflow_populator.wait_for_invocation_and_jobs(
+                history_id=history_id, workflow_id="whatever", invocation_id=subworkflow_invocation_id
+            )
+            invocation_details = self.workflow_populator.get_invocation(subworkflow_invocation_id, step_details=True)
+            for step in invocation_details["steps"]:
+                if step["workflow_step_label"] == "a_tool_step":
+                    assert sum(1 for j in step["jobs"] if j["state"] == "skipped") == 2
+
     def test_run_workflow_subworkflow_conditional_step(self):
         with self.dataset_populator.test_history() as history_id:
             summary = self._run_workflow(
@@ -2095,6 +2155,84 @@ should_run:
             invocation_details = self.workflow_populator.get_invocation(subworkflow_invocation_id, step_details=True)
             for step in invocation_details["steps"]:
                 if step["workflow_step_label"] == "a_tool_step":
+                    assert sum(1 for j in step["jobs"] if j["state"] == "skipped") == 1
+
+    def test_run_nested_conditional_workflow_steps(self):
+        with self.dataset_populator.test_history() as history_id:
+            summary = self._run_workflow(
+                """
+class: GalaxyWorkflow
+inputs:
+  dataset:
+    type: data
+  when:
+    type: boolean
+outputs:
+  output:
+    outputSource: outer_subworkflow/output
+steps:
+- label: outer_subworkflow
+  when: $(inputs.when)
+  in:
+    dataset:
+      source: dataset
+    when:
+      source: when
+  run:
+    class: GalaxyWorkflow
+    label: subworkflow cat1
+    inputs:
+      dataset:
+        type: data
+    outputs:
+      output:
+        outputSource: cat1_workflow/output
+    steps:
+    - label: cat1_workflow
+      in:
+        dataset:
+          source: dataset
+      run:
+        class: GalaxyWorkflow
+        label: cat1
+        inputs:
+          dataset:
+            type: data
+        outputs:
+          output:
+            outputSource: cat1/out_file1
+        steps:
+        - tool_id: cat1
+          label: cat1
+          in:
+            input1:
+              source: dataset
+""",
+                test_data="""
+dataset:
+  value: 1.bed
+  type: File
+when:
+  value: false
+  type: raw
+""",
+                history_id=history_id,
+                wait=True,
+                assert_ok=True,
+            )
+            invocation_details = self.workflow_populator.get_invocation(summary.invocation_id, step_details=True)
+            subworkflow_invocation_id = invocation_details["steps"][-1]["subworkflow_invocation_id"]
+            self.workflow_populator.wait_for_invocation_and_jobs(
+                history_id=history_id, workflow_id="whatever", invocation_id=subworkflow_invocation_id
+            )
+            invocation_details = self.workflow_populator.get_invocation(subworkflow_invocation_id, step_details=True)
+            subworkflow_invocation_id = invocation_details["steps"][-1]["subworkflow_invocation_id"]
+            self.workflow_populator.wait_for_invocation_and_jobs(
+                history_id=history_id, workflow_id="whatever", invocation_id=subworkflow_invocation_id
+            )
+            invocation_details = self.workflow_populator.get_invocation(subworkflow_invocation_id, step_details=True)
+            for step in invocation_details["steps"]:
+                if step["workflow_step_label"] == "cat1":
                     assert sum(1 for j in step["jobs"] if j["state"] == "skipped") == 1
 
     def test_run_workflow_conditional_step_map_over_expression_tool(self):
@@ -2467,6 +2605,45 @@ steps:
         rename: "${replaceme} name 2"
 test_data:
   replaceme:
+    value: moocow
+    type: raw
+"""
+            self._run_jobs(run_def, history_id=history_id)
+            details = self.dataset_populator.get_history_dataset_details(history_id)
+            assert details["name"] == "moocow name 2", details["name"]
+
+    def test_placements_from_text_inputs_nested(self):
+        with self.dataset_populator.test_history() as history_id:
+            run_def = """
+class: GalaxyWorkflow
+inputs:
+  replacemeouter: text
+steps:
+  nested_workflow:
+    run:
+      class: GalaxyWorkflow
+      inputs:
+        replacemeinner: text
+      outputs:
+        workflow_output_1:
+          outputSource: create_2/out_file1
+        workflow_output_2:
+          outputSource: create_2/out_file2
+      steps:
+        create_2:
+          tool_id: create_2
+          state:
+            sleep_time: 0
+          outputs:
+            out_file1:
+              rename: "${replacemeinner} name"
+            out_file2:
+              rename: "${replacemeinner} name 2"
+    in:
+      replacemeinner: replacemeouter
+
+test_data:
+  replacemeouter:
     value: moocow
     type: raw
 """
@@ -4547,6 +4724,48 @@ steps:
             assert (
                 first_wf_output["file_name"] == second_wf_output["file_name"]
             ), f"first output:\n{first_wf_output}\nsecond output:\n{second_wf_output}"
+
+    @skip_without_tool("cat1")
+    @skip_without_tool("identifier_multiple")
+    def test_workflow_rerun_with_cached_job_consumes_implicit_hdca(self, history_id: str):
+        workflow = """
+class: GalaxyWorkflow
+inputs:
+  collection_input:
+    type: data_collection_input
+steps:
+  map_over:
+    tool_id: cat1
+    in:
+      input1: collection_input
+  consume_hdca:
+    tool_id: identifier_multiple
+    in:
+      input1: map_over/out_file1
+"""
+        workflow_id = self.workflow_populator.upload_yaml_workflow(name="Consume HDCA", yaml_content=workflow)
+        hdca1 = self.dataset_collection_populator.create_list_in_history(
+            history_id, contents=[("sample1-1", "1 2 3"), ("sample2-1", "7 8 9")]
+        ).json()
+        hdca1 = self.dataset_collection_populator.wait_for_fetched_collection(hdca1)
+        workflow_request = {
+            "inputs": json.dumps({"collection_input": self._ds_entry(hdca1)}),
+            "history": f"hist_id={history_id}",
+            "use_cached_job": True,
+            "inputs_by": "name",
+        }
+        first_invocation_summary = self.workflow_populator.invoke_workflow_and_wait(
+            workflow_id, request=workflow_request
+        ).json()
+        first_invocation = self.workflow_populator.get_invocation(first_invocation_summary["id"], step_details=True)
+        final_job_id_first_invocation = first_invocation["steps"][2]["jobs"][0]["id"]
+        second_invocation_summary = self.workflow_populator.invoke_workflow_and_wait(
+            workflow_id, request=workflow_request
+        ).json()
+        second_invocation = self.workflow_populator.get_invocation(second_invocation_summary["id"], step_details=True)
+        final_job_id_second_invocation = second_invocation["steps"][2]["jobs"][0]["id"]
+        final_job = self.dataset_populator.get_job_details(final_job_id_second_invocation, full=True).json()
+        assert final_job["copied_from_job_id"] == final_job_id_first_invocation
 
     @skip_without_tool("cat1")
     def test_nested_workflow_rerun_with_use_cached_job(self):
