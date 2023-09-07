@@ -84,6 +84,7 @@ from galaxy.objectstore import (
 )
 from galaxy.queue_worker import (
     GalaxyQueueWorker,
+    reload_toolbox,
     send_local_control_task,
 )
 from galaxy.quota import (
@@ -581,8 +582,6 @@ class GalaxyManagerApplication(MinimalManagerApp, MinimalGalaxyApplication):
 
         self._configure_tool_shed_registry()
         self._register_singleton(tool_shed_registry.Registry, self.tool_shed_registry)
-        # Tool Data Tables
-        self._configure_tool_data_tables(from_shed_config=False)
 
     def _configure_tool_shed_registry(self) -> None:
         # Set up the tool sheds registry
@@ -619,6 +618,8 @@ class UniverseApplication(StructuredApp, GalaxyManagerApplication):
             ("application stack", self._shutdown_application_stack),
         ]
         self._register_singleton(StructuredApp, self)  # type: ignore[type-abstract]
+        if kwargs.get("is_webapp"):
+            self.is_webapp = kwargs["is_webapp"]
         # A lot of postfork initialization depends on the server name, ensure it is set immediately after forking before other postfork functions
         self.application_stack.register_postfork_function(self.application_stack.set_postfork_server_name, self)
         self.config.reload_sanitize_allowlist(explicit="sanitize_allowlist_file" in kwargs)
@@ -635,6 +636,8 @@ class UniverseApplication(StructuredApp, GalaxyManagerApplication):
         )
         self.api_keys_manager = self._register_singleton(ApiKeyManager)
 
+        # Tool Data Tables
+        self._configure_tool_data_tables(from_shed_config=False)
         # Load dbkey / genome build manager
         self._configure_genome_builds(data_table_name="__dbkeys__", load_old_style=True)
 
@@ -744,6 +747,10 @@ class UniverseApplication(StructuredApp, GalaxyManagerApplication):
         # Start web stack message handling
         self.application_stack.register_postfork_function(self.application_stack.start)
         self.application_stack.register_postfork_function(self.queue_worker.bind_and_start)
+        # Reload toolbox to pick up changes to toolbox made after master was ready
+        self.application_stack.register_postfork_function(
+            lambda: reload_toolbox(self, save_integrated_tool_panel=False), post_fork_only=True
+        )
         # Delay toolbox index until after startup
         self.application_stack.register_postfork_function(
             lambda: send_local_control_task(self, "rebuild_toolbox_search_index")

@@ -9,7 +9,7 @@
                 <IndexFilter v-bind="filterAttrs" id="page-search" v-model="filter" />
             </b-col>
             <b-col>
-                <PageIndexActions :root="root" class="float-right" />
+                <PageIndexActions class="float-right" />
             </b-col>
         </b-row>
         <b-table v-model="pageItemsModel" v-bind="{ ...defaultTableAttrs, ...indexTableAttrs }">
@@ -26,7 +26,6 @@
             <template v-slot:cell(title)="row">
                 <PageDropdown
                     :page="row.item"
-                    :root="root"
                     :published="published"
                     @onAdd="onAdd"
                     @onRemove="onRemove"
@@ -61,8 +60,9 @@
                 </span>
                 <a
                     v-if="!row.item.published && !row.item.shared && !row.item.importable"
-                    :href="shareLink(row.item)"
-                    class="share-this-page">
+                    :href="`sharing?id=${row.item.id}`"
+                    class="share-this-page"
+                    @click.prevent="shareLink(row.item)">
                     <span>Share this</span>
                 </a>
             </template>
@@ -90,7 +90,8 @@ import filtersMixin from "components/Indices/filtersMixin";
 import PageIndexActions from "./PageIndexActions";
 import CopyToClipboard from "components/CopyToClipboard";
 import IndexFilter from "components/Indices/IndexFilter";
-import { withPrefix, absPath } from "@/utils/redirect";
+import { absPath } from "@/utils/redirect";
+import { useRouter } from "vue-router/composables";
 import { getGalaxyInstance } from "app";
 
 import SharingIndicators from "components/Indices/SharingIndicators";
@@ -152,6 +153,12 @@ export default {
             default: true,
         },
     },
+    setup() {
+        const router = useRouter();
+        return {
+            router,
+        };
+    },
     data() {
         const fields = this.published ? PUBLISHED_FIELDS : PERSONAL_FIELDS;
         const implicitFilter = this.published ? "is:published" : null;
@@ -169,7 +176,11 @@ export default {
     },
     computed: {
         dataProviderParameters() {
-            const extraParams = { search: this.effectiveFilter };
+            const extraParams = {
+                search: this.effectiveFilter,
+                show_published: false,
+                show_shared: true,
+            };
             if (this.published) {
                 extraParams.show_published = true;
                 extraParams.show_shared = false;
@@ -216,7 +227,7 @@ export default {
             this.refresh();
         },
         shareLink: function (item) {
-            return withPrefix(`sharing?id=${item.id}`);
+            this.router.push(`sharing?id=${item.id}`);
         },
         decorateData(page) {
             const Galaxy = getGalaxyInstance();

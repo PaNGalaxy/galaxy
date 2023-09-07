@@ -104,6 +104,7 @@ class MockApp(di.Container, GalaxyDataTestApp):
     history_manager: HistoryManager
     job_metrics: JobMetrics
     stop: bool
+    is_webapp: bool = True
 
     def __init__(self, config=None, **kwargs) -> None:
         super().__init__()
@@ -228,7 +229,6 @@ class MockAppConfig(GalaxyDataTestConfig, CommonConfigurationMixin):
         # set by MockDir
         self.enable_tool_document_cache = False
         self.tool_cache_data_dir = os.path.join(self.root, "tool_cache")
-        self.delay_tool_initialization = True
         self.external_chown_script = None
         self.check_job_script_integrity = False
         self.check_job_script_integrity_count = 0
@@ -293,8 +293,12 @@ class MockTrans:
         self.security = self.app.security
         self.history = history
 
-        self.request: Any = Bunch(headers={}, body=None)
+        self.request: Any = Bunch(headers={}, is_body_readable=False, host="request.host")
         self.response: Any = Bunch(headers={}, set_content_type=lambda i: None)
+
+    @property
+    def tag_handler(self):
+        return self.app.tag_handler
 
     def check_csrf_token(self, payload):
         pass

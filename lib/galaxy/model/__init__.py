@@ -119,6 +119,7 @@ import galaxy.security.passwords
 import galaxy.util
 from galaxy.model.base import transaction
 from galaxy.model.custom_types import (
+    DoubleEncodedJsonType,
     JSONType,
     MetadataType,
     MutableJSONType,
@@ -702,7 +703,7 @@ class User(Base, Dictifiable, RepresentById):
     )
     active_histories = relationship(
         "History",
-        primaryjoin=(lambda: (History.user_id == User.id) & (not_(History.deleted))),  # type: ignore[has-type]
+        primaryjoin=(lambda: (History.user_id == User.id) & (not_(History.deleted)) & (not_(History.archived))),  # type: ignore[has-type]
         viewonly=True,
         order_by=lambda: desc(History.update_time),  # type: ignore[has-type]
     )
@@ -1395,6 +1396,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
         "create_time",
         "galaxy_version",
         "command_version",
+        "copied_from_job_id",
     ]
 
     _numeric_metric = JobMetricNumeric
@@ -2821,7 +2823,9 @@ class Notification(Base, Dictifiable, RepresentById):
     variant = Column(
         String(16), index=True
     )  # Defines the 'importance' of the notification ('info', 'warning', 'urgent', etc.). Used for filtering, highlight rendering, etc
-    content = Column(JSONType)  # Structured content in JSON. Depending on the category of the notification
+    # A bug in early 23.1 led to values being stored as json string, so we use this special type to process the result value twice.
+    # content should always be a dict
+    content = Column(DoubleEncodedJsonType)
 
     user_notification_associations = relationship("UserNotificationAssociation", back_populates="notification")
 
@@ -4016,7 +4020,9 @@ class Dataset(Base, StorableObject, Serializable):
         if not getattr(self, "external_extra_files_path", None):
             if self.object_store.exists(self, dir_only=True, extra_dir=self._extra_files_rel_path):
                 return self.object_store.get_filename(self, dir_only=True, extra_dir=self._extra_files_rel_path)
-            return ""
+            return self.object_store.construct_path(
+                self, dir_only=True, extra_dir=self._extra_files_rel_path, in_cache=True
+            )
         else:
             return os.path.abspath(self.external_extra_files_path)
 
@@ -9862,13 +9868,11 @@ class Tag(Base, RepresentById):
 class ItemTagAssociation(Dictifiable):
     dict_collection_visible_keys = ["id", "user_tname", "user_value"]
     dict_element_visible_keys = dict_collection_visible_keys
-    associated_item_names: List[str] = []
     user_tname: Column
     user_value = Column(TrimmedString(255), index=True)
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        cls.associated_item_names.append(cls.__name__.replace("TagAssociation", ""))
 
     def copy(self, cls=None):
         if cls:
@@ -10703,7 +10707,7 @@ Job.any_output_dataset_collection_instances_deleted = column_property(
 )
 
 Job.any_output_dataset_deleted = column_property(
-    exists(HistoryDatasetAssociation).where(
+    exists(HistoryDatasetAssociation.id).where(
         and_(
             Job.id == JobToOutputDatasetAssociation.job_id,
             HistoryDatasetAssociation.table.c.id == JobToOutputDatasetAssociation.dataset_id,
@@ -10765,6 +10769,20 @@ WorkflowInvocationStep.subworkflow_invocation_id = column_property(
 # Set up proxy so that this syntax is possible:
 # <user_obj>.preferences[pref_name] = pref_value
 User.preferences = association_proxy("_preferences", "value", creator=UserPreference)
+
+# Optimized version of getting the current Galaxy session.
+# See https://github.com/sqlalchemy/sqlalchemy/discussions/7638 for approach
+session_partition = select(
+    GalaxySession,
+    func.row_number().over(order_by=GalaxySession.update_time, partition_by=GalaxySession.user_id).label("index"),
+).alias()
+partitioned_session = aliased(GalaxySession, session_partition)
+User.current_galaxy_session = relationship(
+    partitioned_session,
+    primaryjoin=and_(partitioned_session.user_id == User.id, session_partition.c.index < 2),
+    uselist=False,
+    viewonly=True,
+)
 
 
 @event.listens_for(HistoryDatasetCollectionAssociation, "init")
