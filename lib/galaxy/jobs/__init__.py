@@ -1025,6 +1025,7 @@ class MinimalJobWrapper(HasResourceParameters):
                 self.job_id,
                 metadata_strategy_override=self.metadata_strategy,
                 tool_id=self.tool.id,
+                tool_type=self.tool.tool_type,
             )
         return self.__external_output_metadata
 
@@ -1058,7 +1059,7 @@ class MinimalJobWrapper(HasResourceParameters):
     def job_io(self):
         if self._job_io is None:
             job = self.get_job()
-            work_request = WorkRequestContext(self.app, user=job.user)
+            work_request = WorkRequestContext(self.app, user=job.user, galaxy_session=job.galaxy_session)
             user_context = ProvidesUserFileSourcesUserContext(work_request)
             tool_source = self.tool and self.tool.tool_source.to_string()
             self._job_io = JobIO(
@@ -1857,8 +1858,7 @@ class MinimalJobWrapper(HasResourceParameters):
             # the tasks failed. So include the stderr, stdout, and exit code:
             return fail()
 
-
-        extended_metadata = self.external_output_metadata.extended # why was that here? and not self.tool.tool_type == "interactive"
+        extended_metadata = self.external_output_metadata.extended
 
         # We collect the stderr from tools that write their stderr to galaxy.json
         tool_provided_metadata = self.get_tool_provided_job_metadata()
@@ -1914,7 +1914,7 @@ class MinimalJobWrapper(HasResourceParameters):
                     app=self.app,
                     import_options=import_options,
                     user=job.user,
-                    tag_handler=self.app.tag_handler.create_tag_handler_session(),
+                    tag_handler=self.app.tag_handler.create_tag_handler_session(job.galaxy_session),
                 )
                 import_model_store.perform_import(history=job.history, job=job)
                 if job.state == job.states.ERROR:
