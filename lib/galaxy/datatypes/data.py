@@ -452,15 +452,13 @@ class Data(metaclass=DataMeta):
         if dataset.datatype.composite_type or dataset.extension.endswith("html"):
             main_file = f"{name}.html"
             rel_paths.append(main_file)
-            if dataset.dataset.object_store:
-                dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
+            dataset.sync_cache(trans=trans)
             file_paths.append(dataset.file_name)
             for fpath, rpath in self.__archive_extra_files_path(dataset.extra_files_path):
                 rel_paths.append(os.path.join(name, rpath))
                 file_paths.append(fpath)
         else:
-            if dataset.dataset.object_store:
-                dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
+            dataset.sync_cache(trans=trans)
             rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}")
             file_paths.append(dataset.file_name)
         return zip(file_paths, rel_paths)
@@ -542,10 +540,7 @@ class Data(metaclass=DataMeta):
         if filename and filename != "index":
             # For files in extra_files_path
             extra_dir = dataset.dataset.extra_files_path_name
-            if dataset.dataset.object_store:
-                dataset.dataset.object_store.update_cache(
-                    dataset.dataset, extra_dir=extra_dir, alt_name=filename, trans=trans
-                )
+            dataset.sync_cache(extra_dir=extra_dir, alt_name=filename, trans=trans)
             file_path = trans.app.object_store.get_filename(dataset.dataset, extra_dir=extra_dir, alt_name=filename)
             if os.path.exists(file_path):
                 if os.path.isdir(file_path):
@@ -587,8 +582,7 @@ class Data(metaclass=DataMeta):
                 raise ObjectNotFound(f"Could not find '{filename}' on the extra files path {file_path}.")
         self._clean_and_set_mime_type(trans, dataset.get_mime(), headers)
 
-        if dataset.dataset.object_store:
-            dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
+        dataset.sync_cache(trans=trans)
 
 
         downloading = to_ext is not None

@@ -701,7 +701,7 @@ class RucioObjectStore(ConcreteObjectStore):
             log.debug("Failed to get auth token: %s", e)
             return None
 
-    def _update_cache(self, obj, **kwargs):
+    def _sync_cache(self, obj, **kwargs):
         base_dir = kwargs.get("base_dir", None)
         dir_only = kwargs.get("dir_only", False)
         auth_token = self._get_token(**kwargs)

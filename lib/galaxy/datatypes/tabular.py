@@ -175,8 +175,7 @@ class TabularData(Text):
         ck_size: Optional[int] = None,
         **kwd,
     ):
-        if dataset.dataset.object_store:
-            dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
+        dataset.sync_cache(trans=trans)
         headers = kwd.pop("headers", {})
         preview = util.string_as_bool(preview)
         if offset is not None:
