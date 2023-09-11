@@ -4211,10 +4211,10 @@ class Dataset(Base, StorableObject, Serializable):
         serialization_options.attach_identifier(id_encoder, self, rval)
         return rval
 
-    def sync_cache(self, trans):
+    def sync_cache(self, **kwargs):
         object_store = self._assert_object_store_set()
         if object_store.exists(self):
-            object_store.sync_cache(self, trans=trans)
+            object_store.sync_cache(self, **kwargs)
 
 
 class DatasetSource(Base, Dictifiable, Serializable):
