@@ -723,7 +723,6 @@ class IRODSObjectStore(DiskObjectStore, CloudConfigMixin):
         return self._get_cache_path(rel_path)
 
     def _sync_cache(self, obj, **kwargs):
-
         ipt_timer = ExecutionTimer()
         base_dir = kwargs.get("base_dir", None)
         dir_only = kwargs.get("dir_only", False)

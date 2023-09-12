@@ -4932,6 +4932,7 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
     def sync_cache(self, **kwargs):
         self.dataset.sync_cache(**kwargs)
 
+
 class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable):
     """
     Resource class that creates a relation between a dataset and a user history.
@@ -9132,7 +9133,7 @@ class MetadataFile(Base, StorableObject, Serializable):
             alt_name = f"metadata_{identifier}.dat"
             if not object_store.exists(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name):
                 object_store.create(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name)
-            object_store.sync_cache(self,extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name)
+            object_store.sync_cache(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name)
             path = object_store.get_filename(
                 self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name
             )

@@ -584,7 +584,6 @@ class Data(metaclass=DataMeta):
 
         dataset.sync_cache(trans=trans)
 
-
         downloading = to_ext is not None
         file_size = _get_file_size(dataset)
 
