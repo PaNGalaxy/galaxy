@@ -585,12 +585,12 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
                 if filename and filename != "index":
                     object_store = trans.app.object_store
                     dir_name = dataset_instance.dataset.extra_files_path_name
-                    dataset_instance.sync_cache(extra_dir=dir_name, alt_name=filename, trans=trans)
+                    dataset_instance.sync_cache(extra_dir=dir_name, alt_name=filename, user=trans.user)
                     file_path = object_store.get_filename(
                         dataset_instance.dataset, extra_dir=dir_name, alt_name=filename
                     )
                 else:
-                    dataset_instance.sync_cache(trans=trans)
+                    dataset_instance.sync_cache(user=trans.user)
                     file_path = dataset_instance.file_name
                 rval = open(file_path, "rb")
             else:

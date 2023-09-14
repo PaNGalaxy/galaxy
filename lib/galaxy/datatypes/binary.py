@@ -603,7 +603,7 @@ class BamNative(CompressedArchive, _BamOrSam):
             return f"Binary bam alignments file ({nice_size(dataset.get_size())})"
 
     def to_archive(self, dataset: DatasetProtocol, name: str = "", trans=None) -> Iterable:
-        dataset.sync_cache(trans=trans)
+        dataset.sync_cache(user=trans.user)
         rel_paths = []
         file_paths = []
         rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}")
@@ -702,12 +702,12 @@ class BamNative(CompressedArchive, _BamOrSam):
         headers = kwd.get("headers", {})
         preview = util.string_as_bool(preview)
         if offset is not None:
-            dataset.sync_cache(trans=trans)
+            dataset.sync_cache(user=trans.user)
             return self.get_chunk(trans, dataset, offset, ck_size), headers
         elif to_ext or not preview:
             return super().display_data(trans, dataset, preview, filename, to_ext, **kwd)
         else:
-            dataset.sync_cache(trans=trans)
+            dataset.sync_cache(user=trans.user)
             column_names = dataset.metadata.column_names
             if not column_names:
                 column_names = []
@@ -2110,7 +2110,7 @@ class H5MLM(H5):
             to_ext = to_ext or dataset.extension
             return self._serve_raw(dataset, to_ext, headers, **kwd)
 
-        dataset.sync_cache(trans=trans)
+        dataset.sync_cache(user=trans.user)
 
         out_dict: Dict = {}
         try:
