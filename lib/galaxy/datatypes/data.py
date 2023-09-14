@@ -391,6 +391,7 @@ class Data(metaclass=DataMeta):
         ext = data.extension
         path = data.file_name
         efp = data.extra_files_path
+
         # Add any central file to the archive,
 
         display_name = os.path.splitext(outfname)[0]
@@ -449,16 +450,16 @@ class Data(metaclass=DataMeta):
         """
         rel_paths = []
         file_paths = []
+        dataset.sync_cache(user=user)
         if dataset.datatype.composite_type or dataset.extension.endswith("html"):
             main_file = f"{name}.html"
             rel_paths.append(main_file)
-            dataset.sync_cache(user=user)
+            dataset.sync_cache(dir_only=True, extra_dir=dataset.dataset.extra_files_path_name, user=user)
             file_paths.append(dataset.file_name)
             for fpath, rpath in self.__archive_extra_files_path(dataset.extra_files_path):
                 rel_paths.append(os.path.join(name, rpath))
                 file_paths.append(fpath)
         else:
-            dataset.sync_cache(user=user)
             rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}")
             file_paths.append(dataset.file_name)
         return zip(file_paths, rel_paths)
@@ -469,6 +470,8 @@ class Data(metaclass=DataMeta):
         composite_extensions.append("data_manager_json")  # for downloading bundles if bundled.
 
         if data.extension in composite_extensions:
+            # sync cache for extra files
+            data.sync_cache(dir_only=True, extra_dir=data.dataset.extra_files_path_name, trans=trans.user)
             return self._archive_composite_dataset(trans, data, headers, do_action=kwd.get("do_action", "zip"))
         else:
             headers["Content-Length"] = str(file_size)
