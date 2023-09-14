@@ -1350,10 +1350,6 @@ class HierarchicalObjectStore(NestedObjectStore):
         )
         return quota_source_map
 
-    def _update_from_file(self, obj, **kwargs):
-        """Call the primary object store."""
-        self.backends[0].update_from_file(obj, **kwargs)
-
 
 class QuotaModel(BaseModel):
     source: Optional[str]
