@@ -9118,6 +9118,13 @@ class MetadataFile(Base, StorableObject, Serializable):
             alt_name=os.path.basename(self.file_name),
         )
 
+    def sync_cache(self, **kwargs):
+        object_store = self.dataset.object_store
+        store_by = object_store.get_store_by(self.dataset)
+        identifier = getattr(self, store_by)
+        alt_name = f"metadata_{identifier}.dat"
+        object_store.sync_cache(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name, **kwargs)
+
     @property
     def file_name(self):
         # Ensure the directory structure and the metadata file object exist
@@ -9133,7 +9140,6 @@ class MetadataFile(Base, StorableObject, Serializable):
             alt_name = f"metadata_{identifier}.dat"
             if not object_store.exists(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name):
                 object_store.create(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name)
-            object_store.sync_cache(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name)
             path = object_store.get_filename(
                 self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name
             )
