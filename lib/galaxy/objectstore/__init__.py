@@ -435,8 +435,8 @@ class BaseObjectStore(ObjectStore):
     def get_filename(self, obj, **kwargs):
         return self._invoke("get_filename", obj, **kwargs)
 
-    def update_cache(self, obj, **kwargs):
-        return self._invoke("update_cache", obj, **kwargs)
+    def sync_cache(self, obj, **kwargs):
+        return self._invoke("sync_cache", obj, **kwargs)
 
     def update_from_file(self, obj, **kwargs):
         return self._invoke("update_from_file", obj, **kwargs)
@@ -564,8 +564,8 @@ class ConcreteObjectStore(BaseObjectStore):
         return self.store_by
 
     # todo: refactor
-    def _update_cache(self, obj, **kwargs):
-        return self.get_filename(obj, **kwargs)
+    def _sync_cache(self, obj, **kwargs):
+        pass
 
     def _is_private(self, obj):
         return self.private
@@ -968,8 +968,8 @@ class NestedObjectStore(BaseObjectStore):
         """For the first backend that has this `obj`, get its URL."""
         return self._call_method("_get_object_url", obj, None, False, **kwargs)
 
-    def _update_cache(self, obj, **kwargs):
-        return self._call_method("_update_cache", obj, ObjectNotFound, True, **kwargs)
+    def _sync_cache(self, obj, **kwargs):
+        return self._call_method("_sync_cache", obj, ObjectNotFound, True, **kwargs)
 
     def _get_concrete_store_name(self, obj):
         return self._call_method("_get_concrete_store_name", obj, None, False)
@@ -1349,10 +1349,6 @@ class HierarchicalObjectStore(NestedObjectStore):
             self.quota_enabled,
         )
         return quota_source_map
-
-    def _update_from_file(self, obj, **kwargs):
-        """Call the primary object store."""
-        self.backends[0].update_from_file(obj, **kwargs)
 
 
 class QuotaModel(BaseModel):

@@ -774,8 +774,7 @@ class BaseFastq(Sequence):
         to_ext: Optional[str] = None,
         **kwd,
     ):
-        if dataset.dataset.object_store:
-            dataset.dataset.object_store.update_cache(dataset.dataset, trans=trans)
+        dataset.sync_cache(user=trans.user)
 
         headers = kwd.get("headers", {})
         if preview:

@@ -4,13 +4,13 @@ except ImportError:
     SSHFS = None
 import logging
 import re
-
-import jwt
-from paramiko.transport import Transport
 from typing import (
     Optional,
     Union,
 )
+
+import jwt
+from paramiko.transport import Transport
 
 from . import (
     FilesSourceOptions,
