@@ -29,6 +29,7 @@ from galaxy.exceptions import (
     ObjectNotFound,
     RequestParameterInvalidException,
 )
+from galaxy.jobs import JobConfiguration, MinimalJobWrapper
 from galaxy.job_metrics import (
     RawMetric,
     Safety,
@@ -266,6 +267,18 @@ class JobManager:
         else:
             return False
 
+    def finish_early(self, job):
+        if not job.finished:
+            try:
+                job.mark_stopped(self.app.config.track_jobs_in_database)
+                session = self.app.model.session
+                with transaction(session):
+                    session.commit()
+                self.app.job_manager.stop(job, message="")
+                return True
+            except Exception as e:
+                log.error("Job Runner does not support stopping job early.")
+        return False
 
 class JobSearch:
     """Search for jobs using tool inputs or other jobs"""
