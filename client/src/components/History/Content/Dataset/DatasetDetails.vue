@@ -72,8 +72,6 @@
                             </button>
                             <button disabled class="btn px-1 btn-link btn-sm">
                                 <span class="fa fa-sitemap"></span>
-                            <button disabled class="btn px-1 btn-link btn-sm">
-                                <span class="fa fa-solid fa-stop"></span>
                             </button>
                         </div>
                     </div>
