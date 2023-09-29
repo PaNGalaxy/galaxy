@@ -45,7 +45,6 @@ from galaxy.schema.types import OffsetNaiveDatetime
 from galaxy.web import (
     expose_api,
     expose_api_anonymous,
-    expose_api_anonymous_and_sessionless,
     require_admin,
 )
 from galaxy.webapps.base.controller import UsesVisualizationMixin
@@ -340,7 +339,7 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
             exceptions.RequestParameterInvalidException(f"Job with id '{job.tool_id}' is not paused")
         return self.__dictify_associations(trans, job.output_datasets, job.output_library_datasets)
 
-    @expose_api_anonymous_and_sessionless
+    @expose_api
     def finish(self, trans: ProvidesUserContext, id, **kwd) -> List[dict]:
         """
         * PUT /api/jobs/{id}/finish
