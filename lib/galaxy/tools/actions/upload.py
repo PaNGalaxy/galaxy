@@ -49,7 +49,7 @@ class RegisterToolAction(BaseUploadToolAction):
         outputs = []
         for item in incoming.get("series", []):
             name = item.get("input", None)
-            file_type = "_sniff_"
+            file_type = os.path.splitext(name)[1][1:]
             dbkey = "?"
             uploaded_dataset = Bunch(type="file", name=name, file_type=file_type, dbkey=dbkey)
             tag_list = []
