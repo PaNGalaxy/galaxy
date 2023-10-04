@@ -320,24 +320,19 @@ class InteractiveToolManager:
 
     def target_if_active(self, trans, entry_point):
         if entry_point.active and not entry_point.deleted:
-            use_it_proxy_host_cfg = (
-                not self.app.config.interactivetools_upstream_proxy and self.app.config.interactivetools_proxy_host
-            )
-
-            url_parts = urlsplit(trans.request.host_url)
-            url_host = self.app.config.interactivetools_proxy_host if use_it_proxy_host_cfg else trans.request.host
-            url_path = url_parts.path
-
+            request_host = trans.request.host
+            if not self.app.config.interactivetools_upstream_proxy and self.app.config.interactivetools_proxy_host:
+                request_host = self.app.config.interactivetools_proxy_host
+            protocol = trans.request.host_url.split("//", 1)[0]
             if entry_point.requires_domain:
-                url_host = f"{self.get_entry_point_subdomain(trans, entry_point)}.{url_host}"
+                rval = f"{protocol}//{self.get_entry_point_subdomain(trans, entry_point)}.{request_host}/"
                 if entry_point.entry_url:
-                    url_path = f"{url_path.rstrip('/')}/{entry_point.entry_url.lstrip('/')}"
+                    rval = "{}/{}".format(rval.rstrip("/"), entry_point.entry_url.lstrip("/"))
             else:
-                url_path = self.get_entry_point_path(trans, entry_point)
-                if not use_it_proxy_host_cfg:
-                    return url_path
-
-            return urlunsplit((url_parts.scheme, url_host, url_path, "", ""))
+                rval = self.get_entry_point_path(trans, entry_point)
+                if not self.app.config.interactivetools_upstream_proxy and self.app.config.interactivetools_proxy_host:
+                    rval = f"{protocol}//{request_host}{rval}"
+            return rval
 
     def _get_entry_point_url_elements(self, trans, entry_point):
         encoder = IdAsLowercaseAlphanumEncodingHelper(trans.security)
