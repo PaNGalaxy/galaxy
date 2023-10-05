@@ -36,7 +36,7 @@ Some important benefits of using Galaxy InteractiveTools
 - **InteractiveTools** are **bonafide Galaxy Tools**; just specify **tool_type as "interactive"** and list the ports you want to expose
 - **InteractiveTools** can be **added** to and **installed from the ToolShed**.
 - **R Shiny apps**, **Javascript-based VNC** access to desktop environments, **genome-browsers-in-a-box**, **interactive notebook environments**, etc, are all possible with **InteractiveTools**
-- **InteractiveTools** typically run as software (e.g. Docker) containers in an isolated environment
+- **InteractiveTools** typically run as software (e.g. Docker) containers in a secluded environment
 
 
 
@@ -62,7 +62,7 @@ The following configuration is only recommended for local testing, as users will
 In a production setup an upstream proxy should route requests to the proxy via the ``*.interactivetool.yourdomain`` subdomain,
 or use path-based proxying for interactive tools that support it (``requires_domain=False``, see below for more details).
 
-Set these values in ``galaxy.yml``:
+Set these values in ```galaxy.yml``:
 
 .. code-block:: yaml
 
@@ -98,31 +98,9 @@ Set these values in ``galaxy.yml``:
       interactivetools_proxy_host: localhost:4002
 
 
-The ``gx-it-proxy`` config relates to an important service in the InteractiveTool infrastructure: the InteractiveTool
-proxy. ``gx-it-proxy`` runs as a separate process listening at port 4002 (by default). HTTP requests are decoded based on
+The `gx-it-proxy` config relates to an important service in the InteractiveTool infrastructure: the InteractiveTool
+proxy. `gx-it-proxy` runs as a separate process listening at port 4002 (by default). HTTP requests are decoded based on
 the URL and headers, then somewhat massaged, and finally forwarded to the correct entry point port of the target InteractiveTool.
-
-.. note::
-
-    A previous config option ``interactivetools_shorten_url`` was removed in commit `#73100de <https://github.com/galaxyproject/galaxy/pull/16795/commits/73100de17149ca3486c83b8c6ded74987c68a836>`_
-    since similar functionality is now default behavior. Setting ``interactivetools_shorten_url`` to ``true`` shortened
-    long interactive tool URLs (then default) from e.g.
-
-        ``8c24e5aaae1db3a3-d0fc9f05229e40259142c4d8b5829797.interactivetoolentrypoint.interactivetool.mygalaxy.org``
-
-    down to
-
-        ``8c24e5aaae1db3a3-d0fc9f0522.interactivetool.mygalaxy.org``
-
-    Now, all interactive tool URLs are similarly short, e.g.
-
-        ``24q1dbzrknq1v-1a1p13jnahscj.ep.interactivetool.mygalaxy.org``
-
-    Note that the previous ``.interactivetoolentrypoint`` part has been shortened down to ``.ep``, but this is now always included.
-    For this reason, URLs are now up to ``3`` character longer than was previously the case when ``interactivetools_shorten_url``
-    was set to ``true``. For deployments that require URLs to be shorter than a specific limit (for example ``63`` characters for some kubernetes
-    setups), this slight ``3`` character increase could cause the URLs to break the limit. If so, please adjust the
-    ``interactivetools_prefix`` config (default value: ``interactivetool``) to counter this.
 
 You will also need to enable a docker destination in the job_conf.xml file.
 An example ``job_conf.yml`` file as seen in ``config/job_conf.yml.interactivetools``:
@@ -379,42 +357,8 @@ In both nginx config examples, you might want to replace localhost with your ser
 ``127.0.0.1``), depending on your server setup.
 
 
-        <?xml version="1.0"?>
-        <!-- A sample job config for InteractiveTools using local runner. -->
-        <job_conf>
-            <plugins>
-                <plugin id="local" type="runner" load="galaxy.jobs.runners.local:LocalJobRunner" workers="4"/>
-            </plugins>
-            <destinations default="docker_dispatch">
-                <destination id="local" runner="local"/>
-                <destination id="docker_local" runner="local">
-                  <param id="docker_enabled">true</param>
-                  <!-- If you have not set 'outputs_to_working_directory: true' in galaxy.yml you can remove the docker_volumes setting. -->
-                  <param id="docker_volumes">$galaxy_root:ro,$tool_directory:ro,$job_directory:rw,$working_directory:rw,$default_file_path:ro</param>
-                  <param id="docker_sudo">false</param>
-                  <param id="docker_net">bridge</param>
-                  <param id="docker_auto_rm">true</param>
-                  <param id="require_container">true</param>
-                  <param id="container_monitor">true</param>
-                  <param id="docker_set_user"></param>
-                  <!-- InteractiveTools need real hostnames or URLs to work - simply specifying IPs will not work.
-                       If you develop interactive tools on your 'localhost' and don't have a proper domain name
-                       you need to tell all Docker containers a hostname where Galaxy is running.
-                       This can be done via the add-host parameter during the `docker run` command.
-                       'localhost' here is an arbitrary hostname that matches the IP address of your
-                       Galaxy host. Make sure this hostname ('localhost') is also set in your galaxy.yml file, e.g.
-                       `galaxy_infrastructure_url: http://localhost:8080`.
-                  -->
-                  <param id="docker_run_extra_arguments">--add-host localhost:host-gateway</param>
-                </destination>
-                <destination id="docker_dispatch" runner="dynamic">
-                    <param id="type">docker_dispatch</param>
-                    <param id="docker_destination_id">docker_local</param>
-                    <param id="default_destination_id">local</param>
-                </destination>
-            </destinations>
-        </job_conf>
-
+Job runner configuration in production
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 InteractiveTools have been enabled for the Condor, Slurm, Pulsar and Kuberneters job runner.
 A destination configuration for Condor may look like this:
