@@ -365,6 +365,7 @@ class RucioBroker:
                         "force_scheme": rse_scheme["scheme"],
                         "rse": rse_scheme["rse"],
                         "base_dir": base_dir,
+                        "check_local_with_filesize_only": string_as_bool(rse_scheme["ignore_checksum"]),
                         "ignore_checksum": string_as_bool(rse_scheme["ignore_checksum"]),
                         "no_subdir": True,
                     }
