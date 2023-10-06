@@ -339,6 +339,27 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
             exceptions.RequestParameterInvalidException(f"Job with id '{job.tool_id}' is not paused")
         return self.__dictify_associations(trans, job.output_datasets, job.output_library_datasets)
 
+    @expose_api
+    def finish(self, trans: ProvidesUserContext, id, **kwd) -> List[dict]:
+        """
+        * PUT /api/jobs/{id}/finish
+            Finished a job regardless of execution status (ie early job finish)
+
+        :type   id: string
+        :param  id: Encoded job id
+
+        :rtype:     list of dicts
+        :returns:   list of dictionaries containing output dataset associations
+        """
+        job = self.__get_job(trans, id)
+        if not job:
+            raise exceptions.ObjectNotFound("Could not access job with the given id")
+        if job.state == job.states.RUNNING:
+            self.job_manager.finish_early(job)
+        else:
+            exceptions.RequestParameterInvalidException(f"Job with id '{job.tool_id}' is not running.")
+        return self.__dictify_associations(trans, job.output_datasets, job.output_library_datasets)
+
     @expose_api_anonymous
     def metrics(self, trans: ProvidesUserContext, **kwd):
         """

@@ -61,6 +61,15 @@
                     @click.stop="onHighlight">
                     <span class="fa fa-sitemap" />
                 </b-button>
+                <b-button
+                    v-if="showStop"
+                    class="stop-btn px-1"
+                    title="Finish Job Early"
+                    size="sm"
+                    variant="link"
+                    @click.stop="onStop">
+                    <span class="fa fa-solid fa-stop" />
+                </b-button>
                 <b-button v-if="showRerun" class="px-1" title="Help" size="sm" variant="link" @click.stop="onRerun">
                     <span class="fa fa-question" />
                 </b-button>
@@ -74,6 +83,7 @@ import { copy as sendToClipboard } from "utils/clipboard";
 import { absPath, prependPath } from "@/utils/redirect";
 import { downloadUrlMixin } from "./mixins.js";
 import DatasetDownload from "./DatasetDownload";
+import { stopJob } from "components/History/model/queries";
 
 export default {
     components: {
@@ -120,6 +130,9 @@ export default {
         visualizeUrl() {
             return prependPath(this.itemUrls.visualize);
         },
+        showStop() {
+            return this.item.state == "running";
+        },
     },
     methods: {
         onCopyLink() {
@@ -145,6 +158,20 @@ export default {
         onHighlight() {
             this.$emit("toggleHighlights");
         },
+        onStop() {
+            stopJob(this.item.creating_job);
+            document.querySelector(".stop-btn").classList.add("stopping-job");
+        },
     },
 };
 </script>
+<style scoped>
+.stopping-job {
+    animation: blink-animation .5s steps(5, start) infinite;
+}
+@keyframes blink-animation {
+    to {
+        visibility: hidden;
+    }
+}
+</style>

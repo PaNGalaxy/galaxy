@@ -739,7 +739,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 )
             return False
 
-    def stop_job(self, job_wrapper):
+    def stop_job(self, job_wrapper, soft_kill=True):
         job = job_wrapper.get_job()
         if not job.job_runner_external_id:
             return
@@ -778,7 +778,10 @@ class PulsarJobRunner(AsynchronousJobRunner):
             job_id = job.job_runner_external_id
             log.debug(f"Attempt remote Pulsar kill of job with url {pulsar_url} and id {job_id}")
             client = self.get_client(job.destination_params, job_id)
-            client.kill()
+            if soft_kill:
+                client.kill(soft_kill=soft_kill)
+            else:
+                client.kill()
 
     def recover(self, job, job_wrapper):
         """Recover jobs stuck in the queued/running state when Galaxy started."""

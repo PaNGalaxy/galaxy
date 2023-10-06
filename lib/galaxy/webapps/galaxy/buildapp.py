@@ -1005,6 +1005,9 @@ def populate_api_routes(webapp, app):
         "resume", "/api/jobs/{id}/resume", controller="jobs", action="resume", conditions=dict(method=["PUT"])
     )
     webapp.mapper.connect(
+        "finish", "/api/jobs/{id}/finish", controller="jobs", action="finish", conditions=dict(method=["PUT"])
+    )
+    webapp.mapper.connect(
         "job_error", "/api/jobs/{id}/error", controller="jobs", action="error", conditions=dict(method=["POST"])
     )
     webapp.mapper.connect(
