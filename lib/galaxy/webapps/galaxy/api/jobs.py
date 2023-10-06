@@ -345,7 +345,7 @@ class JobController(BaseGalaxyAPIController, UsesVisualizationMixin):
         * PUT /api/jobs/{id}/finish
             Finished a job regardless of execution status (ie early job finish)
 
-        :type   id: stromg
+        :type   id: string
         :param  id: Encoded job id
 
         :rtype:     list of dicts

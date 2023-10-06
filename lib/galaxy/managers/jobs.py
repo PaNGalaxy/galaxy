@@ -29,7 +29,6 @@ from galaxy.exceptions import (
     ObjectNotFound,
     RequestParameterInvalidException,
 )
-from galaxy.jobs import JobConfiguration, MinimalJobWrapper
 from galaxy.job_metrics import (
     RawMetric,
     Safety,
