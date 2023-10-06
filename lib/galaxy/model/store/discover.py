@@ -145,8 +145,8 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
                 self.add_library_dataset_to_folder(library_folder, ld)
                 primary_data = ldda
         primary_data.raw_set_dataset_state(final_job_state)
-        if final_job_state == galaxy.model.Job.states.ERROR and not self.get_implicit_collection_jobs_association_id():
-            primary_data.visible = True
+#        if final_job_state == galaxy.model.Job.states.ERROR and not self.get_implicit_collection_jobs_association_id():
+#            primary_data.visible = True
 
         for source_dict in sources:
             source = galaxy.model.DatasetSource()
