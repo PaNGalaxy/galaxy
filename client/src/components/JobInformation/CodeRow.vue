@@ -41,6 +41,7 @@ export default {
             mouseMoved: false,
             expanded: false,
             lastHeight: 0,
+            lastHeightErr: 0,
         };
     },
     computed: {
@@ -58,12 +59,21 @@ export default {
         // If the user is at the bottom of the code div, auto scroll for them.
         try {
             var codeDiv = document.querySelector("#stdout").querySelector(".code");
-            if (codeDiv.scrollTop >= this.lastHeight - 3000) {
+            if (codeDiv.scrollTop >= this.lastHeight - 300) {
                 codeDiv.scrollTop = codeDiv.scrollHeight;
             }
             this.lastHeight = codeDiv.scrollHeight;
         } catch(exception) {
-            console.log("Code div is not present");
+            console.log("Code (stdout) div is not present");
+        }
+        try {
+            var codeDivErr = document.querySelector("#stderr").querySelector(".code");
+            if (codeDivErr.scrollTop >= this.lastHeightErr - 300) {
+                codeDivErr.scrollTop = codeDivErr.scrollHeight;
+            }
+            this.lastHeightErr = codeDivErr.scrollHeight;
+        } catch(exception) {
+            console.log("Code div (stderr) is not present");
         }
     },
     methods: {

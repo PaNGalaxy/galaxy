@@ -24,7 +24,7 @@ describe("JobInformation/JobInformation.vue", () => {
     beforeEach(() => {
         axiosMock = new MockAdapter(axios);
         axiosMock.onGet(new RegExp(`api/configuration/decode/*`)).reply(200, { decoded_id: 123 });
-        axiosMock.onGet("/api/jobs/test_id?full=True&stdout_position=0&stdout_length=50000").reply(200, jobResponse);
+        axiosMock.onGet("/api/jobs/test_id?full=True&stdout_position=0&stdout_length=50000&stderr_position=0&stderr_length=50000").reply(200, jobResponse);
     });
 
     afterEach(() => {
@@ -48,6 +48,9 @@ describe("JobInformation/JobInformation.vue", () => {
             stdout_position: STDOUT_POSITION,
             stdout_length: STDOUT_LENGTH,
             stdout_text: STDOUT_TEXT,
+            stderr_position: STDOUT_POSITION,
+            stderr_length: STDOUT_LENGTH,
+            stderr_text: STDOUT_TEXT,
         };
         wrapper = mount(JobInformation, {
             propsData,

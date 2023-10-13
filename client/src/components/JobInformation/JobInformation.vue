@@ -1,6 +1,6 @@
 <template>
     <div>
-        <job-details-provider auto-refresh :jobId="job_id" :stdout_position=stdout_position :stdout_length=stdout_length @update:result="updateJob" />
+        <job-details-provider auto-refresh :jobId="job_id" :stdout_position=stdout_position :stdout_length=stdout_length :stderr_position=stderr_position :stderr_length=stderr_length @update:result="updateJob"/>
         <h2 class="h-md">Job Information</h2>
         <table id="job-information" class="tabletip info_data_table">
             <tbody>
@@ -42,7 +42,7 @@
                 </tr>
                 <code-row v-if="job" id="command-line" :code-label="'Command Line'" :code-item="job.command_line" />
                 <code-row v-if="job" id="stdout" :code-label="'Tool Standard Output'" :code-item="stdout_text" />
-                <code-row v-if="job" id="stderr" :code-label="'Tool Standard Error'" :code-item="job.tool_stderr" />
+                <code-row v-if="job" id="stderr" :code-label="'Tool Standard Error'" :code-item="stderr_text" />
                 <code-row
                     v-if="job && job.traceback"
                     id="traceback"
@@ -110,6 +110,9 @@ export default {
             stdout_position: 0,
             stdout_length: 50000,
             stdout_text: "",
+            stderr_position: 0,
+            stderr_length: 50000,
+            stderr_text: "",
         };
     },
     computed: {
@@ -122,19 +125,6 @@ export default {
             return this.job && !JOB_STATES_MODEL.NON_TERMINAL_STATES.includes(this.job.state);
         },
     },
-    updated() {
-        try {
-            const stdout_block = document.querySelector("#stdout").querySelector(".code");
-            // if user is scrolled above the bottom of the code element, then no need to update the stdout
-            if (stdout_block.scrollTop <= stdout_block.scrollHeight - 3000) {
-                this.stdout_length = 0;
-            } else {
-                this.stdout_length = 50000;
-            }
-        } catch(exception) {
-            console.log(exception);
-        }
-    },
     methods: {
         getAppRoot() {
             return getAppRoot();
@@ -145,6 +135,10 @@ export default {
             if (job.tool_stdout != null) {
                 this.stdout_text += job.tool_stdout;
                 this.stdout_position += job.tool_stdout.length;
+            }
+            if (job.tool_stderr != null) {
+                this.stderr_text += job.tool_stderr;
+                this.stderr_position += job.tool_stderr.length;
             }
         },
     },
