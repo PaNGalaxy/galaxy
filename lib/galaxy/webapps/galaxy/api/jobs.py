@@ -180,6 +180,8 @@ class FastAPIJobs:
         full: Optional[bool] = False,
         stdout_position: Optional[int] = None,
         stdout_length: Optional[int] = None,
+        stderr_position: Optional[int] = None,
+        stderr_length: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Return dictionary containing description of job data
@@ -196,6 +198,8 @@ class FastAPIJobs:
             bool(full),
             int(stdout_position) if stdout_position else 0,
             int(stdout_length) if stdout_length else 0,
+            int(stderr_position) if stderr_position else 0,
+            int(stderr_length) if stderr_length else 0,
         )
 
     @router.get("/api/jobs")
