@@ -673,10 +673,10 @@ class PulsarJobRunner(AsynchronousJobRunner):
             # Use Pulsar client code to transfer/copy files back
             # and cleanup job if needed.
             completed_normally = state not in [model.Job.states.ERROR, model.Job.states.DELETED]
-            if completed_normally and state == model.Job.states.STOPPED:
-                # Discard pulsar exit code (probably -9), we know the user stopped the job
-                log.debug("Setting exit code for stopped job {job_wrapper.job_id} to 0 (was {exit_code})")
-                exit_code = 0
+#            if completed_normally and state == model.Job.states.STOPPED:
+#                # Discard pulsar exit code (probably -9), we know the user stopped the job
+#                log.debug("Setting exit code for stopped job {job_wrapper.job_id} to 0 (was {exit_code})")
+#                exit_code = 0
             cleanup_job = job_wrapper.cleanup_job
             client_outputs = self.__client_outputs(client, job_wrapper)
             finish_args = dict(
