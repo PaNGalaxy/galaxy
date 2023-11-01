@@ -11,8 +11,6 @@
                 <b-col class="nopadding pointer"
                     v-b-tooltip.hover
                     :title="`click to ${action}`"
-                    @mousedown="mouseIsDown = true"
-                    @mousemove="mouseIsDown ? (mouseMoved = true) : (mouseMoved = false)"
                     @mouseup="toggleExpanded()">
                     <font-awesome-icon :icon="iconClass" />
                 </b-col>
@@ -37,8 +35,6 @@ export default {
     },
     data() {
         return {
-            mouseIsDown: false,
-            mouseMoved: false,
             expanded: false,
             lastPos: 0,
         };
@@ -68,8 +64,7 @@ export default {
     },
     methods: {
         toggleExpanded() {
-            this.mouseIsDown = false;
-            if (this.codeItem && !this.mouseMoved) {
+            if (this.codeItem) {
                 this.expanded = !this.expanded;
             }
         },
