@@ -1,10 +1,5 @@
 <template>
-    <tr
-        v-b-tooltip.hover
-        :title="`click to ${action}`"
-        @mousedown="mouseIsDown = true"
-        @mousemove="mouseIsDown ? (mouseMoved = true) : (mouseMoved = false)"
-        @mouseup="toggleExpanded()">
+    <tr>
         <td>
             {{ codeLabel }}
         </td>
@@ -13,7 +8,12 @@
                 <b-col cols="11">
                     <pre :class="codeClass">{{ codeItem }}</pre>
                 </b-col>
-                <b-col class="nopadding pointer">
+                <b-col class="nopadding pointer"
+                    v-b-tooltip.hover
+                    :title="`click to ${action}`"
+                    @mousedown="mouseIsDown = true"
+                    @mousemove="mouseIsDown ? (mouseMoved = true) : (mouseMoved = false)"
+                    @mouseup="toggleExpanded()">
                     <font-awesome-icon :icon="iconClass" />
                 </b-col>
             </b-row>
@@ -40,8 +40,7 @@ export default {
             mouseIsDown: false,
             mouseMoved: false,
             expanded: false,
-            lastHeight: 0,
-            lastHeightErr: 0,
+            lastPos: 0,
         };
     },
     computed: {
@@ -56,24 +55,15 @@ export default {
         },
     },
     updated() {
-        // If the user is at the bottom of the code div, auto scroll for them.
         try {
-            var codeDiv = document.querySelector("#stdout").querySelector(".code");
-            if (codeDiv.scrollTop >= this.lastHeight - 300) {
-                codeDiv.scrollTop = codeDiv.scrollHeight;
+            var codeDiv = this.$el.querySelector(".code");
+            if (codeDiv.scrollTop + codeDiv.offsetHeight >= this.lastPos - 5)  {
+                    // scroll is at the bottom
+                    codeDiv.scrollTop = codeDiv.scrollHeight;
             }
-            this.lastHeight = codeDiv.scrollHeight;
+            this.lastPos = codeDiv.scrollHeight;
         } catch(exception) {
-            console.log("Code (stdout) div is not present");
-        }
-        try {
-            var codeDivErr = document.querySelector("#stderr").querySelector(".code");
-            if (codeDivErr.scrollTop >= this.lastHeightErr - 300) {
-                codeDivErr.scrollTop = codeDivErr.scrollHeight;
-            }
-            this.lastHeightErr = codeDivErr.scrollHeight;
-        } catch(exception) {
-            console.log("Code div (stderr) is not present");
+            console.debug("Code div is not present");
         }
     },
     methods: {
