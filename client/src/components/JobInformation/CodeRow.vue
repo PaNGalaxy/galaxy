@@ -1,10 +1,5 @@
 <template>
-    <tr
-        v-b-tooltip.hover
-        :title="`click to ${action}`"
-        @mousedown="mouseIsDown = true"
-        @mousemove="mouseIsDown ? (mouseMoved = true) : (mouseMoved = false)"
-        @mouseup="toggleExpanded()">
+    <tr>
         <td>
             {{ codeLabel }}
         </td>
@@ -13,7 +8,10 @@
                 <b-col cols="11">
                     <pre :class="codeClass">{{ codeItem }}</pre>
                 </b-col>
-                <b-col class="nopadding pointer">
+                <b-col class="nopadding pointer"
+                    v-b-tooltip.hover
+                    :title="`click to ${action}`"
+                    @mouseup="toggleExpanded()">
                     <font-awesome-icon :icon="iconClass" />
                 </b-col>
             </b-row>
@@ -37,10 +35,8 @@ export default {
     },
     data() {
         return {
-            mouseIsDown: false,
-            mouseMoved: false,
             expanded: false,
-            lastHeight: 0,
+            lastPos: 0,
         };
     },
     computed: {
@@ -55,21 +51,20 @@ export default {
         },
     },
     updated() {
-        // If the user is at the bottom of the code div, auto scroll for them.
         try {
-            var codeDiv = document.querySelector("#stdout").querySelector(".code");
-            if (codeDiv.scrollTop >= this.lastHeight - 3000) {
-                codeDiv.scrollTop = codeDiv.scrollHeight;
+            var codeDiv = this.$el.querySelector(".code");
+            if (codeDiv.scrollTop + codeDiv.offsetHeight >= this.lastPos - 5)  {
+                    // scroll is at the bottom
+                    codeDiv.scrollTop = codeDiv.scrollHeight;
             }
-            this.lastHeight = codeDiv.scrollHeight;
+            this.lastPos = codeDiv.scrollHeight;
         } catch(exception) {
-            console.log("Code div is not present");
+            console.debug("Code div is not present");
         }
     },
     methods: {
         toggleExpanded() {
-            this.mouseIsDown = false;
-            if (this.codeItem && !this.mouseMoved) {
+            if (this.codeItem) {
                 this.expanded = !this.expanded;
             }
         },

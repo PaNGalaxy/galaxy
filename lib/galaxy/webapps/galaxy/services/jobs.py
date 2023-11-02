@@ -50,8 +50,10 @@ class JobsService:
         full: bool = False,
         stdout_position: int = 0,
         stdout_length: int = 0,
+        stderr_position: int = 0,
+        stderr_length: int = 0,
     ) -> Dict[str, Any]:
-        job = self.job_manager.get_accessible_job(trans, id, stdout_position, stdout_length)
+        job = self.job_manager.get_accessible_job(trans, id, stdout_position, stdout_length, stderr_position, stderr_length)
         return view_show_job(trans, job, bool(full))
 
     def index(
