@@ -304,7 +304,10 @@ class XmlToolSource(ToolSource):
             if name:
                 name = name.strip()
             requires_domain = string_as_bool(ep_el.attrib.get("requires_domain", False))
-            rtt.append(dict(port=port, url=url, name=name, requires_domain=requires_domain))
+            protocol = ep_el.attrib.get("protocol", "http")
+            if protocol:
+                protocol.strip()
+            rtt.append(dict(port=port, url=url, name=name, requires_domain=requires_domain, protocol=protocol))
         return rtt
 
     def parse_hidden(self):

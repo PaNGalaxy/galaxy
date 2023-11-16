@@ -521,7 +521,7 @@ class ToolEvaluator:
         it = []
         for ep in getattr(self.tool, "ports", []):
             ep_dict = {}
-            for key in "port", "name", "url", "requires_domain":
+            for key in "port", "name", "url", "requires_domain", "protocol":
                 val = ep.get(key, None)
                 if val is not None and not isinstance(val, bool):
                     val = fill_template(
