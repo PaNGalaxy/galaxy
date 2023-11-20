@@ -25,7 +25,7 @@ class InteractiveToolSqlite:
             conn = sqlite3.connect(self.sqlite_filename)
             try:
                 c = conn.cursor()
-                select = f"""SELECT token, host, port, info
+                select = f"""SELECT token, host, port, info, protocol
                             FROM {DATABASE_TABLE_NAME}
                             WHERE key=? and key_type=?"""
                 c.execute(
@@ -36,15 +36,15 @@ class InteractiveToolSqlite:
                     ),
                 )
                 try:
-                    token, host, port, info = c.fetchone()
+                    token, host, port, info, protocol = c.fetchone()
                 except TypeError:
                     log.warning("get(): invalid key: %s key_type %s", key, key_type)
                     return None
-                return dict(key=key, key_type=key_type, token=token, host=host, port=port, info=info)
+                return dict(key=key, key_type=key_type, token=token, host=host, port=port, info=info, protocol=protocol)
             finally:
                 conn.close()
 
-    def save(self, key, key_type, token, host, port, info=None):
+    def save(self, key, key_type, token, host, port, info=None, protocol=None):
         """
         Writeout a key, key_type, token, value store that is can be used for coordinating
         with external resources.
@@ -66,6 +66,7 @@ class InteractiveToolSqlite:
                                   host text,
                                   port integer,
                                   info text,
+                                  protocol text,
                                   PRIMARY KEY (key, key_type)
                                   )"""
                         % (DATABASE_TABLE_NAME)
@@ -81,8 +82,8 @@ class InteractiveToolSqlite:
                     ),
                 )
                 insert = """INSERT INTO %s
-                            (key, key_type, token, host, port, info)
-                            VALUES (?, ?, ?, ?, ?, ?)""" % (
+                            (key, key_type, token, host, port, info, protocol)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)""" % (
                     DATABASE_TABLE_NAME
                 )
                 c.execute(
@@ -94,6 +95,7 @@ class InteractiveToolSqlite:
                         host,
                         port,
                         info,
+                        protocol
                     ),
                 )
                 conn.commit()
@@ -135,6 +137,7 @@ class InteractiveToolSqlite:
             entry_point.host,
             entry_point.port,
             None,
+            entry_point.protocol,
         )
 
     def remove_entry_point(self, entry_point):
@@ -164,6 +167,7 @@ class InteractiveToolManager:
                 entry_url=entry["url"],
                 name=entry["name"],
                 requires_domain=entry["requires_domain"],
+                protocol=entry["protocol"],
                 short_token=self.app.config.interactivetools_shorten_url,
             )
             self.sa_session.add(ep)
@@ -188,10 +192,10 @@ class InteractiveToolManager:
             else:
                 ep.host = port_dict["host"]
                 ep.port = port_dict["port"]
+                self.save_entry_point(ep)
                 ep.protocol = port_dict["protocol"]
                 ep.configured = True
                 self.sa_session.add(ep)
-                self.save_entry_point(ep)
                 configured.append(ep)
         if configured:
             with transaction(self.sa_session):
