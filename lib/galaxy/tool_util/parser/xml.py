@@ -306,7 +306,7 @@ class XmlToolSource(ToolSource):
             requires_domain = string_as_bool(ep_el.attrib.get("requires_domain", False))
             protocol = ep_el.attrib.get("protocol", "http")
             if protocol:
-                protocol.strip()
+                protocol = protocol.strip()
             rtt.append(dict(port=port, url=url, name=name, requires_domain=requires_domain, protocol=protocol))
         return rtt
 
