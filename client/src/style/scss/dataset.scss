@@ -179,9 +179,9 @@
     }
 
     &.state-stopped {
-        background: $state-stopped-bg;
+        background: $state-success-bg;
         .state-icon {
-            display: none;
+            content: fa-content($fa-var-stop-circle );
         }
     }
 }

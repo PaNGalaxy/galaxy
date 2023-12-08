@@ -84,6 +84,7 @@ export const STATES = {
     stopped: {
         text: "This job was stopped manually.",
         status: "stopped",
+        icon: "stop-circle",
     },
 };
 
