@@ -1719,9 +1719,6 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
         else:
             self.state = Job.states.STOPPED
         self.stopped = True
-        for jtoda in self.output_datasets:
-            output_hda = jtoda.dataset
-            output_hda.stopped = True
 
     def mark_deleted(self, track_jobs_in_database=False):
         """
