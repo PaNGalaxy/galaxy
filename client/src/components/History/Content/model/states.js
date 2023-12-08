@@ -80,6 +80,11 @@ export const STATES = {
         status: "danger",
         icon: "exclamation-triangle",
     },
+    /** the job has been manually stopped */
+    stopped: {
+        text: "This job was stopped manually.",
+        status: "stopped",
+    },
 };
 
 /** We want to display a single state for a dataset collection whose elements may have mixed states.

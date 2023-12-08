@@ -170,6 +170,8 @@ export default {
                         return state;
                     }
                 }
+            } else if (this.isDataset && this.item.stopped) {
+                return "stopped"
             } else if (this.item.state) {
                 return this.item.state;
             }
@@ -222,6 +224,10 @@ export default {
             } else {
                 this.$emit("view-collection", this.item, this.name);
             }
+            console.log(this.isDataset);
+            console.log(this.item.state);
+            console.log(this.item);
+            console.log(this.$el);
         },
         onDisplay() {
             const entryPointStore = useEntryPointStore();
