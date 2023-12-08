@@ -489,6 +489,7 @@ class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerialize
                 "url",
                 "create_time",
                 "update_time",
+                "stopped"
             ],
         )
         self.add_view(

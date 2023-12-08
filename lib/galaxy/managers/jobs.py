@@ -662,6 +662,7 @@ def view_show_job(trans, job, full: bool) -> typing.Dict:
                 job_stderr=job.job_stderr,
                 stderr=job.stderr,
                 stdout=job.stdout,
+                stopped=job.stopped,
                 job_messages=job.job_messages,
                 dependencies=job.dependencies,
             )
