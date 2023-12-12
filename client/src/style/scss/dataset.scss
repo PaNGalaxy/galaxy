@@ -177,6 +177,13 @@
             @extend .state-icon-running;
         }
     }
+
+    &.state-stopped {
+        background: $state-success-bg;
+        .state-icon {
+            content: fa-content($fa-var-stop-circle );
+        }
+    }
 }
 
 .blinking {

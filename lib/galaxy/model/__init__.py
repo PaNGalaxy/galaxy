@@ -1353,6 +1353,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
     handler = Column(TrimmedString(255), index=True)
     preferred_object_store_id = Column(String(255), nullable=True)
     object_store_id_overrides = Column(JSONType)
+    stopped = Column(Boolean, index=True, default=False)
 
     user = relationship("User")
     galaxy_session = relationship("GalaxySession")
@@ -1717,6 +1718,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             self.state = Job.states.STOPPING
         else:
             self.state = Job.states.STOPPED
+        self.stopped = True
 
     def mark_deleted(self, track_jobs_in_database=False):
         """
@@ -5267,6 +5269,13 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
                 for jtoda in jtida.job.output_datasets:
                     jobs_to_unpause.update(jtoda.dataset.unpause_dependent_jobs(jobs=jobs_to_unpause))
         return jobs_to_unpause
+
+    @property
+    def stopped(self):
+        for jtoda in self.creating_job_associations:
+            if jtoda.job.stopped:
+                return True
+        return False
 
     @property
     def history_content_type(self):

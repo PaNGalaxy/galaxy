@@ -16,7 +16,7 @@
                 </tr>
                 <tr v-if="job && job.state">
                     <td>Job State</td>
-                    <td data-description="galaxy-job-state">{{ job.state }}</td>
+                    <td data-description="galaxy-job-state">{{ job.stopped ? "Stopped": job.state }}</td>
                 </tr>
                 <tr v-if="job && job.tool_version">
                     <td>Galaxy Tool Version</td>
