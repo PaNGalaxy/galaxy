@@ -162,7 +162,7 @@ export default {
             url: null,
             messageText: null,
             messageVariant: null,
-            headerWelcome: _l("Welcome to Galaxy, please sign in"),
+            headerWelcome: _l("Welcome to Galaxy, please log in"),
             labelNameAddress: _l("Public Name or Email Address"),
             labelPassword: _l("Password"),
             confirmURL: urlParams.has("confirm") && urlParams.get("confirm") == "true",

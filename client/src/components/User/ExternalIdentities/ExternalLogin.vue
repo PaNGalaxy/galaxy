@@ -86,7 +86,7 @@
                 <span v-else>
                     <b-button class="d-block mt-3" @click="submitOIDCLogin(idp)">
                         <i :class="oidc_idps[idp]" />
-                        Sign in with
+                        Log in with
                         {{ idp_info['alias'] || (idp.charAt(0).toUpperCase() + idp.slice(1)) }}
                     </b-button>
                 </span>
