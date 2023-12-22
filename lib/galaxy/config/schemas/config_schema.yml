@@ -2599,6 +2599,13 @@ mapping:
           authentication is enabled, and users should only sign out using the 
           authentication provider's sign out page.)
 
+      disable_internal_login:
+        type: bool
+        default: false
+        required: false
+        desc: |
+            Hides internal Galaxy login form fields
+
       show_welcome_with_login:
         type: bool
         default: false

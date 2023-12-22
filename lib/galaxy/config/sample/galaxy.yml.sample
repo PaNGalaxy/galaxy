@@ -1972,6 +1972,9 @@ galaxy:
   # page (even if require_login is true).
   #show_welcome_with_login: false
 
+  # Hides internal Galaxy login form fields
+  #disable_internal_login: false
+
   # Controls the order of the login page to prefer Custos-based login
   # and registration.
   #prefer_custos_login: false

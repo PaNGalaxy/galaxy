@@ -495,23 +495,51 @@ class BaseJobRunner:
     def write_executable_script(self, path: str, contents: str, job_io: DescribesScriptIntegrityChecks) -> None:
         write_script(path, contents, job_io)
 
-    def _get_username_from_token(self, job_wrapper):
-        username_in_token = job_wrapper.job_destination.params.get("oidc_user_from_token_claim", None)
-        if not username_in_token:
-            return None
-        try:
-            token_provider = job_wrapper.job_destination.params.get("oidc_token_provider", None)
-            provider_backend = provider_name_to_backend(token_provider)
-            tokens = job_wrapper.get_job().user.get_oidc_tokens(provider_backend)
-            if tokens["id"]:
-                oidc_token = tokens["id"]
-            else:
-                oidc_token = tokens["access"]
-            user = jwt.decode(oidc_token, options={"verify_signature": False})[username_in_token]
-            username_template = job_wrapper.job_destination.params.get("oidc_user_in_claim_template", ".*")
-            return re.match(username_template, user).group(0)
-        except Exception:
+    def _configure_oidc_user(self, job_wrapper):
+        destination_info = job_wrapper.job_destination.params
+
+        user_oidc_config = destination_info.get("oidc_user_from_token_claim", None)
+        if not user_oidc_config:
+            return
+
+        set_user = user_oidc_config.get("docker_set_user", False)
+        env_var = user_oidc_config.get("docker_add_user_to_env", None)
+
+        if not set_user and not env_var:
+            return
+
+        providers = user_oidc_config.get("providers", None)
+        if not providers:
+            return
+
+        username = None
+        for token_provider, settings in providers.items():
+            key = settings["user_key"]
+            template = settings.get("template",".*")
+            try:
+                provider_backend = provider_name_to_backend(token_provider)
+                tokens = job_wrapper.get_job().user.get_oidc_tokens(provider_backend)
+                if tokens["access"]:
+                    oidc_token = tokens["access"]
+                else:
+                    oidc_token = tokens["id"]
+                user = jwt.decode(oidc_token, options={"verify_signature": False})[key]
+                username = re.match(template, user).group(0)
+                if username:
+                    break
+            except Exception:
+                pass
+        if not username:
             raise Exception("Failed to get a username for container from OIDC token, contact Galaxy admin.")
+
+        if set_user:
+            destination_info["set_host_user"] = username
+        if env_var:
+            if job_wrapper.job_destination.env is None:
+                job_wrapper.job_destination.env = []
+            job_wrapper.job_destination.env.append({'name': env_var, 'value': username})
+        return
+
 
     def _find_container(
         self,
@@ -555,10 +583,9 @@ class BaseJobRunner:
             job_directory_type=job_directory_type,
         )
 
+        self._configure_oidc_user(job_wrapper)
+
         destination_info = job_wrapper.job_destination.params
-        username = self._get_username_from_token(job_wrapper)
-        if username:
-            destination_info["set_host_user"] = username
 
         container = self.app.container_finder.find_container(tool_info, destination_info, job_info)
         if container:

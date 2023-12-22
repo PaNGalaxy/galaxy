@@ -10,6 +10,7 @@
             v-else
             :allow-user-creation="config.allow_user_creation"
             :enable-oidc="config.enable_oidc"
+            :disable-internal-login="config.disable_internal_login"
             :mailing-join-addr="config.mailing_join_addr"
             :prefer-custos-login="config.prefer_custos_login"
             :redirect="$route.query.redirect"
