@@ -17,7 +17,7 @@
                                 <span>{{ headerWelcome }}</span>
                             </b-card-header>
                             <b-card-body>
-                                <div>
+                                <div v-if="!disableInternalLogin">
                                     <!-- standard internal galaxy login -->
                                     <b-form-group :label="labelNameAddress" label-for="login-form-name">
                                         <b-form-input
@@ -121,6 +121,10 @@ export default {
             type: Boolean,
             default: false,
         },
+        disableInternalLogin: {
+            type: Boolean,
+            default: false,
+        },
         enableOidc: {
             type: Boolean,
             default: false,
@@ -158,7 +162,7 @@ export default {
             url: null,
             messageText: null,
             messageVariant: null,
-            headerWelcome: _l("Welcome to Galaxy, please log in"),
+            headerWelcome: _l("Welcome to Galaxy, please sign in"),
             labelNameAddress: _l("Public Name or Email Address"),
             labelPassword: _l("Password"),
             confirmURL: urlParams.has("confirm") && urlParams.get("confirm") == "true",

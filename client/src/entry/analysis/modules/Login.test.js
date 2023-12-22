@@ -8,6 +8,7 @@ jest.mock("app/singleton");
 const mockGalaxy = {
     config: {
         allow_user_creation: true,
+        disable_internal_login: false,
         enable_oidc: true,
         mailing_join_addr: "mailing_join_addr",
         prefer_custos_login: true,
@@ -43,6 +44,7 @@ describe("Login", () => {
         expect(attributes.redirect).toBe("redirect_url");
         expect(attributes.allowusercreation).toBe("true");
         expect(attributes.sessioncsrftoken).toBe("session_csrf_token");
+        expect(attributes.disable_internal_login).toBe("false");
         expect(attributes.enableoidc).toBe("true");
         expect(attributes.mailingjoinaddr).toBe("mailing_join_addr");
         expect(attributes.prefercustoslogin).toBe("true");
