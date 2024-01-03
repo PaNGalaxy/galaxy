@@ -175,6 +175,11 @@ class InteractiveToolManager:
             with transaction(self.sa_session):
                 self.sa_session.commit()
 
+    def get_job_subdomain(self, job):
+        # returns the url for the first entry point
+        for ep in job.interactivetool_entry_points:
+            return self.calculate_entry_point(self.app.security.encode_id, ep)
+
     def configure_entry_point(self, job, tool_port=None, host=None, port=None, protocol=None):
         return self.configure_entry_points(
             job, {tool_port: dict(tool_port=tool_port, host=host, port=port, protocol=protocol)}
@@ -296,6 +301,15 @@ class InteractiveToolManager:
                 self.sa_session.commit()
         self.propagator.remove_entry_point(entry_point)
 
+    def calculate_entry_point(self, encode_id, entry_point):
+        entry_point_encoded_id = encode_id(entry_point.id)
+        entry_point_class = entry_point.__class__.__name__.lower()
+        entry_point_prefix = self.app.config.interactivetools_prefix
+        entry_point_token = entry_point.token
+        if self.app.config.interactivetools_shorten_url:
+            return f"{entry_point_encoded_id}-{entry_point_token[:10]}.{entry_point_prefix}"
+        return f"{entry_point_encoded_id}-{entry_point_token}.{entry_point_class}.{entry_point_prefix}"
+
     def target_if_active(self, trans, entry_point):
         if entry_point.active and not entry_point.deleted:
             request_host = trans.request.host
@@ -313,13 +327,7 @@ class InteractiveToolManager:
             return rval
 
     def get_entry_point_subdomain(self, trans, entry_point):
-        entry_point_encoded_id = trans.security.encode_id(entry_point.id)
-        entry_point_class = entry_point.__class__.__name__.lower()
-        entry_point_prefix = self.app.config.interactivetools_prefix
-        entry_point_token = entry_point.token
-        if self.app.config.interactivetools_shorten_url:
-            return f"{entry_point_encoded_id}-{entry_point_token[:10]}.{entry_point_prefix}"
-        return f"{entry_point_encoded_id}-{entry_point_token}.{entry_point_class}.{entry_point_prefix}"
+        return self.calculate_entry_point(trans.security.encode_id, entry_point)
 
     def get_entry_point_path(self, trans, entry_point):
         entry_point_encoded_id = trans.security.encode_id(entry_point.id)
