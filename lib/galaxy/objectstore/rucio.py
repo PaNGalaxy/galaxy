@@ -256,7 +256,10 @@ def parse_config_xml(config_xml):
         if e_xml:
             rucio_download_schemes = [{k: e.get(k) for k in attrs} for e in e_xml]
 
-        oidc_provider = config_xml.findtext("oidc_provider", None)
+        oidc_providers = []
+        e_xml = config_xml.findall("oidc_provider")
+        if e_xml:
+            oidc_providers = [e.text for e in e_xml]
 
         e_xml = config_xml.findall("rucio")
         if e_xml:
@@ -269,7 +272,6 @@ def parse_config_xml(config_xml):
             rucio_write_rse_scheme = None
             rucio_scope = None
             rucio_register_only = False
-            oidc_provider = None
         return {
             "cache": {
                 "size": cache_size,
@@ -281,7 +283,7 @@ def parse_config_xml(config_xml):
             "rucio_scope": rucio_scope,
             "rucio_register_only": rucio_register_only,
             "rucio_download_schemes": rucio_download_schemes,
-            "oidc_provider": oidc_provider,
+            "oidc_providers": oidc_providers,
         }
     except Exception:
         # Toss it back up after logging, we can't continue loading at this point.
@@ -429,7 +431,7 @@ class RucioObjectStore(ConcreteObjectStore):
         rval["cache"] = dict()
         rval["cache"]["size"] = self.cache_size
         rval["cache"]["path"] = self.staging_path
-        rval["oidc_provider"] = self.oidc_provider
+        rval["oidc_providers"] = self.oidc_providers
         return rval
 
     def __init__(self, config, config_dict):
@@ -447,7 +449,7 @@ class RucioObjectStore(ConcreteObjectStore):
             self.rucio_config["rucio_write_rse_scheme"] = os.environ["RUCIO_WRITE_RSE_SCHEME"]
         if "RUCIO_REGISTER_ONLY" in os.environ:
             self.rucio_config["rucio_register_only"] = string_as_bool(os.environ["RUCIO_REGISTER_ONLY"])
-        self.oidc_provider = config_dict.get("oidc_provider", None)
+        self.oidc_providers = config_dict.get("oidc_providers", None)
         self.rucio_broker = RucioBroker(self.rucio_config)
         cache_dict = config_dict["cache"]
         if cache_dict is None:
@@ -693,12 +695,15 @@ class RucioObjectStore(ConcreteObjectStore):
                 user = trans.user
             else:
                 user = arg_user
-            backend = provider_name_to_backend(self.oidc_provider)
-            tokens = user.get_oidc_tokens(backend)
-            return tokens["id"]
+            for oidc_provider in self.oidc_providers:
+                backend = provider_name_to_backend(oidc_provider)
+                tokens = user.get_oidc_tokens(backend)
+                if tokens["id"]:
+                    return tokens["id"]
         except Exception as e:
             log.debug("Failed to get auth token: %s", e)
-            return None
+
+        return None
 
     def _sync_cache(self, obj, **kwargs):
         base_dir = kwargs.get("base_dir", None)
