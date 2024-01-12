@@ -535,9 +535,7 @@ class BaseJobRunner:
         if set_user:
             destination_info["set_host_user"] = username
         if env_var:
-            if job_wrapper.job_destination.env is None:
-                job_wrapper.job_destination.env = []
-            job_wrapper.job_destination.env.append({'name': env_var, 'value': username})
+            destination_info["pass_host_user_to_env"] = env_var + "=" + username
         return
 
 
