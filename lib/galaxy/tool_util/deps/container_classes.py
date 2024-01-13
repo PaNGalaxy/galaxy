@@ -470,7 +470,9 @@ class DockerContainer(Container, HasDockerLikeVolumes):
                 run_extra_arguments = run_extra_arguments + " $GROUPADD"
             else:
                 run_extra_arguments = "$GROUPADD"
-
+        pass_host_user_to_env = self.destination_info.get("pass_host_user_to_env", None)
+        if pass_host_user_to_env:
+            env_directives.append(pass_host_user_to_env)
         run_command = docker_util.build_docker_run_command(
             command,
             self.container_id,
