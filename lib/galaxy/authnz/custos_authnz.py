@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 import time
 from datetime import (
     datetime,
@@ -59,6 +60,7 @@ class CustosAuthnz(IdentityProvider):
         self.config["token_endpoint"] = oidc_backend_config.get("token_endpoint", None)
         self.config["revocation_endpoint"] = oidc_backend_config.get("revocation_endpoint", None)
         self.config["userinfo_endpoint"] = oidc_backend_config.get("userinfo_endpoint", None)
+        self.config["user_extra_authorization_script"] = oidc_backend_config.get("user_extra_authorization_script", None)
         self.config["redirect_uri"] = oidc_backend_config["redirect_uri"]
         self.config["ca_bundle"] = oidc_backend_config.get("ca_bundle", None)
         self.config["pkce_support"] = oidc_backend_config.get("pkce_support", False)
@@ -168,6 +170,19 @@ class CustosAuthnz(IdentityProvider):
         processed_token["username"] = self._username_from_userinfo(trans, userinfo)
         return processed_token
 
+    def _extra_user_auth(self, username, auth_script_path):
+        try:
+            result = subprocess.run(['bash', auth_script_path, username], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            exit_code = result.returncode
+            output = result.stdout + result.stderr
+            if exit_code != 0:
+                log.error(f"cannot authorize user {username}: {output}")
+                raise exceptions.AuthenticationFailed("User not allowed")
+            return
+        except Exception as e:
+            log.error(str(e))
+            raise exceptions.AuthenticationFailed("User not allowed")
+
     def callback(self, state_token, authz_code, trans, login_redirect_url):
         # Take state value to validate from token. OAuth2Session.fetch_token
         # will validate that the state query parameter value on the URL matches
@@ -186,8 +201,12 @@ class CustosAuthnz(IdentityProvider):
         expiration_time = processed_token["expiration_time"]
         refresh_expiration_time = processed_token["refresh_expiration_time"]
 
+        if self.config["user_extra_authorization_script"]:
+            self._extra_user_auth(username,self.config["user_extra_authorization_script"])
+
         # Create or update custos_authnz_token record
         custos_authnz_token = self._get_custos_authnz_token(trans.sa_session, user_id, self.config["provider"])
+
         if custos_authnz_token is None:
             user = trans.user
             existing_user = trans.sa_session.query(User).filter_by(email=email).first()
@@ -466,7 +485,7 @@ class CustosAuthnz(IdentityProvider):
             return self.config["verify_ssl"]
 
     def _username_from_userinfo(self, trans, userinfo):
-        username = userinfo.get("preferred_username", userinfo["email"])
+        username = userinfo.get("preferred_username", userinfo.get("username",userinfo["email"]))
         if "@" in username:
             username = username.split("@")[0]  # username created from username portion of email
         username = util.ready_name_for_url(username)
