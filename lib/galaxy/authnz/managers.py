@@ -208,6 +208,9 @@ class AuthnzManager:
         if config_xml.find("alias") is not None:
             rtv["alias"] = config_xml.find("alias").text
 
+        if config_xml.find("user_extra_authorization_script") is not None:
+            rtv["user_extra_authorization_script"] = config_xml.find("user_extra_authorization_script").text
+
         return rtv
 
     def get_allowed_idps(self):
