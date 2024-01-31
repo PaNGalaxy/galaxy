@@ -193,6 +193,15 @@ class InteractiveToolManager:
             with transaction(self.sa_session):
                 self.sa_session.commit()
 
+    def get_job_subdomain(self, job):
+        # returns the url for the first entry point
+        for entry_point in job.interactivetool_entry_points:
+            entry_point_encoded_id = self.app.security.encode_id(entry_point.id)
+            entry_point_class = entry_point.__class__.__name__.lower()
+            entry_point_prefix = self.app.config.interactivetools_prefix
+            entry_point_token = entry_point.token
+            return f"{entry_point_encoded_id}-{entry_point_token}.{entry_point_class}.{entry_point_prefix}"
+
     def configure_entry_point(self, job, tool_port=None, host=None, port=None, protocol=None):
         return self.configure_entry_points(
             job, {tool_port: dict(tool_port=tool_port, host=host, port=port, protocol=protocol)}
