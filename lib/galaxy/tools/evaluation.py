@@ -196,8 +196,8 @@ class ToolEvaluator:
         if self._history:
             param_dict["__history_id__"] = self.app.security.encode_id(self._history.id)
         param_dict["__galaxy_url__"] = self.compute_environment.galaxy_url()
-        if hasattr(self.job, "interactive_url") and isinstance(self.job.interactive_url, str):
-            param_dict["__tool_url_prefix__"] = ''.join([self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname])
+        # if hasattr(self.job, "interactive_url") and isinstance(self.job.interactive_url, str):
+        #     param_dict["__tool_url_prefix__"] = ''.join([self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname])
 
         param_dict.update(self.tool.template_macro_params)
         # All parameters go into the param_dict
@@ -667,11 +667,11 @@ class ToolEvaluator:
             elif inject and inject.startswith("oidc_"):
                 environment_variable_template = self.get_oidc_token(inject)
                 is_template = False
-            elif inject and inject == "entry_point_path" and environment_variable_template:
+            elif inject and inject == "entry_point_path_for_label" and environment_variable_template:
                 from galaxy.managers.interactivetool import InteractiveToolManager
 
-                entry_point_name = environment_variable_template
-                matching_eps = [ep for ep in self.job.interactivetool_entry_points if ep.name == entry_point_name]
+                entry_point_label = environment_variable_template
+                matching_eps = [ep for ep in self.job.interactivetool_entry_points if ep.label == entry_point_label]
                 if matching_eps:
                     entry_point = matching_eps[0]
                     entry_point_path = InteractiveToolManager(self.app).get_entry_point_path(self.app, entry_point)

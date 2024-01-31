@@ -319,13 +319,15 @@ class XmlToolSource(ToolSource):
             protocol = ep_el.attrib.get("protocol", "http")
             if protocol:
                 protocol = protocol.strip()
+            if requires_path_in_header_named:
+                requires_path_in_header_named = requires_path_in_header_named.strip()
             rtt.append(
                 dict(
                     port=port,
                     url=url,
                     name=name,
+                    label=label,
                     requires_domain=requires_domain,
-                    protocol=protocol,
                     requires_path_in_url=requires_path_in_url,
                     requires_path_in_header_named=requires_path_in_header_named,
                 )

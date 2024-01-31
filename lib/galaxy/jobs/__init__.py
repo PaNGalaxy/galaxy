@@ -1243,10 +1243,10 @@ class MinimalJobWrapper(HasResourceParameters):
             self.__prepare_upload_paramfile(job)
 
         tool_evaluator = self._get_tool_evaluator(job)
-        if hasattr(self.app, "interactivetool_manager"):
-            self.interactivetools = tool_evaluator.populate_interactivetools()
-            self.app.interactivetool_manager.create_interactivetool(job, self.tool, self.interactivetools)
-            job.interactive_url = self.app.interactivetool_manager.get_job_subdomain(job)
+        # if hasattr(self.app, "interactivetool_manager"):
+        #     self.interactivetools = tool_evaluator.populate_interactivetools()
+        #     self.app.interactivetool_manager.create_interactivetool(job, self.tool, self.interactivetools)
+        #     job.interactive_url = self.app.interactivetool_manager.get_job_subdomain(job)
 
         compute_environment = compute_environment or self.default_compute_environment(job)
         if hasattr(self.app, "interactivetool_manager"):
@@ -1260,7 +1260,7 @@ class MinimalJobWrapper(HasResourceParameters):
             self.environment_variables,
         ) = tool_evaluator.build()
         job.command_line = self.command_line
-
+        
         # Ensure galaxy_lib_dir is set in case there are any later chdirs
         self.galaxy_lib_dir  # noqa: B018
         if self.tool.requires_galaxy_python_environment or self.remote_command_line:
