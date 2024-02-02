@@ -76,7 +76,7 @@ class InteractiveToolSqlite:
                                   host text,
                                   port integer,
                                   info text,
-                                  protocl text,
+                                  protocol text,
                                   PRIMARY KEY (key, key_type)
                                   )"""
                         % (DATABASE_TABLE_NAME)
