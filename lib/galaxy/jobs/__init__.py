@@ -1025,6 +1025,7 @@ class MinimalJobWrapper(HasResourceParameters):
                 self.job_id,
                 metadata_strategy_override=self.metadata_strategy,
                 tool_id=self.tool.id,
+                tool_type=self.tool.tool_type,
             )
         return self.__external_output_metadata
 
@@ -1058,7 +1059,7 @@ class MinimalJobWrapper(HasResourceParameters):
     def job_io(self):
         if self._job_io is None:
             job = self.get_job()
-            work_request = WorkRequestContext(self.app, user=job.user)
+            work_request = WorkRequestContext(self.app, user=job.user, galaxy_session=job.galaxy_session)
             user_context = ProvidesUserFileSourcesUserContext(work_request)
             tool_source = self.tool and self.tool.tool_source.to_string()
             self._job_io = JobIO(
@@ -1242,6 +1243,11 @@ class MinimalJobWrapper(HasResourceParameters):
             self.__prepare_upload_paramfile(job)
 
         tool_evaluator = self._get_tool_evaluator(job)
+        if hasattr(self.app, "interactivetool_manager"):
+            self.interactivetools = tool_evaluator.populate_interactivetools()
+            self.app.interactivetool_manager.create_interactivetool(job, self.tool, self.interactivetools)
+            job.interactive_url = self.app.interactivetool_manager.get_job_subdomain(job)
+
         compute_environment = compute_environment or self.default_compute_environment(job)
         tool_evaluator.set_compute_environment(compute_environment, get_special=get_special)
         (
@@ -1251,9 +1257,6 @@ class MinimalJobWrapper(HasResourceParameters):
             self.environment_variables,
         ) = tool_evaluator.build()
         job.command_line = self.command_line
-        if hasattr(self.app, "interactivetool_manager"):
-            self.interactivetools = tool_evaluator.populate_interactivetools()
-            self.app.interactivetool_manager.create_interactivetool(job, self.tool, self.interactivetools)
 
         # Ensure galaxy_lib_dir is set in case there are any later chdirs
         self.galaxy_lib_dir  # noqa: B018
@@ -1857,8 +1860,7 @@ class MinimalJobWrapper(HasResourceParameters):
             # the tasks failed. So include the stderr, stdout, and exit code:
             return fail()
 
-
-        extended_metadata = self.external_output_metadata.extended # why was that here? and not self.tool.tool_type == "interactive"
+        extended_metadata = self.external_output_metadata.extended
 
         # We collect the stderr from tools that write their stderr to galaxy.json
         tool_provided_metadata = self.get_tool_provided_job_metadata()
@@ -1914,7 +1916,7 @@ class MinimalJobWrapper(HasResourceParameters):
                     app=self.app,
                     import_options=import_options,
                     user=job.user,
-                    tag_handler=self.app.tag_handler.create_tag_handler_session(),
+                    tag_handler=self.app.tag_handler.create_tag_handler_session(job.galaxy_session),
                 )
                 import_model_store.perform_import(history=job.history, job=job)
                 if job.state == job.states.ERROR:
@@ -1971,6 +1973,8 @@ class MinimalJobWrapper(HasResourceParameters):
                 log.debug("(%s) setting dataset %s state to ERROR", job.id, dataset_assoc.dataset.dataset.id)
                 # TODO: This is where the state is being set to error. Change it!
                 dataset_assoc.dataset.dataset.state = model.Dataset.states.ERROR
+                dataset_assoc.dataset.update_time = datetime.datetime.now()
+
                 # Pause any dependent jobs (and those jobs' outputs)
                 for dep_job_assoc in dataset_assoc.dataset.dependent_jobs:
                     self.pause(

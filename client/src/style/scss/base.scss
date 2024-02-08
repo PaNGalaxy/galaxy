@@ -205,6 +205,7 @@ $galaxy-state-border: (
     "deleted": darken($state-default-border, 30%),
     "hidden": $state-default-border,
     "setting_metadata": $state-warning-border,
+    "stopped": $state-success-border,
 );
 
 $galaxy-state-bg: (
@@ -218,6 +219,7 @@ $galaxy-state-bg: (
     "deleted": darken($state-default-bg, 30%),
     "hidden": $state-default-bg,
     "setting_metadata": $state-warning-bg,
+    "stopped": $state-success-bg,
 );
 
 @each $state in map-keys($galaxy-state-border) {

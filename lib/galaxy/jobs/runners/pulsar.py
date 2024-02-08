@@ -38,7 +38,10 @@ from pulsar.client import (
 from pulsar.client.staging import DEFAULT_DYNAMIC_COLLECTION_PATTERN
 
 from galaxy import model
-from galaxy.job_execution.compute_environment import ComputeEnvironment
+from galaxy.job_execution.compute_environment import (
+    ComputeEnvironment,
+    dataset_path_to_extra_path,
+)
 from galaxy.jobs import JobDestination
 from galaxy.jobs.command_factory import build_command
 from galaxy.jobs.runners import (
@@ -654,14 +657,19 @@ class PulsarJobRunner(AsynchronousJobRunner):
             run_results = client.full_status()
             remote_metadata_directory = run_results.get("metadata_directory", None)
             tool_stdout = run_results.get("stdout", "")
-            if tool_stdout is None:
+            tool_stderr = run_results.get("stderr", "")
+            for file in ("tool_stdout", "tool_stderr"):
+                if tool_stdout and tool_stderr:
+                    pass
                 try:
-                    stdout_path = Path(job_wrapper.working_directory) / "outputs" / "tool_stdout"
-                    stdout_file = open(stdout_path, "r")
-                    tool_stdout = stdout_file.read()
+                    file_path = Path(job_wrapper.working_directory) / "outputs" / file
+                    file_content = open(file_path, "r")
+                    if tool_stdout is None and file == "tool_stdout":
+                        tool_stdout = file_content.read()
+                    elif tool_stderr is None and file == "tool_stderr":
+                        tool_stderr = file_content.read()
                 except Exception:
                     pass
-            tool_stderr = run_results.get("stderr", "")
             job_stdout = run_results.get("job_stdout")
             job_stderr = run_results.get("job_stderr")
             exit_code = run_results.get("returncode")
@@ -670,10 +678,10 @@ class PulsarJobRunner(AsynchronousJobRunner):
             # Use Pulsar client code to transfer/copy files back
             # and cleanup job if needed.
             completed_normally = state not in [model.Job.states.ERROR, model.Job.states.DELETED]
-            if completed_normally and state == model.Job.states.STOPPED:
-                # Discard pulsar exit code (probably -9), we know the user stopped the job
-                log.debug("Setting exit code for stopped job {job_wrapper.job_id} to 0 (was {exit_code})")
-                exit_code = 0
+            #            if completed_normally and state == model.Job.states.STOPPED:
+            #                # Discard pulsar exit code (probably -9), we know the user stopped the job
+            #                log.debug("Setting exit code for stopped job {job_wrapper.job_id} to 0 (was {exit_code})")
+            #                exit_code = 0
             cleanup_job = job_wrapper.cleanup_job
             client_outputs = self.__client_outputs(client, job_wrapper)
             finish_args = dict(
@@ -736,7 +744,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 )
             return False
 
-    def stop_job(self, job_wrapper):
+    def stop_job(self, job_wrapper, soft_kill=True):
         job = job_wrapper.get_job()
         if not job.job_runner_external_id:
             return
@@ -775,7 +783,10 @@ class PulsarJobRunner(AsynchronousJobRunner):
             job_id = job.job_runner_external_id
             log.debug(f"Attempt remote Pulsar kill of job with url {pulsar_url} and id {job_id}")
             client = self.get_client(job.destination_params, job_id)
-            client.kill()
+            if soft_kill:
+                client.kill(soft_kill=soft_kill)
+            else:
+                client.kill()
 
     def recover(self, job, job_wrapper):
         """Recover jobs stuck in the queued/running state when Galaxy started."""
@@ -1147,15 +1158,13 @@ class PulsarComputeEnvironment(ComputeEnvironment):
 
     def input_extra_files_rewrite(self, dataset):
         input_path_rewrite = self.input_path_rewrite(dataset)
-        base_input_path = input_path_rewrite[0 : -len(".dat")]
-        remote_extra_files_path_rewrite = f"{base_input_path}_files"
+        remote_extra_files_path_rewrite = dataset_path_to_extra_path(input_path_rewrite)
         self.path_rewrites_input_extra[dataset.extra_files_path] = remote_extra_files_path_rewrite
         return remote_extra_files_path_rewrite
 
     def output_extra_files_rewrite(self, dataset):
         output_path_rewrite = self.output_path_rewrite(dataset)
-        base_output_path = output_path_rewrite[0 : -len(".dat")]
-        remote_extra_files_path_rewrite = f"{base_output_path}_files"
+        remote_extra_files_path_rewrite = dataset_path_to_extra_path(output_path_rewrite)
         return remote_extra_files_path_rewrite
 
     def input_metadata_rewrite(self, dataset, metadata_val):

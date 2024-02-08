@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 import time
 from datetime import (
     datetime,
@@ -36,7 +37,7 @@ log = logging.getLogger(__name__)
 STATE_COOKIE_NAME = "galaxy-oidc-state"
 NONCE_COOKIE_NAME = "galaxy-oidc-nonce"
 VERIFIER_COOKIE_NAME = "galaxy-oidc-verifier"
-KEYCLOAK_BACKENDS = {"custos", "cilogon", "keycloak"}
+KEYCLOAK_BACKENDS = {"custos", "cilogon", "keycloak","pingfed"}
 
 
 class InvalidAuthnzConfigException(Exception):
@@ -55,6 +56,11 @@ class CustosAuthnz(IdentityProvider):
         self.config["require_create_confirmation"] = oidc_backend_config.get(
             "require_create_confirmation", provider == "custos"
         )
+        self.config["authorization_endpoint"] = oidc_backend_config.get("authorization_endpoint", None)
+        self.config["token_endpoint"] = oidc_backend_config.get("token_endpoint", None)
+        self.config["revocation_endpoint"] = oidc_backend_config.get("revocation_endpoint", None)
+        self.config["userinfo_endpoint"] = oidc_backend_config.get("userinfo_endpoint", None)
+        self.config["user_extra_authorization_script"] = oidc_backend_config.get("user_extra_authorization_script", None)
         self.config["redirect_uri"] = oidc_backend_config["redirect_uri"]
         self.config["ca_bundle"] = oidc_backend_config.get("ca_bundle", None)
         self.config["pkce_support"] = oidc_backend_config.get("pkce_support", False)
@@ -67,7 +73,7 @@ class CustosAuthnz(IdentityProvider):
             self._load_config_for_cilogon()
         elif provider == "custos":
             self._load_config_for_custos()
-        elif provider == "keycloak":
+        elif provider == "keycloak" or provider == "pingfed":
             self._load_config_for_keycloak()
 
     def _decode_token_no_signature(self, token):
@@ -83,14 +89,9 @@ class CustosAuthnz(IdentityProvider):
         log.info(custos_authnz_token.access_token)
         oauth2_session = self._create_oauth2_session()
         token_endpoint = self.config["token_endpoint"]
-        if self.config.get("iam_client_secret"):
-            client_secret = self.config["iam_client_secret"]
-        else:
-            client_secret = self.config["client_secret"]
         clientIdAndSec = f"{self.config['client_id']}:{self.config['client_secret']}"  # for custos
 
         params = {
-            "client_secret": client_secret,
             "refresh_token": custos_authnz_token.refresh_token,
             "headers": {
                 "Authorization": f"Basic {util.unicodify(base64.b64encode(util.smart_str(clientIdAndSec)))}"
@@ -101,7 +102,10 @@ class CustosAuthnz(IdentityProvider):
         processed_token = self._process_token(trans, oauth2_session, token, False)
 
         custos_authnz_token.access_token = processed_token["access_token"]
-        custos_authnz_token.id_token = processed_token["id_token"]
+        if "id_token" in processed_token:
+            custos_authnz_token.id_token = processed_token["id_token"]
+        else:
+            custos_authnz_token.id_token = None
         custos_authnz_token.refresh_token = processed_token["refresh_token"]
         custos_authnz_token.expiration_time = processed_token["expiration_time"]
         custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
@@ -166,6 +170,19 @@ class CustosAuthnz(IdentityProvider):
         processed_token["username"] = self._username_from_userinfo(trans, userinfo)
         return processed_token
 
+    def _extra_user_auth(self, username, auth_script_path):
+        try:
+            result = subprocess.run(['bash', auth_script_path, username], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            exit_code = result.returncode
+            output = result.stdout + result.stderr
+            if exit_code != 0:
+                log.error(f"cannot authorize user {username}: {output}")
+                raise exceptions.AuthenticationFailed("User not allowed")
+            return
+        except Exception as e:
+            log.error(str(e))
+            raise exceptions.AuthenticationFailed("User not allowed")
+
     def callback(self, state_token, authz_code, trans, login_redirect_url):
         # Take state value to validate from token. OAuth2Session.fetch_token
         # will validate that the state query parameter value on the URL matches
@@ -184,8 +201,12 @@ class CustosAuthnz(IdentityProvider):
         expiration_time = processed_token["expiration_time"]
         refresh_expiration_time = processed_token["refresh_expiration_time"]
 
+        if self.config["user_extra_authorization_script"]:
+            self._extra_user_auth(username,self.config["user_extra_authorization_script"])
+
         # Create or update custos_authnz_token record
         custos_authnz_token = self._get_custos_authnz_token(trans.sa_session, user_id, self.config["provider"])
+
         if custos_authnz_token is None:
             user = trans.user
             existing_user = trans.sa_session.query(User).filter_by(email=email).first()
@@ -413,9 +434,10 @@ class CustosAuthnz(IdentityProvider):
         self._load_well_known_oidc_config(well_known_oidc_config)
 
     def _load_config_for_keycloak(self):
-        self.config["well_known_oidc_config_uri"] = self._get_well_known_uri_from_url(self.config["provider"])
-        well_known_oidc_config = self._fetch_well_known_oidc_config(self.config["well_known_oidc_config_uri"])
-        self._load_well_known_oidc_config(well_known_oidc_config)
+        if not "authorization_endpoint" in self.config or str(self.config["authorization_endpoint"])== "":
+            self.config["well_known_oidc_config_uri"] = self._get_well_known_uri_from_url(self.config["provider"])
+            well_known_oidc_config = self._fetch_well_known_oidc_config(self.config["well_known_oidc_config_uri"])
+            self._load_well_known_oidc_config(well_known_oidc_config)
 
     def _get_custos_credentials(self):
         clientIdAndSec = f"{self.config['client_id']}:{self.config['client_secret']}"
@@ -431,7 +453,7 @@ class CustosAuthnz(IdentityProvider):
 
     def _get_well_known_uri_from_url(self, provider):
         # TODO: Look up this URL from a Python library
-        if provider in ["custos", "keycloak"]:
+        if provider in ["custos", "keycloak", "pingfed"]:
             base_url = self.config["url"]
             # Remove potential trailing slash to avoid "//realms"
             base_url = base_url if base_url[-1] != "/" else base_url[:-1]
@@ -463,7 +485,7 @@ class CustosAuthnz(IdentityProvider):
             return self.config["verify_ssl"]
 
     def _username_from_userinfo(self, trans, userinfo):
-        username = userinfo.get("preferred_username", userinfo["email"])
+        username = userinfo.get("preferred_username", userinfo.get("username",userinfo["email"]))
         if "@" in username:
             username = username.split("@")[0]  # username created from username portion of email
         username = util.ready_name_for_url(username)

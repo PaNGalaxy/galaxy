@@ -37,6 +37,10 @@ from galaxy.managers.collections import DatasetCollectionManager
 from galaxy.managers.datasets import DatasetManager
 from galaxy.managers.hdas import HDAManager
 from galaxy.managers.lddas import LDDAManager
+from galaxy.model import (
+    Job,
+    JobParameter,
+)
 from galaxy.model.base import transaction
 from galaxy.model.index_filter_util import (
     raw_text_column_filter,
@@ -62,6 +66,8 @@ from galaxy.util.search import (
 
 log = logging.getLogger(__name__)
 
+STDOUT_LOCATION = "outputs/tool_stdout"
+STDERR_LOCATION = "outputs/tool_stderr"
 
 class JobLock(BaseModel):
     active: bool = Field(title="Job lock status", description="If active, jobs will not dispatch")
@@ -142,7 +148,7 @@ class JobManager:
                     .join(model.Workflow)
                     .filter(
                         model.Workflow.stored_workflow_id == workflow_id,
-                    )
+                        )
                     .subquery()
                 )
             elif invocation_id is not None:
@@ -156,7 +162,7 @@ class JobManager:
                 wfi_step,
                 model.ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id
                 == wfi_step.c.implicit_collection_jobs_id,
-            )
+                )
             query = query1.union(query2)
 
         search = payload.search
@@ -222,7 +228,7 @@ class JobManager:
         )
         return self.job_lock()
 
-    def get_accessible_job(self, trans, decoded_job_id, stdout_position=-1, stdout_length=0):
+    def get_accessible_job(self, trans, decoded_job_id):
         job = trans.sa_session.query(trans.app.model.Job).filter(trans.app.model.Job.id == decoded_job_id).first()
         if job is None:
             raise ObjectNotFound()
@@ -239,21 +245,39 @@ class JobManager:
                 if not self.dataset_manager.is_accessible(data_assoc.dataset.dataset, trans.user):
                     raise ItemAccessibilityException("You are not allowed to rerun this job.")
         trans.sa_session.refresh(job)
+        return job
+
+    def get_job_console_output(self, trans, job, stdout_position=-1, stdout_length=0, stderr_position=-1, stderr_length=0):
+        if job is None:
+            raise ObjectNotFound()
 
         # If stdout_length and stdout_position are good values, then load standard out and add it to status
-        if job.state == job.states.RUNNING and stdout_length > 0 and stdout_position > -1:
-            try:
-                working_directory = trans.app.object_store.get_filename(
-                    job, base_dir="job_work", dir_only=True, obj_dir=True
-                )
-                stdout_path = Path(working_directory) / "outputs" / "tool_stdout"
-                stdout_file = open(stdout_path, "r")
-                stdout_file.seek(stdout_position)
-                job.job_stdout = stdout_file.read(stdout_length)
-                job.tool_stdout = job.job_stdout
-            except Exception as e:
-                log.error("Could not read STDOUT: %s", e)
-        return job
+        console_output = dict()
+        console_output["state"] = job.state
+        if job.state == job.states.RUNNING:
+            working_directory = trans.app.object_store.get_filename(
+                job, base_dir="job_work", dir_only=True, obj_dir=True
+            )
+            if stdout_length > 0 and stdout_position > -1:
+                try:
+                    stdout_path = Path(working_directory) / STDOUT_LOCATION
+                    stdout_file = open(stdout_path, "r")
+                    stdout_file.seek(stdout_position)
+                    console_output["stdout"] = stdout_file.read(stdout_length)
+                except Exception as e:
+                    log.error("Could not read STDOUT: %s", e)
+            if stderr_length > 0 and stderr_position > -1:
+                try:
+                    stderr_path = Path(working_directory) / STDERR_LOCATION
+                    stderr_file = open(stderr_path, "r")
+                    stderr_file.seek(stderr_position)
+                    console_output["stderr"] = stderr_file.read(stderr_length)
+                except Exception as e:
+                    log.error("Could not read STDERR: %s", e)
+        else:
+            console_output["stdout"] = job.tool_stdout
+            console_output["stderr"] = job.tool_stderr
+        return console_output
 
     def stop(self, job, message=None):
         if not job.finished:
@@ -266,6 +290,18 @@ class JobManager:
         else:
             return False
 
+    def finish_early(self, job):
+        if not job.finished:
+            try:
+                job.mark_stopped(self.app.config.track_jobs_in_database)
+                session = self.app.model.session
+                with transaction(session):
+                    session.commit()
+                self.app.job_manager.stop(job, message="")
+                return True
+            except Exception as e:
+                log.error("Job Runner does not support stopping job early.")
+        return False
 
 class JobSearch:
     """Search for jobs using tool inputs or other jobs"""
@@ -341,37 +377,37 @@ class JobSearch:
                 return key, value
             return key, value
 
-        job_conditions = [
+        # build one subquery that selects a job with correct job parameters
+
+        subq = select(model.Job.id).where(
             and_(
                 model.Job.tool_id == tool_id,
-                model.Job.user == user,
+                model.Job.user_id == user.id,
                 model.Job.copied_from_job_id.is_(None),  # Always pick original job
             )
-        ]
-
+        )
         if tool_version:
-            job_conditions.append(model.Job.tool_version == str(tool_version))
+            subq = subq.where(Job.tool_version == str(tool_version))
 
         if job_state is None:
-            job_conditions.append(
-                model.Job.state.in_(
-                    [
-                        model.Job.states.NEW,
-                        model.Job.states.QUEUED,
-                        model.Job.states.WAITING,
-                        model.Job.states.RUNNING,
-                        model.Job.states.OK,
-                    ]
+            subq = subq.where(
+                Job.state.in_(
+                    [Job.states.NEW, Job.states.QUEUED, Job.states.WAITING, Job.states.RUNNING, Job.states.OK]
                 )
             )
         else:
             if isinstance(job_state, str):
-                job_conditions.append(model.Job.state == job_state)
+                subq = subq.where(Job.state == job_state)
             elif isinstance(job_state, list):
-                o = []
-                for s in job_state:
-                    o.append(model.Job.state == s)
-                job_conditions.append(or_(*o))
+                subq = subq.where(or_(*[Job.state == s for s in job_state]))
+
+        # exclude jobs with deleted outputs
+        subq = subq.where(
+            and_(
+                model.Job.any_output_dataset_collection_instances_deleted == false(),
+                model.Job.any_output_dataset_deleted == false(),
+            )
+        )
 
         for k, v in wildcard_param_dump.items():
             wildcard_value = None
@@ -387,26 +423,26 @@ class JobSearch:
             if not wildcard_value:
                 value_dump = json.dumps(v, sort_keys=True)
                 wildcard_value = value_dump.replace('"id": "__id_wildcard__"', '"id": %')
-            a = aliased(model.JobParameter)
+            a = aliased(JobParameter)
             if value_dump == wildcard_value:
-                job_conditions.append(
+                subq = subq.join(a).where(
                     and_(
-                        model.Job.id == a.job_id,
+                        Job.id == a.job_id,
                         a.name == k,
                         a.value == value_dump,
                     )
                 )
             else:
-                job_conditions.append(and_(model.Job.id == a.job_id, a.name == k, a.value.like(wildcard_value)))
+                subq = subq.join(a).where(
+                    and_(
+                        Job.id == a.job_id,
+                        a.name == k,
+                        a.value.like(wildcard_value),
+                    )
+                )
 
-        job_conditions.append(
-            and_(
-                model.Job.any_output_dataset_collection_instances_deleted == false(),
-                model.Job.any_output_dataset_deleted == false(),
-            )
-        )
+        query = select(Job.id).select_from(Job.table.join(subq, subq.c.id == Job.id))
 
-        subq = self.sa_session.query(model.Job.id).filter(*job_conditions).subquery()
         data_conditions = []
 
         # We now build the query filters that relate to the input datasets
@@ -432,14 +468,19 @@ class JobSearch:
                     c = aliased(model.HistoryDatasetAssociation)
                     d = aliased(model.JobParameter)
                     e = aliased(model.HistoryDatasetAssociationHistory)
+                    query.add_columns(a.dataset_id)
+                    used_ids.append(a.dataset_id)
+                    query = query.join(a, a.job_id == model.Job.id)
                     stmt = select([model.HistoryDatasetAssociation.id]).where(
                         model.HistoryDatasetAssociation.id == e.history_dataset_association_id
                     )
+                    # b is the HDA used for the job
+                    query = query.join(b, a.dataset_id == b.id).join(c, c.dataset_id == b.dataset_id)
                     name_condition = []
                     if identifier:
+                        query = query.join(d)
                         data_conditions.append(
                             and_(
-                                model.Job.id == d.job_id,
                                 d.name.in_({f"{_}|__identifier__" for _ in k}),
                                 d.value == json.dumps(identifier),
                             )
@@ -460,10 +501,7 @@ class JobSearch:
                     )
                     data_conditions.append(
                         and_(
-                            a.job_id == model.Job.id,
                             a.name.in_(k),
-                            a.dataset_id == b.id,  # b is the HDA used for the job
-                            c.dataset_id == b.dataset_id,
                             c.id == v,  # c is the requested job input HDA
                             # We need to make sure that the job we are looking for has been run with identical inputs.
                             # Here we deal with 3 requirements:
@@ -482,23 +520,26 @@ class JobSearch:
                             or_(b.deleted == false(), c.deleted == false()),
                         )
                     )
-
-                    used_ids.append(a.dataset_id)
                 elif t == "ldda":
                     a = aliased(model.JobToInputLibraryDatasetAssociation)
-                    data_conditions.append(and_(model.Job.id == a.job_id, a.name.in_(k), a.ldda_id == v))
+                    query = query.add_columns(a.ldda_id)
+                    query = query.join(a, a.job_id == model.Job.id)
+                    data_conditions.append(and_(a.name.in_(k), a.ldda_id == v))
                     used_ids.append(a.ldda_id)
                 elif t == "hdca":
                     a = aliased(model.JobToInputDatasetCollectionAssociation)
                     b = aliased(model.HistoryDatasetCollectionAssociation)
                     c = aliased(model.HistoryDatasetCollectionAssociation)
+                    query = query.add_columns(a.dataset_collection_id)
+                    query = (
+                        query.join(a, a.job_id == model.Job.id)
+                        .join(b, b.id == a.dataset_collection_id)
+                        .join(c, b.name == c.name)
+                    )
                     data_conditions.append(
                         and_(
-                            model.Job.id == a.job_id,
                             a.name.in_(k),
-                            b.id == a.dataset_collection_id,
                             c.id == v,
-                            b.name == c.name,
                             or_(
                                 and_(b.deleted == false(), b.id == v),
                                 and_(
@@ -516,13 +557,33 @@ class JobSearch:
                     a = aliased(model.JobToInputDatasetCollectionElementAssociation)
                     b = aliased(model.DatasetCollectionElement)
                     c = aliased(model.DatasetCollectionElement)
+                    d = aliased(model.HistoryDatasetAssociation)
+                    e = aliased(model.HistoryDatasetAssociation)
+                    query = query.add_columns(a.dataset_collection_element_id)
+                    query = (
+                        query.join(a)
+                        .join(b, b.id == a.dataset_collection_element_id)
+                        .join(
+                            c,
+                            and_(
+                                c.element_identifier == b.element_identifier,
+                                or_(c.hda_id == b.hda_id, c.child_collection_id == b.child_collection_id),
+                            ),
+                        )
+                        .outerjoin(d, d.id == c.hda_id)
+                        .outerjoin(e, e.dataset_id == d.dataset_id)
+                    )
                     data_conditions.append(
                         and_(
-                            model.Job.id == a.job_id,
                             a.name.in_(k),
-                            a.dataset_collection_element_id == b.id,
-                            b.element_identifier == c.element_identifier,
-                            c.child_collection_id == b.child_collection_id,
+                            or_(
+                                c.child_collection_id == b.child_collection_id,
+                                and_(
+                                    c.hda_id == b.hda_id,
+                                    d.id == c.hda_id,
+                                    e.dataset_id == d.dataset_id,
+                                ),
+                            ),
                             c.id == v,
                         )
                     )
@@ -530,14 +591,9 @@ class JobSearch:
                 else:
                     return []
 
-        query = (
-            self.sa_session.query(model.Job.id, *used_ids)
-            .join(subq, model.Job.id == subq.c.id)
-            .filter(*data_conditions)
-            .group_by(model.Job.id, *used_ids)
-            .order_by(model.Job.id.desc())
-        )
-        for job in query:
+            query = query.where(*data_conditions).group_by(model.Job.id, *used_ids).order_by(model.Job.id.desc())
+
+        for job in self.sa_session.execute(query):
             # We found a job that is equal in terms of tool_id, user, state and input datasets,
             # but to be able to verify that the parameters match we need to modify all instances of
             # dataset_ids (HDA, LDDA, HDCA) in the incoming param_dump to point to those used by the
@@ -572,7 +628,7 @@ class JobSearch:
                         and_(model.Job.id == a.job_id, a.name == k, a.value == json.dumps(v, sort_keys=True))
                     )
             else:
-                job_parameter_conditions = [model.Job.id == job]
+                job_parameter_conditions = [model.Job.id == job[0]]
             query = self.sa_session.query(model.Job).filter(*job_parameter_conditions)
             job = query.first()
             if job is None:
@@ -614,6 +670,7 @@ def view_show_job(trans, job, full: bool) -> typing.Dict:
                 job_stderr=job.job_stderr,
                 stderr=job.stderr,
                 stdout=job.stdout,
+                stopped=job.stopped,
                 job_messages=job.job_messages,
                 dependencies=job.dependencies,
             )

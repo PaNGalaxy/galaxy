@@ -109,6 +109,12 @@ class ObjectStore(metaclass=abc.ABCMeta):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    def construct_path(
+        self, obj, base_dir=None, dir_only=False, extra_dir=None, extra_dir_at_root=False, alt_name=None
+    ):
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def create(
         self, obj, base_dir=None, dir_only=False, extra_dir=None, extra_dir_at_root=False, alt_name=None, obj_dir=False
     ):
@@ -408,6 +414,9 @@ class BaseObjectStore(ObjectStore):
     def exists(self, obj, **kwargs):
         return self._invoke("exists", obj, **kwargs)
 
+    def construct_path(self, obj, **kwargs):
+        return self._invoke("construct_path", obj, **kwargs)
+
     def create(self, obj, **kwargs):
         return self._invoke("create", obj, **kwargs)
 
@@ -426,8 +435,8 @@ class BaseObjectStore(ObjectStore):
     def get_filename(self, obj, **kwargs):
         return self._invoke("get_filename", obj, **kwargs)
 
-    def update_cache(self, obj, **kwargs):
-        return self._invoke("update_cache", obj, **kwargs)
+    def sync_cache(self, obj, **kwargs):
+        return self._invoke("sync_cache", obj, **kwargs)
 
     def update_from_file(self, obj, **kwargs):
         return self._invoke("update_from_file", obj, **kwargs)
@@ -555,8 +564,8 @@ class ConcreteObjectStore(BaseObjectStore):
         return self.store_by
 
     # todo: refactor
-    def _update_cache(self, obj, **kwargs):
-        return self.get_filename(obj, **kwargs)
+    def _sync_cache(self, obj, **kwargs):
+        pass
 
     def _is_private(self, obj):
         return self.private
@@ -959,8 +968,8 @@ class NestedObjectStore(BaseObjectStore):
         """For the first backend that has this `obj`, get its URL."""
         return self._call_method("_get_object_url", obj, None, False, **kwargs)
 
-    def _update_cache(self, obj, **kwargs):
-        return self._call_method("_update_cache", obj, ObjectNotFound, True, **kwargs)
+    def _sync_cache(self, obj, **kwargs):
+        return self._call_method("_sync_cache", obj, ObjectNotFound, True, **kwargs)
 
     def _get_concrete_store_name(self, obj):
         return self._call_method("_get_concrete_store_name", obj, None, False)
@@ -1151,6 +1160,9 @@ class DistributedObjectStore(NestedObjectStore):
             self.weighted_backend_ids = new_weighted_backend_ids
             sleeper.sleep(120)  # Test free space every 2 minutes
 
+    def _construct_path(self, obj, **kwargs):
+        return self.backends[obj.object_store_id].construct_path(obj, **kwargs)
+
     def _create(self, obj, **kwargs):
         """The only method in which obj.object_store_id may be None."""
         object_store_id = obj.object_store_id
@@ -1318,6 +1330,9 @@ class HierarchicalObjectStore(NestedObjectStore):
                 return True
         return False
 
+    def _construct_path(self, obj, **kwargs):
+        return self.backends[0].construct_path(obj, **kwargs)
+
     def _create(self, obj, **kwargs):
         """Call the primary object store."""
         return self.backends[0].create(obj, **kwargs)
@@ -1334,10 +1349,6 @@ class HierarchicalObjectStore(NestedObjectStore):
             self.quota_enabled,
         )
         return quota_source_map
-
-    def _update_from_file(self, obj, **kwargs):
-        """Call the primary object store."""
-        self.backends[0].update_from_file(obj, **kwargs)
 
 
 class QuotaModel(BaseModel):

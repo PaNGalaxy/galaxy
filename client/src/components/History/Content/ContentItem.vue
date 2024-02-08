@@ -110,11 +110,11 @@ import { updateContentFields } from "components/History/model/queries";
 import { JobStateSummary } from "./Collection/JobStateSummary";
 import { library } from "@fortawesome/fontawesome-svg-core";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { faArrowCircleUp, faArrowCircleDown, faCheckCircle } from "@fortawesome/free-solid-svg-icons";
+import { faArrowCircleUp, faArrowCircleDown, faCheckCircle, faStopCircle } from "@fortawesome/free-solid-svg-icons";
 import { useEntryPointStore } from "stores/entryPointStore";
 import { clearDrag, setDrag } from "@/utils/setDrag.js";
 
-library.add(faArrowCircleUp, faArrowCircleDown, faCheckCircle);
+library.add(faArrowCircleUp, faArrowCircleDown, faCheckCircle, faStopCircle);
 export default {
     components: {
         CollectionDescription,
@@ -170,6 +170,8 @@ export default {
                         return state;
                     }
                 }
+            } else if (this.isDataset && this.item.stopped) {
+                return "stopped"
             } else if (this.item.state) {
                 return this.item.state;
             }

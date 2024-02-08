@@ -25,7 +25,7 @@ class InteractiveToolSqlite:
             conn = sqlite3.connect(self.sqlite_filename)
             try:
                 c = conn.cursor()
-                select = f"""SELECT token, host, port, info
+                select = f"""SELECT token, host, port, info, protocol
                             FROM {DATABASE_TABLE_NAME}
                             WHERE key=? and key_type=?"""
                 c.execute(
@@ -36,15 +36,15 @@ class InteractiveToolSqlite:
                     ),
                 )
                 try:
-                    token, host, port, info = c.fetchone()
+                    token, host, port, info, protocol = c.fetchone()
                 except TypeError:
                     log.warning("get(): invalid key: %s key_type %s", key, key_type)
                     return None
-                return dict(key=key, key_type=key_type, token=token, host=host, port=port, info=info)
+                return dict(key=key, key_type=key_type, token=token, host=host, port=port, info=info, protocol=protocol)
             finally:
                 conn.close()
 
-    def save(self, key, key_type, token, host, port, info=None):
+    def save(self, key, key_type, token, host, port, info=None, protocol=None):
         """
         Writeout a key, key_type, token, value store that is can be used for coordinating
         with external resources.
@@ -66,6 +66,7 @@ class InteractiveToolSqlite:
                                   host text,
                                   port integer,
                                   info text,
+                                  protocol text,
                                   PRIMARY KEY (key, key_type)
                                   )"""
                         % (DATABASE_TABLE_NAME)
@@ -81,8 +82,8 @@ class InteractiveToolSqlite:
                     ),
                 )
                 insert = """INSERT INTO %s
-                            (key, key_type, token, host, port, info)
-                            VALUES (?, ?, ?, ?, ?, ?)""" % (
+                            (key, key_type, token, host, port, info, protocol)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)""" % (
                     DATABASE_TABLE_NAME
                 )
                 c.execute(
@@ -94,6 +95,7 @@ class InteractiveToolSqlite:
                         host,
                         port,
                         info,
+                        protocol
                     ),
                 )
                 conn.commit()
@@ -135,6 +137,7 @@ class InteractiveToolSqlite:
             entry_point.host,
             entry_point.port,
             None,
+            entry_point.protocol,
         )
 
     def remove_entry_point(self, entry_point):
@@ -164,12 +167,18 @@ class InteractiveToolManager:
                 entry_url=entry["url"],
                 name=entry["name"],
                 requires_domain=entry["requires_domain"],
+                protocol=entry["protocol"],
                 short_token=self.app.config.interactivetools_shorten_url,
             )
             self.sa_session.add(ep)
         if flush:
             with transaction(self.sa_session):
                 self.sa_session.commit()
+
+    def get_job_subdomain(self, job):
+        # returns the url for the first entry point
+        for ep in job.interactivetool_entry_points:
+            return self.calculate_entry_point(self.app.security.encode_id, ep)
 
     def configure_entry_point(self, job, tool_port=None, host=None, port=None, protocol=None):
         return self.configure_entry_points(
@@ -188,10 +197,10 @@ class InteractiveToolManager:
             else:
                 ep.host = port_dict["host"]
                 ep.port = port_dict["port"]
+                self.save_entry_point(ep)
                 ep.protocol = port_dict["protocol"]
                 ep.configured = True
                 self.sa_session.add(ep)
-                self.save_entry_point(ep)
                 configured.append(ep)
         if configured:
             with transaction(self.sa_session):
@@ -292,6 +301,15 @@ class InteractiveToolManager:
                 self.sa_session.commit()
         self.propagator.remove_entry_point(entry_point)
 
+    def calculate_entry_point(self, encode_id, entry_point):
+        entry_point_encoded_id = encode_id(entry_point.id)
+        entry_point_class = entry_point.__class__.__name__.lower()
+        entry_point_prefix = self.app.config.interactivetools_prefix
+        entry_point_token = entry_point.token
+        if self.app.config.interactivetools_shorten_url:
+            return f"{entry_point_encoded_id}-{entry_point_token[:10]}.{entry_point_prefix}"
+        return f"{entry_point_encoded_id}-{entry_point_token}.{entry_point_class}.{entry_point_prefix}"
+
     def target_if_active(self, trans, entry_point):
         if entry_point.active and not entry_point.deleted:
             request_host = trans.request.host
@@ -309,13 +327,7 @@ class InteractiveToolManager:
             return rval
 
     def get_entry_point_subdomain(self, trans, entry_point):
-        entry_point_encoded_id = trans.security.encode_id(entry_point.id)
-        entry_point_class = entry_point.__class__.__name__.lower()
-        entry_point_prefix = self.app.config.interactivetools_prefix
-        entry_point_token = entry_point.token
-        if self.app.config.interactivetools_shorten_url:
-            return f"{entry_point_encoded_id}-{entry_point_token[:10]}.{entry_point_prefix}"
-        return f"{entry_point_encoded_id}-{entry_point_token}.{entry_point_class}.{entry_point_prefix}"
+        return self.calculate_entry_point(trans.security.encode_id, entry_point)
 
     def get_entry_point_path(self, trans, entry_point):
         entry_point_encoded_id = trans.security.encode_id(entry_point.id)

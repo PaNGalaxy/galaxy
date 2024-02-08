@@ -119,6 +119,7 @@ import galaxy.security.passwords
 import galaxy.util
 from galaxy.model.base import transaction
 from galaxy.model.custom_types import (
+    DoubleEncodedJsonType,
     JSONType,
     MetadataType,
     MutableJSONType,
@@ -702,7 +703,7 @@ class User(Base, Dictifiable, RepresentById):
     )
     active_histories = relationship(
         "History",
-        primaryjoin=(lambda: (History.user_id == User.id) & (not_(History.deleted))),  # type: ignore[has-type]
+        primaryjoin=(lambda: (History.user_id == User.id) & (not_(History.deleted)) & (not_(History.archived))),  # type: ignore[has-type]
         viewonly=True,
         order_by=lambda: desc(History.update_time),  # type: ignore[has-type]
     )
@@ -1352,6 +1353,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
     handler = Column(TrimmedString(255), index=True)
     preferred_object_store_id = Column(String(255), nullable=True)
     object_store_id_overrides = Column(JSONType)
+    stopped = Column(Boolean, index=True, default=False)
 
     user = relationship("User")
     galaxy_session = relationship("GalaxySession")
@@ -1395,6 +1397,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
         "create_time",
         "galaxy_version",
         "command_version",
+        "copied_from_job_id",
     ]
 
     _numeric_metric = JobMetricNumeric
@@ -1715,6 +1718,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             self.state = Job.states.STOPPING
         else:
             self.state = Job.states.STOPPED
+        self.stopped = True
 
     def mark_deleted(self, track_jobs_in_database=False):
         """
@@ -2821,7 +2825,9 @@ class Notification(Base, Dictifiable, RepresentById):
     variant = Column(
         String(16), index=True
     )  # Defines the 'importance' of the notification ('info', 'warning', 'urgent', etc.). Used for filtering, highlight rendering, etc
-    content = Column(JSONType)  # Structured content in JSON. Depending on the category of the notification
+    # A bug in early 23.1 led to values being stored as json string, so we use this special type to process the result value twice.
+    # content should always be a dict
+    content = Column(DoubleEncodedJsonType)
 
     user_notification_associations = relationship("UserNotificationAssociation", back_populates="notification")
 
@@ -4016,7 +4022,9 @@ class Dataset(Base, StorableObject, Serializable):
         if not getattr(self, "external_extra_files_path", None):
             if self.object_store.exists(self, dir_only=True, extra_dir=self._extra_files_rel_path):
                 return self.object_store.get_filename(self, dir_only=True, extra_dir=self._extra_files_rel_path)
-            return ""
+            return self.object_store.construct_path(
+                self, dir_only=True, extra_dir=self._extra_files_rel_path, in_cache=True
+            )
         else:
             return os.path.abspath(self.external_extra_files_path)
 
@@ -4204,6 +4212,11 @@ class Dataset(Base, StorableObject, Serializable):
         )
         serialization_options.attach_identifier(id_encoder, self, rval)
         return rval
+
+    def sync_cache(self, **kwargs):
+        object_store = self._assert_object_store_set()
+        if object_store.exists(self):
+            object_store.sync_cache(self, **kwargs)
 
 
 class DatasetSource(Base, Dictifiable, Serializable):
@@ -4918,6 +4931,9 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
 
             rval["file_metadata"] = file_metadata
 
+    def sync_cache(self, **kwargs):
+        self.dataset.sync_cache(**kwargs)
+
 
 class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable):
     """
@@ -5253,6 +5269,13 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
                 for jtoda in jtida.job.output_datasets:
                     jobs_to_unpause.update(jtoda.dataset.unpause_dependent_jobs(jobs=jobs_to_unpause))
         return jobs_to_unpause
+
+    @property
+    def stopped(self):
+        for jtoda in self.creating_job_associations:
+            if jtoda.job.stopped:
+                return True
+        return False
 
     @property
     def history_content_type(self):
@@ -9104,6 +9127,13 @@ class MetadataFile(Base, StorableObject, Serializable):
             alt_name=os.path.basename(self.file_name),
         )
 
+    def sync_cache(self, **kwargs):
+        object_store = self.dataset.object_store
+        store_by = object_store.get_store_by(self.dataset)
+        identifier = getattr(self, store_by)
+        alt_name = f"metadata_{identifier}.dat"
+        object_store.sync_cache(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name, **kwargs)
+
     @property
     def file_name(self):
         # Ensure the directory structure and the metadata file object exist
@@ -9862,13 +9892,11 @@ class Tag(Base, RepresentById):
 class ItemTagAssociation(Dictifiable):
     dict_collection_visible_keys = ["id", "user_tname", "user_value"]
     dict_element_visible_keys = dict_collection_visible_keys
-    associated_item_names: List[str] = []
     user_tname: Column
     user_value = Column(TrimmedString(255), index=True)
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        cls.associated_item_names.append(cls.__name__.replace("TagAssociation", ""))
 
     def copy(self, cls=None):
         if cls:
@@ -10703,7 +10731,7 @@ Job.any_output_dataset_collection_instances_deleted = column_property(
 )
 
 Job.any_output_dataset_deleted = column_property(
-    exists(HistoryDatasetAssociation).where(
+    exists(HistoryDatasetAssociation.id).where(
         and_(
             Job.id == JobToOutputDatasetAssociation.job_id,
             HistoryDatasetAssociation.table.c.id == JobToOutputDatasetAssociation.dataset_id,
@@ -10765,6 +10793,20 @@ WorkflowInvocationStep.subworkflow_invocation_id = column_property(
 # Set up proxy so that this syntax is possible:
 # <user_obj>.preferences[pref_name] = pref_value
 User.preferences = association_proxy("_preferences", "value", creator=UserPreference)
+
+# Optimized version of getting the current Galaxy session.
+# See https://github.com/sqlalchemy/sqlalchemy/discussions/7638 for approach
+session_partition = select(
+    GalaxySession,
+    func.row_number().over(order_by=GalaxySession.update_time, partition_by=GalaxySession.user_id).label("index"),
+).alias()
+partitioned_session = aliased(GalaxySession, session_partition)
+User.current_galaxy_session = relationship(
+    partitioned_session,
+    primaryjoin=and_(partitioned_session.user_id == User.id, session_partition.c.index < 2),
+    uselist=False,
+    viewonly=True,
+)
 
 
 @event.listens_for(HistoryDatasetCollectionAssociation, "init")

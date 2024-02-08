@@ -3,6 +3,7 @@
         <login-form
             v-if="showLogin"
             :allow-user-creation="allowUserCreation"
+            :disable-internal-login="disableInternalLogin"
             :enable-oidc="enableOidc"
             :redirect="redirect"
             :registration-warning-message="registrationWarningMessage"
@@ -41,6 +42,10 @@ export default {
         allowUserCreation: {
             type: Boolean,
             required: true,
+        },
+        disableInternalLogin: {
+            type: Boolean,
+            default: false,
         },
         enableOidc: {
             type: Boolean,

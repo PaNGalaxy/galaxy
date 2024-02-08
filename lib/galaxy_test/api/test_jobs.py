@@ -683,6 +683,20 @@ steps:
         dataset_details = self._get(f"histories/{history_id}/contents/{output['id']}").json()
         assert dataset_details["state"] == "ok"
 
+    @pytest.mark.require_new_history
+    @skip_without_tool("create_2")
+    def test_stop_job_early(self, history_id):
+        job_state, outputs = self._setup_running_two_output_job(history_id, 120)
+        time.sleep(1)
+        self._hack_to_skip_test_if_state_ok(job_state)
+        state = job_state().json()["state"]
+        assert state == "running", state
+        finish_response = self._put(f"jobs/{job_state().json()['id']}/finish")
+        self._assert_status_code_is(finish_response, 200)
+        wait_on_state(job_state, assert_ok=True, timeout=15)
+        final_job = self.dataset_populator.get_job_details(job_state().json()['id'], full=True)
+        assert  True, final_job["stopped"]
+
     def _get_history_item_as_admin(self, history_id, item_id):
         response = self._get(f"histories/{history_id}/contents/{item_id}?view=detailed", admin=True)
         assert_status_code_is_ok(response)

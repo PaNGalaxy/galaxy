@@ -1259,6 +1259,14 @@ export interface paths {
          */
         delete: operations["cleanup_histories_api_storage_histories_delete"];
     };
+    "/api/storage/histories/archived": {
+        /** Returns archived histories owned by the given user that are not purged. The results can be paginated. */
+        get: operations["archived_histories_api_storage_histories_archived_get"];
+    };
+    "/api/storage/histories/archived/summary": {
+        /** Returns information with the total storage space taken by non-purged archived histories associated with the given user. */
+        get: operations["archived_histories_summary_api_storage_histories_archived_summary_get"];
+    };
     "/api/storage/histories/discarded": {
         /** Returns all discarded histories associated with the given user. */
         get: operations["discarded_histories_api_storage_histories_discarded_get"];
@@ -3794,8 +3802,7 @@ export interface components {
              * @description The current state of this dataset.
              */
             state: components["schemas"]["DatasetState"];
-            /** Tags */
-            tags: string;
+            tags: components["schemas"]["TagCollection"];
             /**
              * Type
              * @enum {string}
@@ -7949,14 +7956,11 @@ export interface components {
         TaggableItemClass:
             | "History"
             | "HistoryDatasetAssociation"
+            | "HistoryDatasetCollectionAssociation"
             | "LibraryDatasetDatasetAssociation"
             | "Page"
-            | "WorkflowStep"
             | "StoredWorkflow"
-            | "Visualization"
-            | "HistoryDatasetCollection"
-            | "LibraryDatasetCollection"
-            | "Tool";
+            | "Visualization";
         /** ToolDataDetails */
         ToolDataDetails: {
             /**
@@ -12703,7 +12707,7 @@ export interface operations {
             header?: {
                 "run-as"?: string;
             };
-            /** @description The ID of the History. */
+            /** @description History ID or any string. */
             /** @description The ID of the item (`HDA`/`HDCA`) contained in the history. */
             /**
              * @description The type of the target history element.
@@ -15636,6 +15640,60 @@ export interface operations {
             200: {
                 content: {
                     "application/json": components["schemas"]["StorageItemsCleanupResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archived_histories_api_storage_histories_archived_get: {
+        /** Returns archived histories owned by the given user that are not purged. The results can be paginated. */
+        parameters?: {
+            /** @description Starts at the beginning skip the first ( offset - 1 ) items and begin returning at the Nth item */
+            /** @description The maximum number of items to return. */
+            /** @description String containing one of the valid ordering attributes followed by '-asc' or '-dsc' for ascending and descending order respectively. */
+            query?: {
+                offset?: number;
+                limit?: number;
+                order?: components["schemas"]["StoredItemOrderBy"];
+            };
+            /** @description The user ID that will be used to effectively make this API call. Only admins and designated users can make API calls on behalf of other users. */
+            header?: {
+                "run-as"?: string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                content: {
+                    "application/json": components["schemas"]["StoredItem"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archived_histories_summary_api_storage_histories_archived_summary_get: {
+        /** Returns information with the total storage space taken by non-purged archived histories associated with the given user. */
+        parameters?: {
+            /** @description The user ID that will be used to effectively make this API call. Only admins and designated users can make API calls on behalf of other users. */
+            header?: {
+                "run-as"?: string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                content: {
+                    "application/json": components["schemas"]["CleanableItemsSummary"];
                 };
             };
             /** @description Validation Error */

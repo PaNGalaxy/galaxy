@@ -1165,10 +1165,16 @@ class MockObjectStore:
     def get_filename(self, *args, **kwds):
         return "mock_dataset_14.dat"
 
+    def construct_path(self, *args, **kwds):
+        return "mock_dataset_14.dat"
+
     def get_store_by(self, *args, **kwds):
         return "id"
 
     def update_from_file(self, *arg, **kwds):
+        pass
+
+    def sync_cache(self, *arg, **kwds):
         pass
 
     def is_private(self, object):

@@ -56,7 +56,7 @@ def app_pair(global_conf, load_app_kwds=None, wsgi_preflight=True, **kwargs):
         galaxy.app.app = app
     else:
         try:
-            app = galaxy.app.UniverseApplication(global_conf=global_conf, **kwargs)
+            app = galaxy.app.UniverseApplication(global_conf=global_conf, is_webapp=True, **kwargs)
             galaxy.app.app = app
         except Exception:
             traceback.print_exc()
@@ -1005,6 +1005,16 @@ def populate_api_routes(webapp, app):
         "resume", "/api/jobs/{id}/resume", controller="jobs", action="resume", conditions=dict(method=["PUT"])
     )
     webapp.mapper.connect(
+        "finish", "/api/jobs/{id}/finish", controller="jobs", action="finish", conditions=dict(method=["PUT"])
+    )
+    webapp.mapper.connect(
+        "console_output",
+        "/api/jobs/{id}/console_output",
+        controller="jobs",
+        action="console_output",
+        conditions=dict(method=["GET"])
+    )
+    webapp.mapper.connect(
         "job_error", "/api/jobs/{id}/error", controller="jobs", action="error", conditions=dict(method=["POST"])
     )
     webapp.mapper.connect(
@@ -1285,12 +1295,6 @@ def wrap_in_middleware(app, global_conf, application_stack, **local_conf):
                 normalize_remote_user_email=conf.get("normalize_remote_user_email", False),
             ),
         )
-    # The recursive middleware allows for including requests in other
-    # requests or forwarding of requests, all on the server side.
-    if asbool(conf.get("use_recursive", True)):
-        from paste import recursive
-
-        app = wrap_if_allowed(app, stack, recursive.RecursiveMiddleware, args=(conf,))
 
     # Error middleware
     app = wrap_if_allowed(app, stack, ErrorMiddleware, args=(conf,))

@@ -37,7 +37,7 @@ except Exception:
 """
 
 
-def get_metadata_compute_strategy(config, job_id, metadata_strategy_override=None, tool_id=None):
+def get_metadata_compute_strategy(config, job_id, metadata_strategy_override=None, tool_id=None, tool_type=None):
     metadata_strategy = metadata_strategy_override or config.metadata_strategy
     if metadata_strategy == "legacy":
         raise Exception("legacy metadata_strategy has been removed")

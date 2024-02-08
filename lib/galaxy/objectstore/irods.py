@@ -328,6 +328,7 @@ class IRODSObjectStore(DiskObjectStore, CloudConfigMixin):
         extra_dir_at_root=False,
         alt_name=None,
         obj_dir=False,
+        in_cache=False,
         **kwargs,
     ):
         ipt_timer = ExecutionTimer()
@@ -363,6 +364,10 @@ class IRODSObjectStore(DiskObjectStore, CloudConfigMixin):
         if not dir_only:
             rel_path = os.path.join(rel_path, alt_name if alt_name else f"dataset_{self._get_object_id(obj)}.dat")
         log.debug("irods_pt _construct_path: %s", ipt_timer)
+
+        if in_cache:
+            return self._get_cache_path(rel_path)
+
         return rel_path
 
     def _get_cache_path(self, rel_path):
@@ -706,6 +711,18 @@ class IRODSObjectStore(DiskObjectStore, CloudConfigMixin):
         return content
 
     def _get_filename(self, obj, **kwargs):
+        base_dir = kwargs.get("base_dir", None)
+        dir_only = kwargs.get("dir_only", False)
+        obj_dir = kwargs.get("obj_dir", False)
+        rel_path = self._construct_path(obj, **kwargs)
+
+        # for JOB_WORK directory
+        if base_dir and dir_only and obj_dir:
+            return os.path.abspath(rel_path)
+
+        return self._get_cache_path(rel_path)
+
+    def _sync_cache(self, obj, **kwargs):
         ipt_timer = ExecutionTimer()
         base_dir = kwargs.get("base_dir", None)
         dir_only = kwargs.get("dir_only", False)

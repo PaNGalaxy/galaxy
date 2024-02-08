@@ -112,6 +112,11 @@ GENERAL_VALID = """
 </tool>
 """
 
+GENERAL_VALID_NEW_PROFILE_FMT = """
+<tool name="valid name" id="valid_id" version="1.0+galaxy1" profile="23.0">
+</tool>
+"""
+
 # test tool xml for help linter
 HELP_MULTIPLE = """
 <tool>
@@ -585,6 +590,12 @@ OUTPUTS_DUPLICATED_NAME_LABEL = """
     <outputs>
         <data name="valid_name" format="fasta"/>
         <data name="valid_name" format="fasta"/>
+        <data name="another_valid_name" format="fasta" label="same label may be OK if there is a filter">
+            <filter>a condition</filter>
+        </data>
+        <data name="yet_another_valid_name" format="fasta" label="same label may be OK if there is a filter">
+            <filter>another condition</filter>
+        </data>
     </outputs>
 </tool>
 """
@@ -1025,6 +1036,19 @@ def test_general_valid(lint_ctx):
     run_lint(lint_ctx, general.lint_general, tool_source)
     assert "Tool defines a version [1.0+galaxy1]." in lint_ctx.valid_messages
     assert "Tool specifies profile version [21.09]." in lint_ctx.valid_messages
+    assert "Tool defines an id [valid_id]." in lint_ctx.valid_messages
+    assert "Tool defines a name [valid name]." in lint_ctx.valid_messages
+    assert not lint_ctx.info_messages
+    assert len(lint_ctx.valid_messages) == 4
+    assert not lint_ctx.warn_messages
+    assert not lint_ctx.error_messages
+
+
+def test_general_valid_new_profile_fmt(lint_ctx):
+    tool_source = get_xml_tool_source(GENERAL_VALID_NEW_PROFILE_FMT)
+    run_lint(lint_ctx, general.lint_general, tool_source)
+    assert "Tool defines a version [1.0+galaxy1]." in lint_ctx.valid_messages
+    assert "Tool specifies profile version [23.0]." in lint_ctx.valid_messages
     assert "Tool defines an id [valid_id]." in lint_ctx.valid_messages
     assert "Tool defines a name [valid name]." in lint_ctx.valid_messages
     assert not lint_ctx.info_messages
@@ -1525,13 +1549,17 @@ def test_outputs_discover_tool_provided_metadata(lint_ctx):
 def test_outputs_duplicated_name_label(lint_ctx):
     tool_xml_tree = get_xml_tree(OUTPUTS_DUPLICATED_NAME_LABEL)
     run_lint(lint_ctx, outputs.lint_output, tool_xml_tree)
-    assert "2 outputs found." in lint_ctx.info_messages
+    assert "4 outputs found." in lint_ctx.info_messages
     assert len(lint_ctx.info_messages) == 1
     assert not lint_ctx.valid_messages
-    assert not lint_ctx.warn_messages
+    assert len(lint_ctx.warn_messages) == 2
+    assert "Tool output [valid_name] uses duplicated label '${tool.name} on ${on_string}'" in lint_ctx.warn_messages
+    assert (
+        "Tool output [yet_another_valid_name] uses duplicated label 'same label may be OK if there is a filter', double check if filters imply disjoint cases"
+        in lint_ctx.warn_messages
+    )
     assert "Tool output [valid_name] has duplicated name" in lint_ctx.error_messages
-    assert "Tool output [valid_name] uses duplicated label '${tool.name} on ${on_string}'" in lint_ctx.error_messages
-    assert len(lint_ctx.error_messages) == 2
+    assert len(lint_ctx.error_messages) == 1
 
 
 def test_stdio_default_for_default_profile(lint_ctx):
