@@ -132,11 +132,14 @@
     <tool file="interactive/interactivetool_bam_iobio.xml" />
     <tool file="interactive/interactivetool_cellxgene.xml" />
     <tool file="interactive/interactivetool_ethercalc.xml" />
+    <tool file="interactive/interactivetool_guacamole_desktop.xml" />
     <tool file="interactive/interactivetool_hicbrowser.xml" />
     <tool file="interactive/interactivetool_jupyter_notebook_1.0.0.xml" />
     <tool file="interactive/interactivetool_jupyter_notebook.xml" />
     <tool file="interactive/interactivetool_neo4j.xml" />
+    <tool file="interactive/interactivetool_openrefine.xml" />
     <tool file="interactive/interactivetool_phinch.xml" />
+    <tool file="interactive/interactivetool_rstudio.xml" />
   </section>
   -->
 </toolbox>
