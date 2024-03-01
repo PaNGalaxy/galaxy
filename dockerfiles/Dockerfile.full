@@ -1,0 +1,15 @@
+FROM python:3.8
+
+
+RUN apt update && apt install -y ffmpeg && curl -fsSL https://get.docker.com -o get-docker.sh && sh ./get-docker.sh
+
+WORKDIR /galaxy
+
+# copy files
+COPY . /galaxy
+
+RUN /galaxy/scripts/common_startup.sh
+RUN mkdir -p /galaxy/database/dependencies
+RUN . /galaxy/.venv/bin/activate && python ./scripts/manage_tool_dependencies.py init_if_needed && pip install rucio-clients
+
+

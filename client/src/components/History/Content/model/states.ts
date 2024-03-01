@@ -97,6 +97,12 @@ export const STATES: StateMap = {
         status: "danger",
         icon: "exclamation-triangle",
     },
+    /** the job has been manually stopped */
+    stopped: {
+        text: "This job was stopped manually.",
+        status: "stopped",
+        icon: "stop-circle",
+    },
     /** the dataset is not yet loaded in the UI. This state is only visual and transitional, it does not exist in the database. */
     placeholder: {
         status: "secondary",
@@ -105,6 +111,9 @@ export const STATES: StateMap = {
         spin: true,
     },
 } as const satisfies StateMap;
+
+};
+>>>>>>> dev:client/src/components/History/Content/model/states.js
 
 /** We want to display a single state for a dataset collection whose elements may have mixed states.
  * This list is ordered from highest to lowest priority. If any element is in error state the whole collection should be in error.

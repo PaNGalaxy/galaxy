@@ -1,10 +1,5 @@
 <template>
-    <tr
-        v-b-tooltip.hover
-        :title="`click to ${action}`"
-        @mousedown="mouseIsDown = true"
-        @mousemove="mouseIsDown ? (mouseMoved = true) : (mouseMoved = false)"
-        @mouseup="toggleExpanded()">
+    <tr>
         <td>
             {{ codeLabel }}
         </td>
@@ -13,7 +8,10 @@
                 <b-col cols="11">
                     <pre :class="codeClass">{{ codeItem }}</pre>
                 </b-col>
-                <b-col class="nopadding pointer">
+                <b-col class="nopadding pointer"
+                    v-b-tooltip.hover
+                    :title="`click to ${action}`"
+                    @mouseup="toggleExpanded()">
                     <FontAwesomeIcon :icon="iconClass" />
                 </b-col>
             </b-row>
@@ -37,9 +35,8 @@ export default {
     },
     data() {
         return {
-            mouseIsDown: false,
-            mouseMoved: false,
             expanded: false,
+            lastPos: 0,
         };
     },
     computed: {
@@ -53,10 +50,21 @@ export default {
             return this.expanded ? ["fas", "compress-alt"] : ["fas", "expand-alt"];
         },
     },
+    updated() {
+        try {
+            var codeDiv = this.$el.querySelector(".code");
+            if (codeDiv.scrollTop + codeDiv.offsetHeight >= this.lastPos - 5)  {
+                    // scroll is at the bottom
+                    codeDiv.scrollTop = codeDiv.scrollHeight;
+            }
+            this.lastPos = codeDiv.scrollHeight;
+        } catch(exception) {
+            console.debug("Code div is not present");
+        }
+    },
     methods: {
         toggleExpanded() {
-            this.mouseIsDown = false;
-            if (this.codeItem && !this.mouseMoved) {
+            if (this.codeItem) {
                 this.expanded = !this.expanded;
             }
         },
@@ -68,6 +76,12 @@ export default {
 .pointer {
     cursor: pointer;
 }
+
+.code {
+    max-height: 50em;
+    overflow: auto;
+}
+
 .nopadding {
     padding: 0;
     margin: 0;

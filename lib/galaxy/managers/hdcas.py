@@ -5,6 +5,7 @@ HistoryDatasetCollectionAssociations (HDCAs) are datasets contained or created i
 history.
 """
 import logging
+import os
 from typing import Dict
 
 from galaxy import model
@@ -27,23 +28,32 @@ from galaxy.util.zipstream import ZipstreamWrapper
 log = logging.getLogger(__name__)
 
 
-def stream_dataset_collection(dataset_collection_instance, upstream_mod_zip=False, upstream_gzip=False):
+def stream_dataset_collection(dataset_collection_instance, upstream_mod_zip=False, upstream_gzip=False, user=None):
     archive_name = f"{dataset_collection_instance.hid}: {dataset_collection_instance.name}"
     archive = ZipstreamWrapper(
         archive_name=archive_name,
         upstream_mod_zip=upstream_mod_zip,
         upstream_gzip=upstream_gzip,
     )
-    write_dataset_collection(dataset_collection_instance, archive)
+    write_dataset_collection(dataset_collection_instance, archive, user)
     return archive
 
 
-def write_dataset_collection(dataset_collection_instance, archive):
+def write_dataset_collection(dataset_collection_instance, archive, user):
     names, hdas = get_hda_and_element_identifiers(dataset_collection_instance)
     for name, hda in zip(names, hdas):
         if hda.state != hda.states.OK:
             continue
-        for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name):
+        # remove extension from dataset name if it is already in ext field
+        try:
+            file_name, file_extension = os.path.splitext(name)
+            file_extension = file_extension[1:]
+            if file_extension == hda.extension or (file_extension != "" and type(hda.datatype).__name__ == "Data"):
+                name = file_name
+                hda.extension = file_extension
+        except:
+            pass
+        for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name, user=user):
             archive.write(file_path, relpath)
     return archive
 

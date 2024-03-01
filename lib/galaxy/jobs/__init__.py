@@ -1248,6 +1248,10 @@ class MinimalJobWrapper(HasResourceParameters):
             self.__prepare_upload_paramfile(job)
 
         tool_evaluator = self._get_tool_evaluator(job)
+        if hasattr(self.app, "interactivetool_manager"):
+            self.interactivetools = tool_evaluator.populate_interactivetools()
+            self.app.interactivetool_manager.create_interactivetool(job, self.tool, self.interactivetools)
+            job.interactive_url = self.app.interactivetool_manager.get_job_subdomain(job)
         compute_environment = compute_environment or self.default_compute_environment(job)
         tool_evaluator.set_compute_environment(compute_environment, get_special=get_special)
         (
@@ -1258,6 +1262,7 @@ class MinimalJobWrapper(HasResourceParameters):
             self.interactivetools,
         ) = tool_evaluator.build()
         job.command_line = self.command_line
+
 
         # Ensure galaxy_lib_dir is set in case there are any later chdirs
         self.galaxy_lib_dir  # noqa: B018
@@ -1976,6 +1981,8 @@ class MinimalJobWrapper(HasResourceParameters):
                 log.debug("(%s) setting dataset %s state to ERROR", job.id, dataset_assoc.dataset.dataset.id)
                 # TODO: This is where the state is being set to error. Change it!
                 dataset_assoc.dataset.dataset.state = model.Dataset.states.ERROR
+                dataset_assoc.dataset.update_time = datetime.datetime.now()
+
                 # Pause any dependent jobs (and those jobs' outputs)
                 for dep_job_assoc in dataset_assoc.dataset.dependent_jobs:
                     self.pause(
@@ -2435,7 +2442,7 @@ class MinimalJobWrapper(HasResourceParameters):
                 # is a bit of hack - our object store abstractions would be stronger
                 # and more consistent if tools weren't writing there directly.
                 try:
-                    dataset.full_delete()
+                    dataset.full_delete(user=hda.user)
                 except ObjectNotFound:
                     pass
 

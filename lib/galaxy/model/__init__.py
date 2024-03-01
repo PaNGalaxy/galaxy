@@ -979,6 +979,40 @@ ON CONFLICT
 
         return tokens
 
+    def _get_social_auth(self, provider_backend):
+        if not self.social_auth:
+            return None
+        for auth in self.social_auth:
+            if auth.provider == provider_backend and auth.extra_data:
+                return auth
+        return None
+
+    def _get_custos_auth(self, provider_backend):
+        if not self.custos_auth:
+            return None
+        for auth in self.custos_auth:
+            if auth.provider == provider_backend and auth.refresh_token:
+                return auth
+        return None
+
+    def get_oidc_tokens(self, provider_backend):
+        tokens = {"id": None, "access": None, "refresh": None}
+        auth = self._get_social_auth(provider_backend)
+        if auth:
+            tokens["access"] = auth.extra_data.get("access_token", None)
+            tokens["refresh"] = auth.extra_data.get("refresh_token", None)
+            tokens["id"] = auth.extra_data.get("id_token", None)
+            return tokens
+
+        # no social auth found, check custos auth
+        auth = self._get_custos_auth(provider_backend)
+        if auth:
+            tokens["access"] = auth.access_token
+            tokens["refresh"] = auth.refresh_token
+            tokens["id"] = auth.id_token
+
+        return tokens
+
     @property
     def nice_total_disk_usage(self):
         """
@@ -1318,6 +1352,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
     handler = Column(TrimmedString(255), index=True)
     preferred_object_store_id = Column(String(255), nullable=True)
     object_store_id_overrides = Column(JSONType)
+    stopped = Column(Boolean, index=True, default=False)
 
     user = relationship("User")
     galaxy_session = relationship("GalaxySession")
@@ -1699,6 +1734,7 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             self.state = Job.states.STOPPING
         else:
             self.state = Job.states.STOPPED
+        self.stopped = True
 
     def mark_deleted(self, track_jobs_in_database=False):
         """
@@ -4138,11 +4174,11 @@ class Dataset(Base, StorableObject, Serializable):
             and len(self.history_associations) == len(self.purged_history_associations)
         )
 
-    def full_delete(self):
+    def full_delete(self, user=None):
         """Remove the file and extra files, marks deleted and purged"""
         # os.unlink( self.file_name )
         try:
-            self.object_store.delete(self)
+            self.object_store.delete(self, user=user)
         except galaxy.exceptions.ObjectNotFound:
             pass
         rel_path = self._extra_files_rel_path
@@ -4197,6 +4233,11 @@ class Dataset(Base, StorableObject, Serializable):
         )
         serialization_options.attach_identifier(id_encoder, self, rval)
         return rval
+
+    def sync_cache(self, **kwargs):
+        object_store = self._assert_object_store_set()
+        if object_store.exists(self):
+            object_store.sync_cache(self, **kwargs)
 
 
 class DatasetSource(Base, Dictifiable, Serializable):
@@ -4915,6 +4956,9 @@ class DatasetInstance(RepresentById, UsesCreateAndUpdateTime, _HasTable):
 
             rval["file_metadata"] = file_metadata
 
+    def sync_cache(self, **kwargs):
+        self.dataset.sync_cache(**kwargs)
+
 
 class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable):
     """
@@ -5011,7 +5055,7 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
             self.copy_tags_from(self.user, other_hda)
         self.dataset = new_dataset or other_hda.dataset
         if old_dataset:
-            old_dataset.full_delete()
+            old_dataset.full_delete(user=self.user)
 
     def copy(self, parent_id=None, copy_tags=None, flush=True, copy_hid=True, new_name=None):
         """
@@ -5264,6 +5308,13 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
                 for jtoda in jtida.job.output_datasets:
                     jobs_to_unpause.update(jtoda.dataset.unpause_dependent_jobs(jobs=jobs_to_unpause))
         return jobs_to_unpause
+
+    @property
+    def stopped(self):
+        for jtoda in self.creating_job_associations:
+            if jtoda.job.stopped:
+                return True
+        return False
 
     @property
     def history_content_type(self):

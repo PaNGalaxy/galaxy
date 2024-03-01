@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 import time
 from dataclasses import dataclass
 from datetime import (
@@ -41,7 +42,7 @@ log = logging.getLogger(__name__)
 STATE_COOKIE_NAME = "galaxy-oidc-state"
 NONCE_COOKIE_NAME = "galaxy-oidc-nonce"
 VERIFIER_COOKIE_NAME = "galaxy-oidc-verifier"
-KEYCLOAK_BACKENDS = {"custos", "cilogon", "keycloak"}
+KEYCLOAK_BACKENDS = {"custos", "cilogon", "keycloak","pingfed"}
 
 
 class InvalidAuthnzConfigException(Exception):
@@ -68,6 +69,7 @@ class CustosAuthnzConfiguration:
     iam_client_secret: Optional[str]
     userinfo_endpoint: Optional[str]
     credential_url: Optional[str]
+    user_extra_authorization_script: Optional[str]
 
 
 class OIDCAuthnzBase(IdentityProvider):
@@ -92,6 +94,7 @@ class OIDCAuthnzBase(IdentityProvider):
             iam_client_secret=None,
             userinfo_endpoint=None,
             credential_url=None,
+            user_extra_authorization_script=None,
         )
 
     def _decode_token_no_signature(self, token):
@@ -126,7 +129,10 @@ class OIDCAuthnzBase(IdentityProvider):
         processed_token = self._process_token(trans, oauth2_session, token, False)
 
         custos_authnz_token.access_token = processed_token["access_token"]
-        custos_authnz_token.id_token = processed_token["id_token"]
+        if "id_token" in processed_token:
+            custos_authnz_token.id_token = processed_token["id_token"]
+        else:
+            custos_authnz_token.id_token = None
         custos_authnz_token.refresh_token = processed_token["refresh_token"]
         custos_authnz_token.expiration_time = processed_token["expiration_time"]
         custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
@@ -193,6 +199,19 @@ class OIDCAuthnzBase(IdentityProvider):
         processed_token["username"] = self._username_from_userinfo(trans, userinfo)
         return processed_token
 
+    def _extra_user_auth(self, username, auth_script_path):
+        try:
+            result = subprocess.run(['bash', auth_script_path, username], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            exit_code = result.returncode
+            output = result.stdout + result.stderr
+            if exit_code != 0:
+                log.error(f"cannot authorize user {username}: {output}")
+                raise exceptions.AuthenticationFailed("User not allowed")
+            return
+        except Exception as e:
+            log.error(str(e))
+            raise exceptions.AuthenticationFailed("User not allowed")
+
     def callback(self, state_token, authz_code, trans, login_redirect_url):
         # Take state value to validate from token. OAuth2Session.fetch_token
         # will validate that the state query parameter value on the URL matches
@@ -210,6 +229,9 @@ class OIDCAuthnzBase(IdentityProvider):
         refresh_token = processed_token["refresh_token"]
         expiration_time = processed_token["expiration_time"]
         refresh_expiration_time = processed_token["refresh_expiration_time"]
+
+        if self.config.user_extra_authorization_script:
+            self._extra_user_auth(username,self.user_extra_authorization_script)
 
         # Create or update custos_authnz_token record
         custos_authnz_token = self._get_custos_authnz_token(trans.sa_session, user_id, self.config.provider)
@@ -460,7 +482,7 @@ class OIDCAuthnzBase(IdentityProvider):
 
     @staticmethod
     def _username_from_userinfo(trans, userinfo):
-        username = userinfo.get("preferred_username", userinfo["email"])
+        username = userinfo.get("preferred_username", userinfo.get("username",userinfo["email"]))
         if "@" in username:
             username = username.split("@")[0]  # username created from username portion of email
         username = util.ready_name_for_url(username)
@@ -475,6 +497,12 @@ class OIDCAuthnzBase(IdentityProvider):
 
 
 class OIDCAuthnzBaseKeycloak(OIDCAuthnzBase):
+    def __init__(self, provider, oidc_config, oidc_backend_config, idphint=None):
+        super().__init__(provider, oidc_config, oidc_backend_config, idphint)
+        self.config.extra_params = {"kc_idp_hint": oidc_backend_config.get("idphint", "oidc")}
+        self._load_config()
+
+class OIDCAuthnzBasePingfed(OIDCAuthnzBase):
     def __init__(self, provider, oidc_config, oidc_backend_config, idphint=None):
         super().__init__(provider, oidc_config, oidc_backend_config, idphint)
         self.config.extra_params = {"kc_idp_hint": oidc_backend_config.get("idphint", "oidc")}
@@ -528,6 +556,8 @@ class CustosAuthFactory:
             auth_adapter = OIDCAuthnzBaseCustos(provider, oidc_config, oidc_backend_config, idphint)
         elif provider.lower() == "keycloak":
             auth_adapter = OIDCAuthnzBaseKeycloak(provider, oidc_config, oidc_backend_config, idphint)
+        elif provider.lower() == "pingfed":
+            auth_adapter = OIDCAuthnzBasePingfed(provider, oidc_config, oidc_backend_config, idphint)
         elif provider.lower() == "cilogon":
             auth_adapter = OIDCAuthnzBaseCiLogon(provider, oidc_config, oidc_backend_config, idphint)
         else:

@@ -31,6 +31,9 @@ fs-basespace # type: basespace
 hvac
 custos-sdk
 
+# Rucio clients
+rucio-clients
+
 # Chronos client
 chronos-python==1.2.1
 

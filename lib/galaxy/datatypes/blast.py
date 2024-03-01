@@ -222,6 +222,7 @@ class _BlastDb(Data):
         If preview is `True` allows us to format the data shown in the central pane via the "eye" icon.
         If preview is `False` triggers download.
         """
+
         headers = kwd.get("headers", {})
         if not preview:
             return super().display_data(
@@ -234,6 +235,9 @@ class _BlastDb(Data):
                 ck_size=ck_size,
                 **kwd,
             )
+
+        dataset.sync_cache(user=trans.user)
+
         if self.file_ext == "blastdbn":
             title = "This is a nucleotide BLAST database"
         elif self.file_ext == "blastdbp":

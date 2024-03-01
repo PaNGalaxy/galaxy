@@ -17,7 +17,7 @@
                                 <span>{{ headerWelcome }}</span>
                             </b-card-header>
                             <b-card-body>
-                                <div>
+                                <div v-if="!disableInternalLogin">
                                     <!-- standard internal galaxy login -->
                                     <b-form-group :label="labelNameAddress" label-for="login-form-name">
                                         <b-form-input
@@ -119,6 +119,10 @@ export default {
     },
     props: {
         allowUserCreation: {
+            type: Boolean,
+            default: false,
+        },
+        disableInternalLogin: {
             type: Boolean,
             default: false,
         },

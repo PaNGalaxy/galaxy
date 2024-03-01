@@ -251,7 +251,7 @@ export function fetchMenu(options = {}) {
         userTab.menu.push({
             title: _l("Sign Out"),
             onclick: userLogout,
-            hidden: Galaxy.config.single_user,
+            hidden: Galaxy.config.single_user || Galaxy.config.hide_sign_out,
         });
     }
     menu.push(userTab);

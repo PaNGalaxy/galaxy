@@ -487,6 +487,9 @@ do
               unit_extra="$unit_extra lib test/unit"
               shift 1
           fi
+          if [ -n "$GALAXY_SKIP_EXTERNAL_DEPENDENCY_MANAGEMENT" ] ; then
+             marker="not external_dependency_management"
+          fi
           ;;
       -i|-integration|--integration)
           GALAXY_TEST_TOOL_CONF="lib/galaxy/config/sample/tool_conf.xml.sample,test/functional/tools/sample_tool_conf.xml"

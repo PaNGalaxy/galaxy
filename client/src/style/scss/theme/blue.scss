@@ -152,6 +152,8 @@ $state-default-bg: $gray-200;
 $state-default-border: $border-color;
 $state-running-bg: lighten($brand-warning, 40%);
 $state-running-border: $border-color;
+$state-stopped-bg: $brand-success;
+$state-stopped-border: $border-color;
 
 // Workflow editor
 $workflow-editor-bg: $white;

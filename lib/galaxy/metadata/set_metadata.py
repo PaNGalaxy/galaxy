@@ -371,6 +371,7 @@ def set_metadata_portable(
                 if filename and object_id:
                     unnamed_id_to_path[object_id] = os.path.join(job_context.job_working_directory, filename)
 
+    set_meta_ok = True
     for output_name, output_dict in outputs.items():
         dataset_instance_id = output_dict["id"]
         klass = getattr(galaxy.model, output_dict.get("model_class", "HistoryDatasetAssociation"))
@@ -502,6 +503,7 @@ def set_metadata_portable(
         except Exception:
             with open(filename_results_code, "w+") as tf:
                 json.dump((False, traceback.format_exc()), tf)  # setting metadata has failed somehow
+            set_meta_ok = False
         finally:
             for action in object_store_update_actions:
                 action()
@@ -510,6 +512,8 @@ def set_metadata_portable(
         export_store.push_metadata_files()
         export_store._finalize()
     write_job_metadata(tool_job_working_directory, job_metadata, set_meta, tool_provided_metadata)
+    if not set_meta_ok:
+        sys.exit(1)
 
 
 def validate_and_load_datatypes_config(datatypes_config):

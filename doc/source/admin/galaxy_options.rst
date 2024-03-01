@@ -3622,6 +3622,14 @@
 :Default: ``false``
 :Type: bool
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``disable_internal_login``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Hides internal Galaxy login form fields.
+:Default: ``false``
+:Type: bool
 
 ~~~~~~~~~~~~~~~~~~~~~~~
 ``prefer_custos_login``

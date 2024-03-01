@@ -140,6 +140,7 @@ class ConfigSerializer(base.ModelSerializer):
             "allow_user_creation": _defaults_to(False),  # schema default is True
             "use_remote_user": _defaults_to(None),  # schema default is False; or config.single_user
             "single_user": _config_is_truthy,
+            "disable_internal_login": _use_config,
             "enable_oidc": _use_config,
             "oidc": _use_config,
             "prefer_custos_login": _use_config,
@@ -171,6 +172,7 @@ class ConfigSerializer(base.ModelSerializer):
             "version_minor": _defaults_to(None),
             "version_extra": _use_config,
             "require_login": _use_config,
+            "hide_sign_out": _use_config,
             "inactivity_box_content": _use_config,
             "visualizations_visible": _use_config,
             "interactivetools_enable": _use_config,

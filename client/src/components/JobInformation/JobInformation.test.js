@@ -10,6 +10,9 @@ import jobResponse from "./testData/jobInformationResponse.json";
 jest.mock("app");
 
 const JOB_ID = "test_id";
+const STDOUT_POSITION = 0;
+const STDOUT_LENGTH = 6;
+const STDOUT_TEXT = "stdout";
 
 const localVue = getLocalVue();
 
@@ -42,6 +45,12 @@ describe("JobInformation/JobInformation.vue", () => {
     beforeEach(async () => {
         const propsData = {
             job_id: JOB_ID,
+            stdout_position: STDOUT_POSITION,
+            stdout_length: STDOUT_LENGTH,
+            stdout_text: STDOUT_TEXT,
+            stderr_position: STDOUT_POSITION,
+            stderr_length: STDOUT_LENGTH,
+            stderr_text: STDOUT_TEXT,
         };
         wrapper = mount(JobInformation, {
             propsData,

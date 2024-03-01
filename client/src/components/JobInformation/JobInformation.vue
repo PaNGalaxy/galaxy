@@ -1,6 +1,14 @@
 <template>
     <div>
-        <JobDetailsProvider auto-refresh :job-id="job_id" @update:result="updateJob" />
+        <JobDetailsProvider auto-refresh :job-id="job_id" @update:result="updateJob"/>
+        <JobConsoleOutputProvider
+            auto-refresh="True"
+            :job-id="job_id"
+            :stdout_position="stdout_position"
+            :stdout_length="stdout_length"
+            :stderr_position="stderr_position"
+            :stderr_length="stderr_length"
+            @update:result="updateConsoleOutputs"/>
         <h2 class="h-md">Job Information</h2>
         <table id="job-information" class="tabletip info_data_table">
             <tbody>
@@ -16,7 +24,7 @@
                 </tr>
                 <tr v-if="job && job.state">
                     <td>Job State</td>
-                    <td data-description="galaxy-job-state">{{ job.state }}</td>
+                    <td data-description="galaxy-job-state">{{ job.stopped ? "Stopped": job.state }}</td>
                 </tr>
                 <tr v-if="job && job.tool_version">
                     <td>Galaxy Tool Version</td>
@@ -40,9 +48,10 @@
                         {{ runTime }}
                     </td>
                 </tr>
+
                 <CodeRow v-if="job" id="command-line" :code-label="'Command Line'" :code-item="job.command_line" />
-                <CodeRow v-if="job" id="stdout" :code-label="'Tool Standard Output'" :code-item="job.tool_stdout" />
-                <CodeRow v-if="job" id="stderr" :code-label="'Tool Standard Error'" :code-item="job.tool_stderr" />
+                <CodeRow v-if="job" id="stdout" :code-label="'Tool Standard Output'" :code-item="stdout_text" />
+                <CodeRow v-if="job" id="stderr" :code-label="'Tool Standard Error'" :code-item="stderr_text" />
                 <CodeRow
                     v-if="job && job.traceback"
                     id="traceback"
@@ -78,7 +87,10 @@
 
 <script>
 import CopyToClipboard from "components/CopyToClipboard";
-import { JobDetailsProvider } from "components/providers/JobProvider";
+import { getAppRoot } from "onload/loadConfig";
+import DecodedId from "../DecodedId.vue";
+import CodeRow from "./CodeRow.vue";
+import { JobDetailsProvider, JobConsoleOutputProvider } from "components/providers/JobProvider";
 import UtcDate from "components/UtcDate";
 import { formatDuration, intervalToDuration } from "date-fns";
 import { getAppRoot } from "onload/loadConfig";
@@ -92,6 +104,7 @@ export default {
         CodeRow,
         DecodedId,
         JobDetailsProvider,
+        JobConsoleOutputProvider,
         UtcDate,
         CopyToClipboard,
     },
@@ -108,6 +121,12 @@ export default {
     data() {
         return {
             job: null,
+            stdout_position: 0,
+            stdout_length: 50000,
+            stdout_text: "",
+            stderr_position: 0,
+            stderr_length: 50000,
+            stderr_text: "",
         };
     },
     computed: {
@@ -126,7 +145,31 @@ export default {
         },
         updateJob(job) {
             this.job = job;
+            // Load stored stdout and stderr
+            if (this.jobIsTerminal) {
+                if (job.tool_stdout) {
+                    this.stdout_text += job.tool_stdout;
+                    this.stdout_position += job.tool_stdout.length;
+                }
+                if (job.tool_stderr) {
+                    this.stderr_text += job.tool_stderr;
+                    this.stderr_position += job.tool_stderr.length;
+                }
+            }
         },
+        updateConsoleOutputs(output) {
+            // Keep stdout in memory and only fetch new text via JobProvider
+            if (output && !this.jobIsTerminal) {
+                if (output.stdout != null) {
+                    this.stdout_text += output.stdout;
+                    this.stdout_position += output.stdout.length;
+                }
+                if (output.stderr != null) {
+                    this.stderr_text += output.stderr;
+                    this.stderr_position += output.stderr.length;
+                }
+            }
+        }
     },
 };
 </script>

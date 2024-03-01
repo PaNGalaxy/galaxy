@@ -1,0 +1,127 @@
+stages:
+  - build
+  - build-base
+  - deploy
+  - test
+
+variables:
+  GIT_STRATEGY: clone
+  CONTAINER_GALAXY_URL: "${CI_REGISTRY_IMAGE}"
+  CONTAINER_GALAXY_BASE_URL: "${CONTAINER_GALAXY_URL}/base"
+  CONTAINER_GALAXY_COMMIT_URL: "${CONTAINER_GALAXY_URL}/commit"
+  GALAXY_VERSION_PYTHON: 23.1.dev2+ornl
+  GALAXY_VERSION_DOCKER: 23.1.dev2.ornl
+
+# This import is for the func_rse_docker_* functions
+before_script:
+  - curl https://code.ornl.gov/rse-deployment/rse-sharables/raw/master/rse-bash-modules.sh -O
+  - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  - source rse-bash-modules.sh
+  - func_rse_docker_cleanup
+
+after_script:
+  - curl https://code.ornl.gov/rse-deployment/rse-sharables/raw/master/rse-bash-modules.sh -O
+  - source rse-bash-modules.sh
+  - func_rse_docker_cleanup
+  - sudo chown -R gitlab-runner .
+
+service-build:
+  stage: build
+  script:
+    - cp .dockerignore.src .dockerignore
+    - >    
+      docker build
+      -f dockerfiles/Dockerfile 
+      -t galaxy .
+    - docker tag galaxy $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+    - docker push $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+client-tests:
+  stage: test
+  script:
+    - >    
+      docker run
+      --entrypoint=""
+      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+      bash -c ". .venv/bin/activate && cd client && yarn run jest"
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+api-tests:
+  stage: test
+  script:
+    - >    
+      docker run
+      --entrypoint=""
+      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+      bash -c "./run_tests.sh -api"
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+unit-tests:
+  stage: test
+  script:
+    - >    
+      docker run
+      --entrypoint=""
+      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+      bash -c "GALAXY_SKIP_EXTERNAL_DEPENDENCY_MANAGEMENT=1  ./run_tests.sh -unit"
+  tags:
+    - rse-multi-builder
+  except:
+      - docker-base
+
+build-base-docker:
+  stage: build-base
+  only:
+    - docker-base
+  script:
+    - cp .dockerignore.full .dockerignore
+    - >    
+      docker build
+      -f dockerfiles/Dockerfile.full
+      -t galaxy-base .
+    - docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
+    - docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:latest
+    - docker push $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
+    - docker push $CONTAINER_GALAXY_BASE_URL:latest
+  tags:
+    - rse-multi-builder
+
+
+package:
+  stage: deploy
+  script:
+    - >
+      docker run
+      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+      bash -c ". .venv/bin/activate . && pip install build twine && cd packages/objectstore &&
+      sed -i -e '/version =/ s/= .*/= '$GALAXY_VERSION_PYTHON'/' setup.cfg &&
+      make dist && 
+      TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python3 -m twine upload --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
+      "
+  when: manual
+  except:
+      - docker-base
+  tags:
+    - rse-multi-builder
+
+tag-docker:
+  stage: deploy
+  script:
+    - docker pull $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+    - docker tag $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
+    - docker push $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
+  when: manual
+  except:
+      - docker-base
+  tags:
+    - rse-multi-builder

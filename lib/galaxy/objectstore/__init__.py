@@ -68,7 +68,6 @@ log = logging.getLogger(__name__)
 
 
 class ObjectStore(metaclass=abc.ABCMeta):
-
     """ObjectStore interface.
 
     FIELD DESCRIPTIONS (these apply to all the methods in this class):
@@ -444,6 +443,9 @@ class BaseObjectStore(ObjectStore):
     def get_filename(self, obj, **kwargs):
         return self._invoke("get_filename", obj, **kwargs)
 
+    def sync_cache(self, obj, **kwargs):
+        return self._invoke("sync_cache", obj, **kwargs)
+
     def update_from_file(self, obj, **kwargs):
         return self._invoke("update_from_file", obj, **kwargs)
 
@@ -568,6 +570,10 @@ class ConcreteObjectStore(BaseObjectStore):
 
     def _get_store_by(self, obj):
         return self.store_by
+
+    # todo: refactor
+    def _sync_cache(self, obj, **kwargs):
+        pass
 
     def _is_private(self, obj):
         return self.private
@@ -902,7 +908,6 @@ class DiskObjectStore(ConcreteObjectStore):
 
 
 class NestedObjectStore(BaseObjectStore):
-
     """
     Base for ObjectStores that use other ObjectStores.
 
@@ -971,6 +976,9 @@ class NestedObjectStore(BaseObjectStore):
         """For the first backend that has this `obj`, get its URL."""
         return self._call_method("_get_object_url", obj, None, False, **kwargs)
 
+    def _sync_cache(self, obj, **kwargs):
+        return self._call_method("_sync_cache", obj, ObjectNotFound, True, **kwargs)
+
     def _get_concrete_store_name(self, obj):
         return self._call_method("_get_concrete_store_name", obj, None, False)
 
@@ -1008,7 +1016,6 @@ class NestedObjectStore(BaseObjectStore):
 
 
 class DistributedObjectStore(NestedObjectStore):
-
     """
     ObjectStore that defers to a list of backends.
 
@@ -1401,6 +1408,10 @@ def type_to_object_store_class(store: str, fsmon: bool = False) -> Tuple[Type[Ba
         from .pithos import PithosObjectStore
 
         objectstore_class = PithosObjectStore
+    elif store == "rucio":
+        from .rucio import RucioObjectStore
+
+        objectstore_class = RucioObjectStore
     else:
         raise Exception(f"Unrecognized object store definition: {store}")
     # Disable the Pulsar object store for now until it receives some attention

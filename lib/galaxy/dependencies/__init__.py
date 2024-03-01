@@ -237,6 +237,9 @@ class ConditionalDependencies:
     def check_azure_storage(self):
         return "azure_blob" in self.object_stores
 
+    def check_rucio_clients(self):
+        return "rucio" in self.object_stores
+
     def check_kamaki(self):
         return "pithos" in self.object_stores
 
@@ -254,7 +257,7 @@ class ConditionalDependencies:
         return "anvil" in self.file_sources
 
     def check_fs_sshfs(self):
-        return "ssh" in self.file_sources
+        return "ssh" in self.file_sources or "sshoidc" in self.file_sources
 
     def check_fs_googledrivefs(self):
         return "googledrive" in self.file_sources

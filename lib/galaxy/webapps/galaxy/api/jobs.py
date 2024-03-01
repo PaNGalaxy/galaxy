@@ -444,6 +444,25 @@ class FastAPIJobs:
         job = self.service.get_job(trans, job_id=job_id)
         return JobDestinationParams(**summarize_destination_params(trans, job))
 
+    @router.put(
+        "/api/jobs/{job_id}/finish",
+        name="finish_job",
+        summary="Finished a job regardless of execution status (ie early job finish)",
+    )
+    def finish(
+            self,
+            job_id: Annotated[DecodedDatabaseIdField, JobIdPathParam],
+            trans: ProvidesUserContext,
+    ) -> List[dict]:
+        job = self.__get_job(trans, job_id)
+        if not job:
+            raise exceptions.ObjectNotFound("Could not access job with the given id")
+        if job.state == job.states.RUNNING:
+            self.job_manager.finish_early(job)
+        else:
+            exceptions.RequestParameterInvalidException(f"Job with id '{job.tool_id}' is not running.")
+        return self.__dictify_associations(trans, job.output_datasets, job.output_library_datasets)
+
     @router.post(
         "/api/jobs/search",
         name="search_jobs",

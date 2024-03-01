@@ -106,6 +106,7 @@ import { faArrowCircleDown, faArrowCircleUp, faCheckCircle, faSpinner } from "@f
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { updateContentFields } from "components/History/model/queries";
 import StatelessTags from "components/TagsMultiselect/StatelessTags";
+import { faArrowCircleUp, faArrowCircleDown, faCheckCircle, faStopCircle } from "@fortawesome/free-solid-svg-icons";
 import { useEntryPointStore } from "stores/entryPointStore";
 
 import { clearDrag, setDrag } from "@/utils/setDrag.js";
@@ -116,7 +117,8 @@ import ContentOptions from "./ContentOptions";
 import DatasetDetails from "./Dataset/DatasetDetails";
 import { HIERARCHICAL_COLLECTION_JOB_STATES, STATES } from "./model/states";
 
-library.add(faArrowCircleUp, faArrowCircleDown, faCheckCircle, faSpinner);
+library.add(faArrowCircleUp, faArrowCircleDown, faCheckCircle, faSpinner, faStopCircle);
+
 export default {
     components: {
         CollectionDescription,
@@ -176,6 +178,8 @@ export default {
                         return state;
                     }
                 }
+            } else if (this.isDataset && this.item.stopped) {
+                return "stopped"
             } else if (this.item.state) {
                 return this.item.state;
             }

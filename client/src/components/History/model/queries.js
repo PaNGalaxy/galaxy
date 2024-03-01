@@ -54,6 +54,15 @@ export async function deleteContent(content, deleteParams = {}) {
 }
 
 /**
+* Stops job and marks it as complete.
+*/
+export async function stopJob(job_id) {
+    const url = `api/jobs/${job_id}/finish`;
+    const response = await axios.put(prependPath(url));
+    return doResponse(response);
+}
+
+/**
  * Update specific fields on datasets or collections.
  * @param {Object} content content object
  * @param {Object} newFields key/value object of properties to update

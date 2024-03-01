@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Union,
 )
+from urllib.parse import urlparse
 
 from galaxy import model
 from galaxy.authnz.util import provider_name_to_backend
@@ -196,6 +197,9 @@ class ToolEvaluator:
         if self._history:
             param_dict["__history_id__"] = self.app.security.encode_id(self._history.id)
         param_dict["__galaxy_url__"] = self.compute_environment.galaxy_url()
+        if hasattr(self.job, "interactive_url") and isinstance(self.job.interactive_url, str):
+            param_dict["__tool_url_prefix__"] = ''.join([self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname])
+
         param_dict.update(self.tool.template_macro_params)
         # All parameters go into the param_dict
         param_dict.update(incoming)
@@ -533,6 +537,7 @@ class ToolEvaluator:
                 "label",
                 "url",
                 "requires_domain",
+                "protocol",
                 "requires_path_in_url",
                 "requires_path_in_header_named",
             ):

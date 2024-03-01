@@ -180,6 +180,9 @@ config/plugins/visualizations/h5web/static/script.css
 lib/galaxy_test/api/cwl/test_cwl_conformance_v1_?.py
 test/functional/tools/cwl_tools/v1.?/
 
+# Destination rules
+lib/galaxy/jobs/rules/destinations.py
+
 # Involucro tool
 involucro
 

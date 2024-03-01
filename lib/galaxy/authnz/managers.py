@@ -100,6 +100,8 @@ class AuthnzManager:
 
     def _get_idp_icon(self, idp):
         return self.oidc_backends_config[idp].get("icon") or DEFAULT_OIDC_IDP_ICONS.get(idp)
+    def _get_idp_alias(self, idp):
+        return self.oidc_backends_config[idp].get("alias") or None
 
     def _parse_oidc_backends_config(self, config_file):
         self.oidc_backends_config = {}
@@ -126,11 +128,11 @@ class AuthnzManager:
                 if idp in BACKENDS_NAME:
                     self.oidc_backends_config[idp] = self._parse_idp_config(child)
                     self.oidc_backends_implementation[idp] = "psa"
-                    self.app.config.oidc[idp] = {"icon": self._get_idp_icon(idp)}
+                    self.app.config.oidc[idp] = {"icon": self._get_idp_icon(idp),"alias":self._get_idp_alias(idp)}
                 elif idp in KEYCLOAK_BACKENDS:
                     self.oidc_backends_config[idp] = self._parse_custos_config(child)
                     self.oidc_backends_implementation[idp] = "custos"
-                    self.app.config.oidc[idp] = {"icon": self._get_idp_icon(idp)}
+                    self.app.config.oidc[idp] = {"icon": self._get_idp_icon(idp),"alias":self._get_idp_alias(idp)}
                 else:
                     raise etree.ParseError("Unknown provider specified")
             if len(self.oidc_backends_config) == 0:
@@ -168,6 +170,8 @@ class AuthnzManager:
         # this is a EGI Check-in specific config
         if config_xml.find("checkin_env") is not None:
             rtv["checkin_env"] = config_xml.find("checkin_env").text
+        if config_xml.find("alias") is not None:
+            rtv["alias"] = config_xml.find("alias").text
 
         return rtv
 
@@ -195,6 +199,21 @@ class AuthnzManager:
             rtv["icon"] = config_xml.find("icon").text
         if config_xml.find("pkce_support") is not None:
             rtv["pkce_support"] = asbool(config_xml.find("pkce_support").text)
+
+        if config_xml.find("authorization_endpoint") is not None:
+            rtv["authorization_endpoint"] = config_xml.find("authorization_endpoint").text
+        if config_xml.find("token_endpoint") is not None:
+            rtv["token_endpoint"] = config_xml.find("token_endpoint").text
+        if config_xml.find("revocation_endpoint") is not None:
+            rtv["revocation_endpoint"] = config_xml.find("revocation_endpoint").text
+        if config_xml.find("userinfo_endpoint") is not None:
+            rtv["userinfo_endpoint"] = config_xml.find("userinfo_endpoint").text
+        if config_xml.find("alias") is not None:
+            rtv["alias"] = config_xml.find("alias").text
+
+        if config_xml.find("user_extra_authorization_script") is not None:
+            rtv["user_extra_authorization_script"] = config_xml.find("user_extra_authorization_script").text
+
         return rtv
 
     def get_allowed_idps(self):

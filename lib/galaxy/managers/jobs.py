@@ -1,10 +1,12 @@
 import json
 import logging
+import traceback
 import typing
 from datetime import (
     date,
     datetime,
 )
+from pathlib import Path
 
 import sqlalchemy
 from boltons.iterutils import remap
@@ -75,6 +77,8 @@ from galaxy.util.search import (
 
 log = logging.getLogger(__name__)
 
+STDOUT_LOCATION = "outputs/tool_stdout"
+STDERR_LOCATION = "outputs/tool_stderr"
 
 class JobLock(BaseModel):
     active: bool = Field(title="Job lock status", description="If active, jobs will not dispatch")
@@ -146,6 +150,7 @@ class JobManager:
             # SQLite won't recognize Job.foo as a valid column for the ORDER BY clause due to the UNION clause, so we'll use the subquery `columns` collection (`sq.c`).
             # Ref: https://github.com/galaxyproject/galaxy/pull/16852#issuecomment-1804676322
             return select(aliased(Job, sq)), sq.c
+
 
         def add_search_criteria(stmt):
             search_filters = {
@@ -255,6 +260,38 @@ class JobManager:
         trans.sa_session.refresh(job)
         return job
 
+    def get_job_console_output(self, trans, job, stdout_position=-1, stdout_length=0, stderr_position=-1, stderr_length=0):
+        if job is None:
+            raise ObjectNotFound()
+
+        # If stdout_length and stdout_position are good values, then load standard out and add it to status
+        console_output = dict()
+        console_output["state"] = job.state
+        if job.state == job.states.RUNNING:
+            working_directory = trans.app.object_store.get_filename(
+                job, base_dir="job_work", dir_only=True, obj_dir=True
+            )
+            if stdout_length > 0 and stdout_position > -1:
+                try:
+                    stdout_path = Path(working_directory) / STDOUT_LOCATION
+                    stdout_file = open(stdout_path, "r")
+                    stdout_file.seek(stdout_position)
+                    console_output["stdout"] = stdout_file.read(stdout_length)
+                except Exception as e:
+                    log.error("Could not read STDOUT: %s", e)
+            if stderr_length > 0 and stderr_position > -1:
+                try:
+                    stderr_path = Path(working_directory) / STDERR_LOCATION
+                    stderr_file = open(stderr_path, "r")
+                    stderr_file.seek(stderr_position)
+                    console_output["stderr"] = stderr_file.read(stderr_length)
+                except Exception as e:
+                    log.error("Could not read STDERR: %s", e)
+        else:
+            console_output["stdout"] = job.tool_stdout
+            console_output["stderr"] = job.tool_stderr
+        return console_output
+
     def stop(self, job, message=None):
         if not job.finished:
             job.mark_deleted(self.app.config.track_jobs_in_database)
@@ -266,6 +303,18 @@ class JobManager:
         else:
             return False
 
+    def finish_early(self, job):
+        if not job.finished:
+            try:
+                job.mark_stopped(self.app.config.track_jobs_in_database)
+                session = self.app.model.session
+                with transaction(session):
+                    session.commit()
+                self.app.job_manager.stop(job, message="")
+                return True
+            except Exception as e:
+                log.error("Job Runner does not support stopping job early.")
+        return False
 
 class JobSearch:
     """Search for jobs using tool inputs or other jobs"""
@@ -633,6 +682,7 @@ def view_show_job(trans, job, full: bool) -> typing.Dict:
                 job_stderr=job.job_stderr,
                 stderr=job.stderr,
                 stdout=job.stdout,
+                stopped=job.stopped,
                 job_messages=job.job_messages,
                 dependencies=job.dependencies,
             )
