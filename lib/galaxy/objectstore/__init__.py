@@ -203,7 +203,8 @@ class ObjectStore(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def get_filename(
-        self, obj, base_dir=None, dir_only=False, extra_dir=None, extra_dir_at_root=False, alt_name=None, obj_dir=False
+        self, obj, base_dir=None, dir_only=False, extra_dir=None, extra_dir_at_root=False, alt_name=None, obj_dir=False,
+            sync_cache=False, user=None, auth_token=None
     ):
         """
         Get the expected filename with absolute path for object with id `obj.id`.
@@ -443,9 +444,6 @@ class BaseObjectStore(ObjectStore):
     def get_filename(self, obj, **kwargs):
         return self._invoke("get_filename", obj, **kwargs)
 
-    def sync_cache(self, obj, **kwargs):
-        return self._invoke("sync_cache", obj, **kwargs)
-
     def update_from_file(self, obj, **kwargs):
         return self._invoke("update_from_file", obj, **kwargs)
 
@@ -570,10 +568,6 @@ class ConcreteObjectStore(BaseObjectStore):
 
     def _get_store_by(self, obj):
         return self.store_by
-
-    # todo: refactor
-    def _sync_cache(self, obj, **kwargs):
-        pass
 
     def _is_private(self, obj):
         return self.private
@@ -975,9 +969,6 @@ class NestedObjectStore(BaseObjectStore):
     def _get_object_url(self, obj, **kwargs):
         """For the first backend that has this `obj`, get its URL."""
         return self._call_method("_get_object_url", obj, None, False, **kwargs)
-
-    def _sync_cache(self, obj, **kwargs):
-        return self._call_method("_sync_cache", obj, ObjectNotFound, True, **kwargs)
 
     def _get_concrete_store_name(self, obj):
         return self._call_method("_get_concrete_store_name", obj, None, False)

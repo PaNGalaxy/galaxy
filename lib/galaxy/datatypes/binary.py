@@ -604,15 +604,15 @@ class BamNative(CompressedArchive, _BamOrSam):
             return f"Binary bam alignments file ({nice_size(dataset.get_size())})"
 
     def to_archive(self, dataset: DatasetProtocol, name: str = "", trans=None) -> Iterable:
-        dataset.sync_cache(user=trans.user)
+        file_name = dataset.get_file_name(user=trans.user)
         rel_paths = []
         file_paths = []
-        rel_paths.append(f"{name or dataset.get_file_name()}.{dataset.extension}")
-        file_paths.append(dataset.get_file_name())
+        rel_paths.append(f"{name or file_name}.{dataset.extension}")
+        file_paths.append(file_name)
         # We may or may not have a bam index file (BamNative doesn't have it, but also index generation may have failed)
         if dataset.metadata.bam_index:
-            rel_paths.append(f"{name or dataset.get_file_name()}.{dataset.extension}.bai")
-            file_paths.append(dataset.metadata.bam_index.get_file_name())
+            rel_paths.append(f"{name or file_name}.{dataset.extension}.bai")
+            file_paths.append(dataset.metadata.bam_index.get_file_name(user=trans.user))
         return zip(file_paths, rel_paths)
 
     def groom_dataset_content(self, file_name: str) -> None:

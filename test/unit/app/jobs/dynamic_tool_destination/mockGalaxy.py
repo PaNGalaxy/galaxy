@@ -43,7 +43,7 @@ class Dataset:
     def get_metadata(self):
         return self.metadata
 
-    def get_file_name(self, sync_cache=True):
+    def get_file_name(self, sync_cache=True, user=None):
         return self.file_name_
 
 
