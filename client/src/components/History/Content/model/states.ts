@@ -5,7 +5,7 @@ type DatasetState = components["schemas"]["DatasetState"];
 type State = DatasetState | "failed" | "placeholder";
 
 interface StateRepresentation {
-    status: "success" | "warning" | "info" | "danger" | "secondary";
+    status: "success" | "warning" | "info" | "danger" | "secondary" | "stopped";
     text?: string;
     icon?: string;
     spin?: boolean;
@@ -111,9 +111,6 @@ export const STATES: StateMap = {
         spin: true,
     },
 } as const satisfies StateMap;
-
-};
->>>>>>> dev:client/src/components/History/Content/model/states.js
 
 /** We want to display a single state for a dataset collection whose elements may have mixed states.
  * This list is ordered from highest to lowest priority. If any element is in error state the whole collection should be in error.

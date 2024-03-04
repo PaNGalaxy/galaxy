@@ -1259,7 +1259,7 @@ class MinimalJobWrapper(HasResourceParameters):
             self.version_command_line,
             self.extra_filenames,
             self.environment_variables,
-            self.interactivetools,
+#            self.interactivetools,
         ) = tool_evaluator.build()
         job.command_line = self.command_line
 

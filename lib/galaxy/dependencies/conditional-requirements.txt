@@ -32,7 +32,7 @@ hvac
 custos-sdk
 
 # Rucio clients
-rucio-clients
+rucio-clients==33.6.0
 
 # Chronos client
 chronos-python==1.2.1

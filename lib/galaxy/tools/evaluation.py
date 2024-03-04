@@ -521,10 +521,10 @@ class ToolEvaluator:
 
     def _create_interactivetools_entry_points(self):
         if hasattr(self.app, "interactivetool_manager"):
-            self.interactivetools = self._populate_interactivetools_template()
+            self.interactivetools = self.populate_interactivetools()
             self.app.interactivetool_manager.create_interactivetool(self.job, self.tool, self.interactivetools)
 
-    def _populate_interactivetools_template(self):
+    def populate_interactivetools(self):
         """
         Populate InteractiveTools templated values.
         """
@@ -582,9 +582,9 @@ class ToolEvaluator:
         compute environment.
         """
         config_file = self.tool.config_file
-        global_tool_logs(
-            self._create_interactivetools_entry_points, config_file, "Building Interactive Tool Entry Points"
-        )
+#        global_tool_logs(
+#            self._create_interactivetools_entry_points, config_file, "Building Interactive Tool Entry Points"
+#        )
         global_tool_logs(self._build_config_files, config_file, "Building Config Files")
         global_tool_logs(self._build_param_file, config_file, "Building Param File")
         global_tool_logs(self._build_command_line, config_file, "Building Command Line")
@@ -595,7 +595,7 @@ class ToolEvaluator:
             self.version_command_line,
             self.extra_filenames,
             self.environment_variables,
-            self.interactivetools,
+#            self.interactivetools,
         )
 
     def _build_command_line(self):

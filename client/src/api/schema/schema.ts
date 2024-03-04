@@ -3547,6 +3547,8 @@ export interface components {
             | "setting_metadata"
             | "failed_metadata"
             | "deferred"
+/** ndip_todo: is this a right place?      */
+            | "stopped"
             | "discarded";
         /** DatasetStorageDetails */
         DatasetStorageDetails: {

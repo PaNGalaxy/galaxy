@@ -1,30 +1,34 @@
-import copy
-import time
+import hashlib
+from typing import Optional
+
+from .caching import (
+    CacheTarget,
+    enable_cache_monitor,
+    InProcessCacheMonitor,
+    parse_caching_config_dict_from_xml,
+)
 
 try:
     from ..authnz.util import provider_name_to_backend
 except ImportError:
-    provider_name_to_backend = None
-    pass
+    provider_name_to_backend = None  # type: ignore[misc,assignment]
+
 import logging
 import os
 import shutil
 
-import rucio.common
-from rucio.client import Client
-from rucio.client.downloadclient import DownloadClient
-from rucio.client.uploadclient import UploadClient
-from rucio.common import utils
-from rucio.common.exception import (  # type: ignore
-    InputValidationError,
-    NoFilesUploaded,
-    NotAllFilesUploaded,
-    RSENotFound,
-    RSEProtocolNotSupported,
-    RSEWriteBlocked,
-)
-from rucio.common.utils import generate_uuid
-from rucio.rse import rsemanager as rsemgr
+try:
+    import rucio.common
+    from rucio.client import Client
+    from rucio.client.downloadclient import DownloadClient
+    from rucio.client.uploadclient import UploadClient
+
+    from .rucio_extra_clients import (
+        DeleteClient,
+        InPlaceIngestClient,
+    )
+except ImportError:
+    Client = None
 
 from galaxy.exceptions import (
     ObjectInvalid,
@@ -41,189 +45,11 @@ from ..objectstore import ConcreteObjectStore
 
 log = logging.getLogger(__name__)
 
-
-class DeleteClient(UploadClient):
-    def delete(self, items, forced_schemes=None, ignore_availability=False):
-        for item in items:
-            self._delete_item(item, forced_schemes, ignore_availability)
-
-    def _delete_item(self, item, forced_schemes, ignore_availability):
-        logger = self.logger
-        dids = [item["did"]]
-        files = list(next(self.client.list_replicas(dids))["pfns"].items())
-        for file in files:
-            pfn = file[0]
-            rse = file[1]["rse"]
-            force_scheme = None
-            for rse_scheme in forced_schemes or []:
-                if rse == rse_scheme["rse"]:
-                    force_scheme = rse_scheme["scheme"]
-            if not self.rses.get(rse):
-                rse_settings = self.rses.setdefault(rse, rsemgr.get_rse_info(rse, vo=self.client.vo))
-                if not ignore_availability and rse_settings["availability_delete"] != 1:
-                    logger(logging.DEBUG, "%s is not available for deletion. No actions have been taken" % rse)
-                    continue
-
-            # protocol handling and deletion
-            rse_settings = self.rses[rse]
-            protocols = rsemgr.get_protocols_ordered(rse_settings=rse_settings, operation="delete", scheme=force_scheme)
-            protocols.reverse()
-            success = False
-            while not success and len(protocols):
-                protocol = protocols.pop()
-                cur_scheme = protocol["scheme"]
-                try:
-                    protocol_delete = self._create_protocol(rse_settings, "delete", force_scheme=cur_scheme)
-                    protocol_delete.delete(pfn)
-                    success = True
-                except Exception as error:
-                    logger(logging.WARNING, "Delete attempt failed")
-                    logger(logging.INFO, "Exception: %s" % str(error), exc_info=True)
-            logger(logging.DEBUG, "Successfully deleted dataset %s" % pfn)
-
-
-class InPlaceIngestClient(UploadClient):
-    def ingest(self, items, summary_file_path=None, traces_copy_out=None, ignore_availability=False, activity=None):
-        """
-        :param items: List of dictionaries. Each dictionary describing a file to upload. Keys:
-            path                  - path of the file that will be uploaded
-            path                  - path of the file that will be uploaded
-            rse                   - rse expression/name (e.g. 'CERN-PROD_DATADISK') where to upload the file
-            did_scope             - Optional: custom did scope (Default: user.<account>)
-            did_name              - Optional: custom did name (Default: name of the file)
-            dataset_scope         - Optional: custom dataset scope
-            dataset_name          - Optional: custom dataset name
-            dataset_meta          - Optional: custom metadata for dataset
-            impl                  - Optional: name of the protocol implementation to be used to upload this item.
-            force_scheme          - Optional: force a specific scheme (if PFN upload this will be overwritten) (Default: None)
-            pfn                   - Optional: use a given PFN (this sets no_register to True, and no_register becomes mandatory)
-            no_register           - Optional: if True, the file will not be registered in the rucio catalogue
-            register_after_upload - Optional: if True, the file will be registered after successful upload
-            lifetime              - Optional: the lifetime of the file after it was uploaded
-            transfer_timeout      - Optional: time after the upload will be aborted
-            guid                  - Optional: guid of the file
-            recursive             - Optional: if set, parses the folder structure recursively into collections
-        :param summary_file_path: Optional: a path where a summary in form of a json file will be stored
-        :param traces_copy_out: reference to an external list, where the traces should be uploaded
-        :param ignore_availability: ignore the availability of a RSE
-        :param activity: the activity set to the rule if no dataset is specified
-
-        :returns: 0 on success
-
-        :raises InputValidationError: if any input arguments are in a wrong format
-        :raises RSEWriteBlocked: if a given RSE is not available for writing
-        :raises NoFilesUploaded: if no files were successfully uploaded
-        :raises NotAllFilesUploaded: if not all files were successfully uploaded
-        """
-        # helper to get rse from rse_expression:
-
-        logger = self.logger
-        self.trace["uuid"] = generate_uuid()
-
-        # check given sources, resolve dirs into files, and collect meta infos
-        files = self._collect_and_validate_file_info(items)
-        logger(logging.DEBUG, "Num. of files that upload client is processing: {}".format(len(files)))
-
-        # check if RSE of every file is available for writing
-        # and cache rse settings
-        registered_dataset_dids = set()
-        registered_file_dids = set()
-        rse_expression = None
-        for file in files:
-            rse = file["rse"]
-            if not self.rses.get(rse):
-                rse_settings = self.rses.setdefault(rse, rsemgr.get_rse_info(rse, vo=self.client.vo))
-                if not ignore_availability and rse_settings["availability_write"] != 1:
-                    raise RSEWriteBlocked("%s is not available for writing. No actions have been taken" % rse)
-
-            dataset_scope = file.get("dataset_scope")
-            dataset_name = file.get("dataset_name")
-            file["rse"] = rse
-            if dataset_scope and dataset_name:
-                dataset_did_str = "%s:%s" % (dataset_scope, dataset_name)
-                file["dataset_did_str"] = dataset_did_str
-                registered_dataset_dids.add(dataset_did_str)
-
-            registered_file_dids.add("%s:%s" % (file["did_scope"], file["did_name"]))
-        wrong_dids = registered_file_dids.intersection(registered_dataset_dids)
-        if len(wrong_dids):
-            raise InputValidationError("DIDs used to address both files and datasets: %s" % str(wrong_dids))
-        logger(logging.DEBUG, "Input validation done.")
-
-        # clear this set again to ensure that we only try to register datasets once
-        registered_dataset_dids = set()
-        num_succeeded = 0
-        summary = []
-        for file in files:
-            basename = file["basename"]
-            logger(logging.INFO, "Preparing upload for file %s" % basename)
-
-            pfn = file.get("pfn")
-            force_scheme = file.get("force_scheme")
-            impl = file.get("impl")
-
-            trace = copy.deepcopy(self.trace)
-            # appending trace to list reference, if the reference exists
-            if traces_copy_out is not None:
-                traces_copy_out.append(trace)
-
-            rse = file["rse"]
-            trace["scope"] = file["did_scope"]
-            trace["datasetScope"] = file.get("dataset_scope", "")
-            trace["dataset"] = file.get("dataset_name", "")
-            trace["remoteSite"] = rse
-            trace["filesize"] = file["bytes"]
-
-            file_did = {"scope": file["did_scope"], "name": file["did_name"]}
-            dataset_did_str = file.get("dataset_did_str")
-            rse_settings = self.rses[rse]
-            is_deterministic = rse_settings.get("deterministic", True)
-            if not is_deterministic and not pfn:
-                logger(logging.ERROR, "PFN has to be defined for NON-DETERMINISTIC RSE.")
-                continue
-            if pfn and is_deterministic:
-                logger(
-                    logging.WARNING,
-                    "Upload with given pfn implies that no_register is True, except non-deterministic RSEs",
-                )
-                no_register = True
-
-            self._register_file(
-                file, registered_dataset_dids, ignore_availability=ignore_availability, activity=activity
-            )
-
-            file["upload_result"] = {0: True, 1: None, "success": True, "pfn": pfn}  # needs to be removed
-            num_succeeded += 1
-            trace["transferStart"] = time.time()
-            trace["transferEnd"] = time.time()
-            trace["clientState"] = "DONE"
-            file["state"] = "A"
-            logger(logging.INFO, "Successfully uploaded file %s" % basename)
-            self._send_trace(trace)
-
-            if summary_file_path:
-                summary.append(copy.deepcopy(file))
-
-            replica_for_api = self._convert_file_for_api(file)
-            try:
-                self.client.update_replicas_states(rse, files=[replica_for_api])
-            except Exception as error:
-                logger(logging.ERROR, "Failed to update replica state for file {}".format(basename))
-                logger(logging.DEBUG, "Details: {}".format(str(error)))
-
-            # add file to dataset if needed
-            if dataset_did_str and not no_register:
-                try:
-                    self.client.attach_dids(file["dataset_scope"], file["dataset_name"], [file_did])
-                except Exception as error:
-                    logger(logging.WARNING, "Failed to attach file to the dataset")
-                    logger(logging.DEBUG, "Attaching to dataset {}".format(str(error)))
-
-        if num_succeeded == 0:
-            raise NoFilesUploaded()
-        elif num_succeeded != len(files):
-            raise NotAllFilesUploaded()
-        return 0
+NO_RUCIO_ERROR_MESSAGE = (
+    "ObjectStore configured to use Rucio, but no rucio-clients dependency available."
+    "Please install and properly configure rucio-clients or modify Object "
+    "Store configuration."
+)
 
 
 def _config_xml_error(tag):
@@ -232,17 +58,20 @@ def _config_xml_error(tag):
 
 
 def _config_dict_error(key):
-    msg = "No {key} key in config dictionary".format(key=key)
+    msg = f"No {key} key in config dictionary"
     raise Exception(msg)
+
+
+def _encode_key(input_string):
+    input_bytes = input_string.encode("utf-8")
+    sha256_hash = hashlib.sha256(input_bytes)
+    hashed_string = sha256_hash.hexdigest()
+    return hashed_string
 
 
 def parse_config_xml(config_xml):
     try:
-        c_xml = config_xml.findall("cache")
-        if not c_xml:
-            _config_xml_error("cache")
-        cache_size = float(c_xml[0].get("size", -1))
-        staging_path = c_xml[0].get("path", None)
+        cache_dict = parse_caching_config_dict_from_xml(config_xml)
 
         attrs = ("type", "path")
         e_xml = config_xml.findall("extra_dir")
@@ -250,40 +79,62 @@ def parse_config_xml(config_xml):
             _config_xml_error("extra_dir")
         extra_dirs = [{k: e.get(k) for k in attrs} for e in e_xml]
 
-        attrs = ("rse", "scheme", "ignore_checksum")
+        attrs_schemes = ("rse", "scheme", "ignore_checksum")
         e_xml = config_xml.findall("rucio_download_scheme")
         rucio_download_schemes = []
         if e_xml:
-            rucio_download_schemes = [{k: e.get(k) for k in attrs} for e in e_xml]
+            rucio_download_schemes = [{k: e.get(k) for k in attrs_schemes} for e in e_xml]
 
-        oidc_providers = []
-        e_xml = config_xml.findall("oidc_provider")
-        if e_xml:
-            oidc_providers = [e.text for e in e_xml]
+        oidc_provider = config_xml.findtext("oidc_provider", None)
+        enable_cache_mon = string_as_bool(config_xml.findtext("enable_cache_monitor", "False"))
 
-        e_xml = config_xml.findall("rucio")
+        e_xml = config_xml.findall("rucio_upload_scheme")
         if e_xml:
-            rucio_write_rse_name = e_xml[0].get("write_rse_name", None)
-            rucio_write_rse_scheme = e_xml[0].get("write_rse_scheme", None)
+            rucio_upload_rse_name = e_xml[0].get("rse", None)
+            rucio_upload_scheme = e_xml[0].get("scheme", None)
             rucio_scope = e_xml[0].get("scope", None)
             rucio_register_only = string_as_bool(e_xml[0].get("register_only", "False"))
         else:
-            rucio_write_rse_name = None
-            rucio_write_rse_scheme = None
+            rucio_upload_rse_name = None
+            rucio_upload_scheme = None
             rucio_scope = None
             rucio_register_only = False
+            oidc_provider = None
+
+        e_xml = config_xml.findall("rucio_auth")
+        if not e_xml:
+            _config_xml_error("rucio_auth")
+        rucio_account = e_xml[0].get("account", None)
+        rucio_auth_host = e_xml[0].get("host", None)
+        rucio_username = e_xml[0].get("username", None)
+        rucio_password = e_xml[0].get("password", None)
+        rucio_auth_type = e_xml[0].get("type", "userpass")
+
+        e_xml = config_xml.findall("rucio_connection")
+        if not e_xml:
+            _config_xml_error("rucio_connection")
+        rucio_host = e_xml[0].get("host", None)
+
+        rucio_dict = {
+            "upload_rse_name": rucio_upload_rse_name,
+            "upload_scheme": rucio_upload_scheme,
+            "scope": rucio_scope,
+            "register_only": rucio_register_only,
+            "download_schemes": rucio_download_schemes,
+            "account": rucio_account,
+            "auth_host": rucio_auth_host,
+            "username": rucio_username,
+            "password": rucio_password,
+            "auth_type": rucio_auth_type,
+            "host": rucio_host,
+        }
+
         return {
-            "cache": {
-                "size": cache_size,
-                "path": staging_path,
-            },
+            "cache": cache_dict,
+            "rucio": rucio_dict,
             "extra_dirs": extra_dirs,
-            "rucio_write_rse_name": rucio_write_rse_name,
-            "rucio_write_rse_scheme": rucio_write_rse_scheme,
-            "rucio_scope": rucio_scope,
-            "rucio_register_only": rucio_register_only,
-            "rucio_download_schemes": rucio_download_schemes,
-            "oidc_providers": oidc_providers,
+            "oidc_provider": oidc_provider,
+            "enable_cache_monitor": enable_cache_mon,
         }
     except Exception:
         # Toss it back up after logging, we can't continue loading at this point.
@@ -293,16 +144,25 @@ def parse_config_xml(config_xml):
 
 class RucioBroker:
     def __init__(self, rucio_config):
-        self.write_rse_name = rucio_config["rucio_write_rse_name"]
-        self.write_rse_scheme = rucio_config["rucio_write_rse_scheme"]
-        self.scope = rucio_config["rucio_scope"]
-        self.register_only = rucio_config["rucio_register_only"]
-        self.download_schemes = rucio_config["rucio_download_schemes"]
+        self._temp_file_name = None
+        self.config = rucio_config
+        self.upload_scheme = rucio_config["upload_scheme"]
+        self.upload_rse_name = rucio_config["upload_rse_name"]
+        self.scope = rucio_config["scope"]
+        self.register_only = rucio_config["register_only"]
+        self.download_schemes = rucio_config["download_schemes"]
+        if Client is None:
+            raise Exception(NO_RUCIO_ERROR_MESSAGE)
         rucio.common.utils.PREFERRED_CHECKSUM = "md5"
-        # rucio config is in a system rucio.cfg file
 
     def get_rucio_client(self):
-        client = Client()
+        client = Client(
+            rucio_host=self.config["host"],
+            auth_host=self.config["auth_host"],
+            account=self.config["account"],
+            auth_type=self.config["auth_type"],
+            creds={"username": self.config["username"], "password": self.config["password"]},
+        )
         return client
 
     def get_rucio_upload_client(self, auth_token=None):
@@ -330,10 +190,10 @@ class RucioBroker:
         return ic
 
     def register(self, key, source_path):
-        key = os.path.basename(key)
+        key = _encode_key(key)
         item = {
             "path": source_path,
-            "rse": self.write_rse_name,
+            "rse": self.upload_rse_name,
             "did_scope": self.scope,
             "did_name": key,
             "pfn": f"file://localhost/{source_path}",
@@ -342,19 +202,19 @@ class RucioBroker:
         self.get_rucio_ingest_client().ingest(items)
 
     def upload(self, key, source_path):
-        key = os.path.basename(key)
+        key = _encode_key(key)
         item = {
             "path": source_path,
-            "rse": self.write_rse_name,
+            "rse": self.upload_rse_name,
             "did_scope": self.scope,
             "did_name": key,
-            "force_scheme": self.write_rse_scheme,
+            "force_scheme": self.upload_scheme,
         }
         items = [item]
         self.get_rucio_upload_client().upload(items)
 
     def download(self, key, dest_path, auth_token):
-        key = os.path.basename(key)
+        key = _encode_key(key)
         base_dir = os.path.dirname(dest_path)
         dids = [{"scope": self.scope, "name": key}]
         try:
@@ -380,37 +240,38 @@ class RucioBroker:
                 }
             items = [item]
             download_client = self.get_rucio_download_client(auth_token=auth_token)
-            download_client.download_dids(items)
+            res = download_client.download_dids(items)
+            os.replace(res[0]["dest_file_paths"][0],dest_path)
         except Exception as e:
-            log.exception("Cannot download file:" + str(e))
+            log.exception(f"Cannot download file: {str(e)}")
             return False
         return True
 
     def data_object_exists(self, key):
-        key = os.path.basename(key)
+        key = _encode_key(key)
         dids = [{"scope": self.scope, "name": key}]
         try:
             repl = next(self.get_rucio_client().list_replicas(dids))
             return "AVAILABLE" in repl["states"].values()
-        except:
+        except Exception as e:
             return False
 
     def get_size(self, key):
-        key = os.path.basename(key)
+        key = _encode_key(key)
         dids = [{"scope": self.scope, "name": key}]
         try:
             repl = next(self.get_rucio_client().list_replicas(dids))
             return repl["bytes"]
-        except:
+        except Exception:
             return 0
 
     def delete(self, key, auth_token):
-        key = os.path.basename(key)
+        key = _encode_key(key)
         try:
             items = [{"did": {"scope": self.scope, "name": key}}]
             self.get_rucio_delete_client(auth_token=auth_token).delete(items, self.download_schemes, True)
         except Exception as e:
-            log.exception("Cannot delete file:" + str(e))
+            log.exception(f"Cannot delete file: {e}")
             return False
         return True
 
@@ -423,48 +284,36 @@ class RucioObjectStore(ConcreteObjectStore):
     Galaxy at some future point or significantly modified.
     """
 
+    cache_monitor: Optional[InProcessCacheMonitor] = None
+
     store_type = "rucio"
 
     def to_dict(self):
         rval = super().to_dict()
-        rval.update(self.rucio_config)
-        rval["cache"] = dict()
-        rval["cache"]["size"] = self.cache_size
-        rval["cache"]["path"] = self.staging_path
-        rval["oidc_providers"] = self.oidc_providers
+        rval["rucio"] = self.rucio_config
+        rval["cache"] = self.cache_config
+        rval["oidc_provider"] = self.oidc_provider
+        rval["enable_cache_monitor"] = self.enable_cache_monitor
         return rval
 
     def __init__(self, config, config_dict):
         super().__init__(config, config_dict)
-        self.rucio_config = {}
-        self.rucio_config["rucio_write_rse_name"] = config_dict.get("rucio_write_rse_name", None)
-        self.rucio_config["rucio_write_rse_scheme"] = config_dict.get("rucio_write_rse_scheme", None)
-        self.rucio_config["rucio_register_only"] = config_dict.get("rucio_register_only", False)
-        self.rucio_config["rucio_scope"] = config_dict.get("rucio_scope", None)
-        self.rucio_config["rucio_download_schemes"] = config_dict.get("rucio_download_schemes", [])
+        self.rucio_config = config_dict.get("rucio") or {}
 
-        if "RUCIO_WRITE_RSE_NAME" in os.environ:
-            self.rucio_config["rucio_write_rse_name"] = os.environ["RUCIO_WRITE_RSE_NAME"]
-        if "RUCIO_WRITE_RSE_SCHEME" in os.environ:
-            self.rucio_config["rucio_write_rse_scheme"] = os.environ["RUCIO_WRITE_RSE_SCHEME"]
-        if "RUCIO_REGISTER_ONLY" in os.environ:
-            self.rucio_config["rucio_register_only"] = string_as_bool(os.environ["RUCIO_REGISTER_ONLY"])
-        self.oidc_providers = config_dict.get("oidc_providers", None)
+        self.oidc_provider = config_dict.get("oidc_provider", None)
         self.rucio_broker = RucioBroker(self.rucio_config)
-        cache_dict = config_dict["cache"]
-        if cache_dict is None:
-            _config_dict_error("cache")
-        self.cache_size = cache_dict.get("size", -1)
-        if self.cache_size is None:
-            _config_dict_error("cache->size")
-        self.staging_path = cache_dict.get("path") or self.config.object_store_cache_path
-        if self.staging_path is None:
-            _config_dict_error("cache->path")
+        cache_dict = config_dict.get("cache") or {}
+        self.enable_cache_monitor, self.cache_monitor_interval = enable_cache_monitor(config, config_dict)
 
-        extra_dirs = {e["type"]: e["path"] for e in config_dict.get("extra_dirs", [])}
-        if not extra_dirs:
-            _config_dict_error("extra_dirs")
-        self.extra_dirs.update(extra_dirs)
+        self.cache_size = cache_dict.get("size") or self.config.object_store_cache_size
+        self.staging_path = cache_dict.get("path") or self.config.object_store_cache_path
+        self.cache_updated_data = cache_dict.get("cache_updated_data", True)
+        self.cache_config = cache_dict
+        self._initialize()
+
+    def _initialize(self):
+        if self.enable_cache_monitor:
+            self.cache_monitor = InProcessCacheMonitor(self.cache_target, self.cache_monitor_interval)
 
     def _in_cache(self, rel_path):
         """Check if the given dataset is in the local cache and return True if so."""
@@ -508,7 +357,7 @@ class RucioObjectStore(ConcreteObjectStore):
             rel_path = os.path.join(rel_path, str(self._get_object_id(obj)))
         if base_dir:
             base = self.extra_dirs.get(base_dir)
-            return os.path.join(base, rel_path)
+            return os.path.join(str(base), rel_path)
 
         if not dir_only:
             rel_path = os.path.join(rel_path, alt_name if alt_name else f"dataset_{self._get_object_id(obj)}.dat")
@@ -518,7 +367,7 @@ class RucioObjectStore(ConcreteObjectStore):
         return os.path.abspath(os.path.join(self.staging_path, rel_path))
 
     def _pull_into_cache(self, rel_path, auth_token):
-        log.debug("rucio _pull_into_cache: " + rel_path)
+        log.debug("rucio _pull_into_cache: %s", rel_path)
         # Ensure the cache directory structure exists (e.g., dataset_#_files/)
         rel_path_dir = os.path.dirname(rel_path)
         if not os.path.exists(self._get_cache_path(rel_path_dir)):
@@ -547,7 +396,7 @@ class RucioObjectStore(ConcreteObjectStore):
 
     def _exists(self, obj, **kwargs):
         rel_path = self._construct_path(obj, **kwargs)
-        log.debug("rucio _exists: " + rel_path)
+        log.debug("rucio _exists: %s", rel_path)
 
         dir_only = kwargs.get("dir_only", False)
         base_dir = kwargs.get("base_dir", None)
@@ -614,7 +463,7 @@ class RucioObjectStore(ConcreteObjectStore):
                 rel_path = os.path.join(rel_path, alt_name if alt_name else f"dataset_{self._get_object_id(obj)}.dat")
                 # need this line to set the dataset filename, not sure how this is done - filesystem is monitored?
                 open(os.path.join(self.staging_path, rel_path), "w").close()
-            log.debug("rucio _create: " + rel_path)
+            log.debug("rucio _create: %s", rel_path)
         return self
 
     def _empty(self, obj, **kwargs):
@@ -626,7 +475,7 @@ class RucioObjectStore(ConcreteObjectStore):
 
     def _size(self, obj, **kwargs):
         rel_path = self._construct_path(obj, **kwargs)
-        log.debug("rucio _size: " + rel_path)
+        log.debug("rucio _size: %s", rel_path)
 
         if self._in_cache(rel_path):
             try:
@@ -646,14 +495,15 @@ class RucioObjectStore(ConcreteObjectStore):
         base_dir = kwargs.get("base_dir", None)
         dir_only = kwargs.get("dir_only", False)
         obj_dir = kwargs.get("obj_dir", False)
-        log.debug("rucio _delete: " + rel_path)
-        auth_token = self._get_token(**kwargs)
 
         try:
             # Remove temporary data in JOB_WORK directory
             if base_dir and dir_only and obj_dir:
                 shutil.rmtree(os.path.abspath(rel_path))
                 return True
+
+            log.debug("rucio _delete: %s", rel_path)
+            auth_token = self._get_token(**kwargs)
 
             # Delete from cache first
             if entire_dir and extra_dir:
@@ -671,7 +521,7 @@ class RucioObjectStore(ConcreteObjectStore):
 
     def _get_data(self, obj, start=0, count=-1, **kwargs):
         rel_path = self._construct_path(obj, **kwargs)
-        log.debug("rucio _get_data: " + rel_path)
+        log.debug("rucio _get_data: %s", rel_path)
         auth_token = self._get_token(**kwargs)
         # Check cache first and get file if not there
         if not self._in_cache(rel_path) or os.path.getsize(self._get_cache_path(rel_path)) == 0:
@@ -695,28 +545,30 @@ class RucioObjectStore(ConcreteObjectStore):
                 user = trans.user
             else:
                 user = arg_user
-            for oidc_provider in self.oidc_providers:
-                backend = provider_name_to_backend(oidc_provider)
-                tokens = user.get_oidc_tokens(backend)
-                if tokens["id"]:
-                    return tokens["id"]
+            backend = provider_name_to_backend(self.oidc_provider)
+            tokens = user.get_oidc_tokens(backend)
+            return tokens["id"]
         except Exception as e:
             log.debug("Failed to get auth token: %s", e)
+            return None
 
-        return None
-
-    def _sync_cache(self, obj, **kwargs):
+    def _get_filename(self, obj, **kwargs):
         base_dir = kwargs.get("base_dir", None)
         dir_only = kwargs.get("dir_only", False)
-        auth_token = self._get_token(**kwargs)
         rel_path = self._construct_path(obj, **kwargs)
-        log.debug("rucio _update_cache: " + rel_path)
+        sync_cache = kwargs.get("sync_cache", True)
 
         # for JOB_WORK directory
         if base_dir and dir_only:
             return os.path.abspath(rel_path)
 
+        auth_token = self._get_token(**kwargs)
+        log.debug("rucio _get_filename: %s", rel_path)
+
         cache_path = self._get_cache_path(rel_path)
+        if not sync_cache:
+            return cache_path
+
         in_cache = self._in_cache(rel_path)
         size_in_cache = 0
         if in_cache:
@@ -741,42 +593,31 @@ class RucioObjectStore(ConcreteObjectStore):
                     return cache_path
         raise ObjectNotFound(f"objectstore.get_filename, no cache_path: {obj}, kwargs: {kwargs}")
 
-    def _get_filename(self, obj, **kwargs):
-        base_dir = kwargs.get("base_dir", None)
-        dir_only = kwargs.get("dir_only", False)
-        rel_path = self._construct_path(obj, **kwargs)
-        log.debug("rucio _get_filename: " + rel_path)
-
-        # for JOB_WORK directory
-        if base_dir and dir_only:
-            return os.path.abspath(rel_path)
-
-        return self._get_cache_path(rel_path)
-
     def _register_file(self, rel_path, file_name):
         if file_name is None:
             file_name = self._get_cache_path(rel_path)
             if not os.path.islink(file_name):
                 raise ObjectInvalid(
-                    f"rucio objectstore._register_file, rucio_register_only "
-                    f"is set, but file in cache is not a link "
+                    "rucio objectstore._register_file, rucio_register_only " "is set, but file in cache is not a link "
                 )
         if os.path.islink(file_name):
             file_name = os.readlink(file_name)
         self.rucio_broker.register(rel_path, file_name)
-        log.debug("rucio _register_file: " + file_name)
+        log.debug("rucio _register_file: %s", file_name)
         return
 
     def _update_from_file(self, obj, file_name=None, create=False, **kwargs):
-        if not create:
-            raise ObjectNotFound(f"rucio objectstore.update_from_file, file update not allowed")
         rel_path = self._construct_path(obj, **kwargs)
+        log.debug("rucio _update_from_file: %s", rel_path)
 
-        if self.rucio_config["rucio_register_only"]:
+        if not create:
+            log.warning(
+                "rucio objectstore.update_from_file, file update without create, will fail if file already in Rucio"
+            )
+
+        if self.rucio_config["register_only"]:
             self._register_file(rel_path, file_name)
             return
-
-        log.debug("rucio _update_from_file:" + rel_path)
 
         # Choose whether to use the dataset file itself or an alternate file
         if file_name:
@@ -784,7 +625,7 @@ class RucioObjectStore(ConcreteObjectStore):
             # Copy into cache
             cache_file = self._get_cache_path(rel_path)
             try:
-                if source_file != cache_file:
+                if source_file != cache_file and self.cache_updated_data:
                     try:
                         shutil.copy2(source_file, cache_file)
                     except OSError:
@@ -812,5 +653,13 @@ class RucioObjectStore(ConcreteObjectStore):
         kwargs["object_id"] = obj.id
         return kwargs
 
+    @property
+    def cache_target(self) -> CacheTarget:
+        return CacheTarget(
+            self.staging_path,
+            self.cache_size,
+            0.9,
+        )
+
     def shutdown(self):
-        pass
+        self.cache_monitor and self.cache_monitor.shutdown()

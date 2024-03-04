@@ -87,9 +87,6 @@
 
 <script>
 import CopyToClipboard from "components/CopyToClipboard";
-import { getAppRoot } from "onload/loadConfig";
-import DecodedId from "../DecodedId.vue";
-import CodeRow from "./CodeRow.vue";
 import { JobDetailsProvider, JobConsoleOutputProvider } from "components/providers/JobProvider";
 import UtcDate from "components/UtcDate";
 import { formatDuration, intervalToDuration } from "date-fns";
