@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 STATE_COOKIE_NAME = "galaxy-oidc-state"
 NONCE_COOKIE_NAME = "galaxy-oidc-nonce"
 VERIFIER_COOKIE_NAME = "galaxy-oidc-verifier"
-KEYCLOAK_BACKENDS = {"custos", "cilogon", "keycloak","pingfed"}
+KEYCLOAK_BACKENDS = {"custos", "cilogon", "keycloak", "pingfed"}
 
 
 class InvalidAuthnzConfigException(Exception):
@@ -505,7 +505,6 @@ class OIDCAuthnzBaseKeycloak(OIDCAuthnzBase):
 class OIDCAuthnzBasePingfed(OIDCAuthnzBase):
     def __init__(self, provider, oidc_config, oidc_backend_config, idphint=None):
         super().__init__(provider, oidc_config, oidc_backend_config, idphint)
-        self.config.extra_params = {"kc_idp_hint": oidc_backend_config.get("idphint", "oidc")}
         self._load_config()
 
 

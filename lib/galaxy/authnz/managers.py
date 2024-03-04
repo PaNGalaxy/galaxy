@@ -199,18 +199,8 @@ class AuthnzManager:
             rtv["icon"] = config_xml.find("icon").text
         if config_xml.find("pkce_support") is not None:
             rtv["pkce_support"] = asbool(config_xml.find("pkce_support").text)
-
-        if config_xml.find("authorization_endpoint") is not None:
-            rtv["authorization_endpoint"] = config_xml.find("authorization_endpoint").text
-        if config_xml.find("token_endpoint") is not None:
-            rtv["token_endpoint"] = config_xml.find("token_endpoint").text
-        if config_xml.find("revocation_endpoint") is not None:
-            rtv["revocation_endpoint"] = config_xml.find("revocation_endpoint").text
-        if config_xml.find("userinfo_endpoint") is not None:
-            rtv["userinfo_endpoint"] = config_xml.find("userinfo_endpoint").text
         if config_xml.find("alias") is not None:
             rtv["alias"] = config_xml.find("alias").text
-
         if config_xml.find("user_extra_authorization_script") is not None:
             rtv["user_extra_authorization_script"] = config_xml.find("user_extra_authorization_script").text
 
