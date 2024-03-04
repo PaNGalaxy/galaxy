@@ -142,8 +142,6 @@ class _SpalnDb(Data):
                 headers=headers,
                 **kwd,
             )
-        dataset.sync_cache(user=trans.user)
-
         if self.file_ext == "spalndbn":
             title = "This is a nucleotide-query spaln database"
         elif self.file_ext == "spalndbp":
@@ -156,7 +154,7 @@ class _SpalnDb(Data):
         msg = ""
         try:
             # Try to use any text recorded in the dummy index file:
-            with open(dataset.get_file_name(), encoding="utf-8") as handle:
+            with open(dataset.get_file_name(user=trans.user), encoding="utf-8") as handle:
                 msg = handle.read().strip()
         except Exception:
             pass

@@ -650,7 +650,7 @@ class BamNative(CompressedArchive, _BamOrSam):
     def get_chunk(self, trans, dataset: HasFileName, offset: int = 0, ck_size: Optional[int] = None) -> str:
         if not offset == -1:
             try:
-                with pysam.AlignmentFile(dataset.get_file_name(), "rb", check_sq=False) as bamfile:
+                with pysam.AlignmentFile(dataset.get_file_name(user = trans.user), "rb", check_sq=False) as bamfile:
                     if ck_size is None:
                         ck_size = 300  # 300 lines
                     if offset == 0:
@@ -703,12 +703,10 @@ class BamNative(CompressedArchive, _BamOrSam):
         headers = kwd.get("headers", {})
         preview = util.string_as_bool(preview)
         if offset is not None:
-            dataset.sync_cache(user=trans.user)
             return self.get_chunk(trans, dataset, offset, ck_size), headers
         elif to_ext or not preview:
             return super().display_data(trans, dataset, preview, filename, to_ext, **kwd)
         else:
-            dataset.sync_cache(user=trans.user)
             column_names = dataset.metadata.column_names
             if not column_names:
                 column_names = []
@@ -2110,11 +2108,10 @@ class H5MLM(H5):
             to_ext = to_ext or dataset.extension
             return self._serve_raw(dataset, to_ext, headers, **kwd)
 
-        dataset.sync_cache(user=trans.user)
-
         out_dict: Dict = {}
+        fname = dataset.get_file_name(user=trans.user)
         try:
-            with h5py.File(dataset.get_file_name(), "r") as handle:
+            with h5py.File(fname, "r") as handle:
                 out_dict["Attributes"] = {}
                 attributes = handle.attrs
                 for k in set(attributes.keys()) - {self.HTTP_REPR, self.REPR, self.URL}:
@@ -2122,13 +2119,13 @@ class H5MLM(H5):
         except Exception as e:
             log.warning(e)
 
-        config = self.get_config_string(dataset.get_file_name())
+        config = self.get_config_string(fname)
         out_dict["Config"] = json.loads(config) if config else ""
         out = json.dumps(out_dict, sort_keys=True, indent=2)
         out = out[: self.max_preview_size]
 
-        repr = self.get_repr(dataset.get_file_name())
-        html_repr = self.get_html_repr(dataset.get_file_name())
+        repr = self.get_repr(fname)
+        html_repr = self.get_html_repr(fname)
 
         return f"<div>{html_repr}</div><div><pre>{repr}</pre></div><div><pre>{out}</pre></div>", headers
 

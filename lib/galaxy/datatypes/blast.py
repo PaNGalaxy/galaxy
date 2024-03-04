@@ -235,9 +235,6 @@ class _BlastDb(Data):
                 ck_size=ck_size,
                 **kwd,
             )
-
-        dataset.sync_cache(user=trans.user)
-
         if self.file_ext == "blastdbn":
             title = "This is a nucleotide BLAST database"
         elif self.file_ext == "blastdbp":
@@ -250,7 +247,7 @@ class _BlastDb(Data):
         msg = ""
         try:
             # Try to use any text recorded in the dummy index file:
-            with open(dataset.get_file_name(), encoding="utf-8") as handle:
+            with open(dataset.get_file_name(user=trans.user), encoding="utf-8") as handle:
                 msg = handle.read().strip()
         except Exception:
             pass

@@ -175,7 +175,7 @@ class TabularData(Text):
         ck_size: Optional[int] = None,
         **kwd,
     ):
-        dataset.sync_cache(user=trans.user)
+        fname = dataset.get_file_name(user=trans.user)
         headers = kwd.pop("headers", {})
         preview = util.string_as_bool(preview)
         if offset is not None:
@@ -188,15 +188,15 @@ class TabularData(Text):
             # We should add a new datatype 'matrix', with its own draw method, suitable for this kind of data.
             # For now, default to the old behavior, ugly as it is.  Remove this after adding 'matrix'.
             max_peek_size = 1000000  # 1 MB
-            if os.stat(dataset.get_file_name()).st_size < max_peek_size:
+            if os.stat(fname).st_size < max_peek_size:
                 self._clean_and_set_mime_type(trans, dataset.get_mime(), headers)
-                return open(dataset.get_file_name(), mode="rb"), headers
+                return open(fname, mode="rb"), headers
             else:
                 headers["content-type"] = "text/html"
                 return (
                     trans.fill_template_mako(
                         "/dataset/large_file.mako",
-                        truncated_data=open(dataset.get_file_name()).read(max_peek_size),
+                        truncated_data=open(fname).read(max_peek_size),
                         data=dataset,
                     ),
                     headers,

@@ -1179,9 +1179,6 @@ class MockObjectStore:
     def update_from_file(self, *arg, **kwds):
         pass
 
-    def sync_cache(self, *arg, **kwds):
-        pass
-
     def is_private(self, object):
         if object.object_store_id == PRIVATE_OBJECT_STORE_ID:
             return True

@@ -15,8 +15,6 @@ from galaxy.util import (
     lowercase_alphanum_to_hex,
     smart_str,
     unicodify,
-    hex_to_lowercase_alphanum,
-    lowercase_alphanum_to_hex,
 )
 
 log = logging.getLogger(__name__)

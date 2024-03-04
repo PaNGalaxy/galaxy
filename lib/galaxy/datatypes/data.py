@@ -455,8 +455,7 @@ class Data(metaclass=DataMeta):
         if dataset.datatype.composite_type or dataset.extension.endswith("html"):
             main_file = f"{name}.html"
             rel_paths.append(main_file)
-            #todo: add user
-            file_paths.append(dataset.get_file_name())
+            file_paths.append(dataset.get_file_name(user=user))
             for fpath, rpath in self.__archive_extra_files_path(dataset.extra_files_path):
                 rel_paths.append(os.path.join(name, rpath))
                 file_paths.append(fpath)
@@ -485,8 +484,7 @@ class Data(metaclass=DataMeta):
                 "content-type"
             ] = "application/octet-stream"  # force octet-stream so Safari doesn't append mime extensions to filename
             headers["Content-Disposition"] = f'attachment; filename="{filename}"'
-            #todo: add user
-            return open(data.get_file_name(), "rb"), headers
+            return open(data.get_file_name(user=trans.user), "rb"), headers
 
     def _serve_binary_file_contents_as_text(self, trans, data, headers, file_size, max_peek_size):
         headers["content-type"] = "text/html"
@@ -545,8 +543,7 @@ class Data(metaclass=DataMeta):
         if filename and filename != "index":
             # For files in extra_files_path
             extra_dir = dataset.dataset.extra_files_path_name
-            dataset.sync_cache(extra_dir=extra_dir, alt_name=filename, user=trans.user)
-            file_path = trans.app.object_store.get_filename(dataset.dataset, extra_dir=extra_dir, alt_name=filename)
+            file_path = trans.app.object_store.get_filename(dataset.dataset, extra_dir=extra_dir, alt_name=filename, user=trans.user)
             if os.path.exists(file_path):
                 if os.path.isdir(file_path):
                     with tempfile.NamedTemporaryFile(
@@ -589,8 +586,7 @@ class Data(metaclass=DataMeta):
 
         downloading = to_ext is not None
         file_size = _get_file_size(dataset)
-        #todo: user
-        if not os.path.exists(dataset.get_file_name()):
+        if not os.path.exists(dataset.get_file_name(user=trans.user)):
             raise ObjectNotFound(f"File Not Found ({dataset.get_file_name()}).")
 
         if downloading:

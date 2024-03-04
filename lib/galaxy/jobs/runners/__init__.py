@@ -17,9 +17,9 @@ from queue import (
     Queue,
 )
 
+import jwt
 from sqlalchemy import select
 from sqlalchemy.orm import object_session
-import jwt
 
 import galaxy.jobs
 from galaxy import model

@@ -220,7 +220,7 @@ class Ipynb(Json):
     ) -> Tuple[IO, Headers]:
         headers = kwd.pop("headers", {})
         preview = string_as_bool(preview)
-        dataset.sync_cache(user=trans.user)
+        fname = dataset.get_file_name(user=trans.user)
 
         if to_ext or not preview:
             return self._serve_raw(dataset, to_ext, headers, **kwd)
@@ -235,14 +235,14 @@ class Ipynb(Json):
                     "html",
                     "--template",
                     "full",
-                    dataset.get_file_name(),
+                    fname,
                     "--output",
                     ofilename,
                 ]
                 subprocess.check_call(cmd)
                 ofilename = f"{ofilename}.html"
             except subprocess.CalledProcessError:
-                ofilename = dataset.get_file_name()
+                ofilename = fname
                 log.exception(
                     'Command "%s" failed. Could not convert the Jupyter Notebook to HTML, defaulting to plain text.',
                     shlex_join(cmd),
