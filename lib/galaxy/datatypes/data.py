@@ -164,7 +164,6 @@ def _is_binary_file(data):
 
 
 def _get_max_peek_size(data):
-
     from galaxy.datatypes import (
         binary,
         text,
@@ -543,7 +542,9 @@ class Data(metaclass=DataMeta):
         if filename and filename != "index":
             # For files in extra_files_path
             extra_dir = dataset.dataset.extra_files_path_name
-            file_path = trans.app.object_store.get_filename(dataset.dataset, extra_dir=extra_dir, alt_name=filename, user=trans.user)
+            file_path = trans.app.object_store.get_filename(
+                dataset.dataset, extra_dir=extra_dir, alt_name=filename, user=trans.user
+            )
             if os.path.exists(file_path):
                 if os.path.isdir(file_path):
                     with tempfile.NamedTemporaryFile(

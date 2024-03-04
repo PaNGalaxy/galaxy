@@ -535,7 +535,7 @@ class BaseJobRunner:
         username = None
         for token_provider, settings in providers.items():
             key = settings["user_key"]
-            template = settings.get("template",".*")
+            template = settings.get("template", ".*")
             try:
                 provider_backend = provider_name_to_backend(token_provider)
                 tokens = job_wrapper.get_job().user.get_oidc_tokens(provider_backend)
@@ -557,7 +557,6 @@ class BaseJobRunner:
         if env_var:
             destination_info["pass_host_user_to_env"] = env_var + "=" + username
         return
-
 
     def _find_container(
         self,

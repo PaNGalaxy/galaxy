@@ -241,7 +241,7 @@ class RucioBroker:
             items = [item]
             download_client = self.get_rucio_download_client(auth_token=auth_token)
             res = download_client.download_dids(items)
-            os.replace(res[0]["dest_file_paths"][0],dest_path)
+            os.replace(res[0]["dest_file_paths"][0], dest_path)
         except Exception as e:
             log.exception(f"Cannot download file: {str(e)}")
             return False
@@ -253,7 +253,7 @@ class RucioBroker:
         try:
             repl = next(self.get_rucio_client().list_replicas(dids))
             return "AVAILABLE" in repl["states"].values()
-        except Exception as e:
+        except Exception:
             return False
 
     def get_size(self, key):

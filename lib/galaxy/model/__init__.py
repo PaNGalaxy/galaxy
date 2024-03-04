@@ -9338,7 +9338,12 @@ class MetadataFile(Base, StorableObject, Serializable):
             if not object_store.exists(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name):
                 object_store.create(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name)
             path = object_store.get_filename(
-                self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name, sync_cache=sync_cache, user=user
+                self,
+                extra_dir="_metadata_files",
+                extra_dir_at_root=True,
+                alt_name=alt_name,
+                sync_cache=sync_cache,
+                user=user,
             )
             return path
         except AttributeError:

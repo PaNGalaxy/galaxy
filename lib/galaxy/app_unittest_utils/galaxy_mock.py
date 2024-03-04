@@ -145,8 +145,7 @@ class MockApp(di.Container, GalaxyDataTestApp):
         self.user_manager = UserManager(cast(BasicSharedApp, self))
         self.execution_timer_factory = Bunch(get_timer=StructuredExecutionTimer)
         self.interactivetool_manager = Bunch(
-            create_interactivetool=lambda *args, **kwargs: None,
-            get_job_subdomain=lambda *args, **kwargs: None
+            create_interactivetool=lambda *args, **kwargs: None, get_job_subdomain=lambda *args, **kwargs: None
         )
         self.is_job_handler = False
         self.biotools_metadata_source = None

@@ -99,7 +99,7 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
                 session.commit()
         return dataset
 
-    def purge_datasets(self, request: PurgeDatasetsTaskRequest, user: model.User):
+    def purge_datasets(self, request: PurgeDatasetsTaskRequest, user: Optional[model.User]):
         """
         Caution: any additional security checks must be done before executing this action.
 

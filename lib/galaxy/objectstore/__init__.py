@@ -203,8 +203,17 @@ class ObjectStore(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def get_filename(
-        self, obj, base_dir=None, dir_only=False, extra_dir=None, extra_dir_at_root=False, alt_name=None, obj_dir=False,
-            sync_cache=False, user=None, auth_token=None
+        self,
+        obj,
+        base_dir=None,
+        dir_only=False,
+        extra_dir=None,
+        extra_dir_at_root=False,
+        alt_name=None,
+        obj_dir=False,
+        sync_cache=False,
+        user=None,
+        auth_token=None,
     ):
         """
         Get the expected filename with absolute path for object with id `obj.id`.

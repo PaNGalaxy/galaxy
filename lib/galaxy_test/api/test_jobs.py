@@ -694,8 +694,8 @@ steps:
         finish_response = self._put(f"jobs/{job_state().json()['id']}/finish")
         self._assert_status_code_is(finish_response, 200)
         wait_on_state(job_state, assert_ok=True, timeout=15)
-        final_job = self.dataset_populator.get_job_details(job_state().json()['id'], full=True)
-        assert  True, final_job["stopped"]
+        final_job = self.dataset_populator.get_job_details(job_state().json()["id"], full=True).json()
+        assert True, final_job.status_code["stopped"]
 
     def _get_history_item_as_admin(self, history_id, item_id):
         response = self._get(f"histories/{history_id}/contents/{item_id}?view=detailed", admin=True)

@@ -51,7 +51,7 @@ def write_dataset_collection(dataset_collection_instance, archive, user):
             if file_extension == hda.extension or (file_extension != "" and type(hda.datatype).__name__ == "Data"):
                 name = file_name
                 hda.extension = file_extension
-        except:
+        except Exception:
             pass
         for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name, user=user):
             archive.write(file_path, relpath)

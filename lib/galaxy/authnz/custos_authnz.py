@@ -201,11 +201,13 @@ class OIDCAuthnzBase(IdentityProvider):
 
     def _extra_user_auth(self, username, auth_script_path):
         try:
-            result = subprocess.run(['bash', auth_script_path, username], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run(["bash", auth_script_path, username], capture_output=True, text=True)
             exit_code = result.returncode
-            output = result.stdout + result.stderr
+            output = result.stdout.encode()
+            if result.stderr:
+                output += result.stderr.encode()
             if exit_code != 0:
-                log.error(f"cannot authorize user {username}: {output}")
+                log.error(f"cannot authorize user {username}: {output.decode()}")
                 raise exceptions.AuthenticationFailed("User not allowed")
             return
         except Exception as e:
@@ -231,7 +233,7 @@ class OIDCAuthnzBase(IdentityProvider):
         refresh_expiration_time = processed_token["refresh_expiration_time"]
 
         if self.config.user_extra_authorization_script:
-            self._extra_user_auth(username,self.user_extra_authorization_script)
+            self._extra_user_auth(username, self.config.user_extra_authorization_script)
 
         # Create or update custos_authnz_token record
         custos_authnz_token = self._get_custos_authnz_token(trans.sa_session, user_id, self.config.provider)
@@ -482,7 +484,7 @@ class OIDCAuthnzBase(IdentityProvider):
 
     @staticmethod
     def _username_from_userinfo(trans, userinfo):
-        username = userinfo.get("preferred_username", userinfo.get("username",userinfo["email"]))
+        username = userinfo.get("preferred_username", userinfo.get("username", userinfo["email"]))
         if "@" in username:
             username = username.split("@")[0]  # username created from username portion of email
         username = util.ready_name_for_url(username)
@@ -501,6 +503,7 @@ class OIDCAuthnzBaseKeycloak(OIDCAuthnzBase):
         super().__init__(provider, oidc_config, oidc_backend_config, idphint)
         self.config.extra_params = {"kc_idp_hint": oidc_backend_config.get("idphint", "oidc")}
         self._load_config()
+
 
 class OIDCAuthnzBasePingfed(OIDCAuthnzBase):
     def __init__(self, provider, oidc_config, oidc_backend_config, idphint=None):

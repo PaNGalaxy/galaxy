@@ -317,7 +317,7 @@ class XmlToolSource(ToolSource):
             requires_path_in_url = string_as_bool(ep_el.attrib.get("requires_path_in_url", False))
             requires_path_in_header_named = ep_el.get("requires_path_in_header_named", None)
             protocol = ep_el.attrib.get("protocol", "http")
-            #todo: protocol is not used?
+            # todo: protocol is not used?
             if protocol:
                 protocol = protocol.strip()
             if requires_path_in_header_named:

@@ -100,6 +100,7 @@ class AuthnzManager:
 
     def _get_idp_icon(self, idp):
         return self.oidc_backends_config[idp].get("icon") or DEFAULT_OIDC_IDP_ICONS.get(idp)
+
     def _get_idp_alias(self, idp):
         return self.oidc_backends_config[idp].get("alias") or None
 
@@ -128,11 +129,11 @@ class AuthnzManager:
                 if idp in BACKENDS_NAME:
                     self.oidc_backends_config[idp] = self._parse_idp_config(child)
                     self.oidc_backends_implementation[idp] = "psa"
-                    self.app.config.oidc[idp] = {"icon": self._get_idp_icon(idp),"alias":self._get_idp_alias(idp)}
+                    self.app.config.oidc[idp] = {"icon": self._get_idp_icon(idp), "alias": self._get_idp_alias(idp)}
                 elif idp in KEYCLOAK_BACKENDS:
                     self.oidc_backends_config[idp] = self._parse_custos_config(child)
                     self.oidc_backends_implementation[idp] = "custos"
-                    self.app.config.oidc[idp] = {"icon": self._get_idp_icon(idp),"alias":self._get_idp_alias(idp)}
+                    self.app.config.oidc[idp] = {"icon": self._get_idp_icon(idp), "alias": self._get_idp_alias(idp)}
                 else:
                     raise etree.ParseError("Unknown provider specified")
             if len(self.oidc_backends_config) == 0:

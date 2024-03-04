@@ -198,7 +198,9 @@ class ToolEvaluator:
             param_dict["__history_id__"] = self.app.security.encode_id(self._history.id)
         param_dict["__galaxy_url__"] = self.compute_environment.galaxy_url()
         if hasattr(self.job, "interactive_url") and isinstance(self.job.interactive_url, str):
-            param_dict["__tool_url_prefix__"] = ''.join([self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname])
+            param_dict["__tool_url_prefix__"] = "".join(
+                [self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname]
+            )
 
         param_dict.update(self.tool.template_macro_params)
         # All parameters go into the param_dict

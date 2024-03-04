@@ -650,7 +650,7 @@ class BamNative(CompressedArchive, _BamOrSam):
     def get_chunk(self, trans, dataset: HasFileName, offset: int = 0, ck_size: Optional[int] = None) -> str:
         if not offset == -1:
             try:
-                with pysam.AlignmentFile(dataset.get_file_name(user = trans.user), "rb", check_sq=False) as bamfile:
+                with pysam.AlignmentFile(dataset.get_file_name(user=trans.user), "rb", check_sq=False) as bamfile:
                     if ck_size is None:
                         ck_size = 300  # 300 lines
                     if offset == 0:

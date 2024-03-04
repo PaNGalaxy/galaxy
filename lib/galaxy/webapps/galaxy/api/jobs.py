@@ -450,9 +450,9 @@ class FastAPIJobs:
         summary="Finished a job regardless of execution status (ie early job finish)",
     )
     def finish(
-            self,
-            job_id: Annotated[DecodedDatabaseIdField, JobIdPathParam],
-            trans: ProvidesUserContext = DependsOnTrans,
+        self,
+        job_id: Annotated[DecodedDatabaseIdField, JobIdPathParam],
+        trans: ProvidesUserContext = DependsOnTrans,
     ) -> bool:
         job = self.service.get_job(trans=trans, job_id=job_id)
         if not job:
@@ -461,7 +461,6 @@ class FastAPIJobs:
             return self.service.job_manager.finish_early(job)
         else:
             return False
-
 
     @router.post(
         "/api/jobs/search",

@@ -493,8 +493,8 @@ class Dat(Text):
         return (
             "energy transfer(" in line
             or "energy transfer (" in line
-            or "$\hbar\omega$" in line
-            or ("energy transfer values" in line and not "of energy transfer values" in line)
+            or "$\\hbar\\omega$" in line
+            or ("energy transfer values" in line and "of energy transfer values" not in line)
         )
 
     def _isQBlockHeader(self, line, energy_transfer_block):
@@ -511,8 +511,8 @@ class Dat(Text):
             or "q (" in line
             or "y(" in line
             or "y (" in line
-            or ("q transfer" in line and not "q transfer values" in line)
-            or (energy_transfer_block and "q" in line and not "number of q" in line)
+            or ("q transfer" in line and "q transfer values" not in line)
+            or (energy_transfer_block and "q" in line and "number of q" not in line)
         )
 
     def set_meta(self, dataset, **kwd):

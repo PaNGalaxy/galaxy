@@ -314,7 +314,7 @@ class DataSourceParser:
 
             elif test_type == "not_isinstance":
                 # is test_attr attribute is not an instance of result
-                def test_fn(o, result):
+                def test_fn(o, result, getter=getter):
                     return not isinstance(getter(o), result)
 
             elif test_type == "has_dataprovider":

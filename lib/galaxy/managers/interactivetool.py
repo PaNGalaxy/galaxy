@@ -98,15 +98,7 @@ class InteractiveToolSqlite:
                 )
                 c.execute(
                     insert,
-                    (
-                        key,
-                        key_type,
-                        token,
-                        host,
-                        port,
-                        info,
-                        protocol
-                    ),
+                    (key, key_type, token, host, port, info, protocol),
                 )
                 conn.commit()
             finally:

@@ -1262,7 +1262,6 @@ class MinimalJobWrapper(HasResourceParameters):
         ) = tool_evaluator.build()
         job.command_line = self.command_line
 
-
         # Ensure galaxy_lib_dir is set in case there are any later chdirs
         self.galaxy_lib_dir  # noqa: B018
         if self.tool.requires_galaxy_python_environment or self.remote_command_line:
