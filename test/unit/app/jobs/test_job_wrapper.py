@@ -117,8 +117,10 @@ class MockEvaluator:
         pass
 
     def build(self):
-        return TEST_COMMAND, "", [], [], []
+        return TEST_COMMAND, "", [], []
 
+    def populate_interactivetools(self):
+        return []
 
 class MockJobQueue:
     def __init__(self, app):

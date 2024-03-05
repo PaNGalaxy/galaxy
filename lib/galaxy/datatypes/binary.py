@@ -603,8 +603,8 @@ class BamNative(CompressedArchive, _BamOrSam):
         except Exception:
             return f"Binary bam alignments file ({nice_size(dataset.get_size())})"
 
-    def to_archive(self, dataset: DatasetProtocol, name: str = "", trans=None) -> Iterable:
-        file_name = dataset.get_file_name(user=trans.user)
+    def to_archive(self, dataset: DatasetProtocol, name: str = "", user=None) -> Iterable:
+        file_name = dataset.get_file_name(user=user)
         rel_paths = []
         file_paths = []
         rel_paths.append(f"{name or file_name}.{dataset.extension}")
@@ -612,7 +612,7 @@ class BamNative(CompressedArchive, _BamOrSam):
         # We may or may not have a bam index file (BamNative doesn't have it, but also index generation may have failed)
         if dataset.metadata.bam_index:
             rel_paths.append(f"{name or file_name}.{dataset.extension}.bai")
-            file_paths.append(dataset.metadata.bam_index.get_file_name(user=trans.user))
+            file_paths.append(dataset.metadata.bam_index.get_file_name(user=user))
         return zip(file_paths, rel_paths)
 
     def groom_dataset_content(self, file_name: str) -> None:
@@ -650,7 +650,7 @@ class BamNative(CompressedArchive, _BamOrSam):
     def get_chunk(self, trans, dataset: HasFileName, offset: int = 0, ck_size: Optional[int] = None) -> str:
         if not offset == -1:
             try:
-                with pysam.AlignmentFile(dataset.get_file_name(user=trans.user), "rb", check_sq=False) as bamfile:
+                with pysam.AlignmentFile(dataset.get_file_name(user=trans.user if trans else None), "rb", check_sq=False) as bamfile:
                     if ck_size is None:
                         ck_size = 300  # 300 lines
                     if offset == 0:
