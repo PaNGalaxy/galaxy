@@ -56,13 +56,15 @@ client-tests:
 api-tests:
   stage: test
   script:
-    - docker run --name postgres -e POSTGRES_PASSWORD=psql -d -p 5432:5432 postgres
-    - sleep 20
+    - docker run --name postgres -e POSTGRES_PASSWORD=psql -d --network=host postgres
+    - sleep 10
+    - docker logs postgres
     - >
       docker run
       --entrypoint=""
+      --network=host
       $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
-      bash -c "GALAXY_TEST_DBURI=postgresql://postgres:psql@localhost:5432/galaxy_test ./run_tests.sh -api"
+      bash -c "GALAXY_TEST_DBURI=postgresql://postgres:psql@127.0.0.1:5432/galaxy_test ./run_tests.sh -api"
     - docker rm -f postgres
   tags:
     - rse-multi-builder
