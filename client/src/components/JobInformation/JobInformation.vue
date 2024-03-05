@@ -2,7 +2,7 @@
     <div>
         <JobDetailsProvider auto-refresh :job-id="job_id" @update:result="updateJob"/>
         <JobConsoleOutputProvider
-            auto-refresh="True"
+            auto-refresh
             :job-id="job_id"
             :stdout_position="stdout_position"
             :stdout_length="stdout_length"
@@ -166,7 +166,7 @@ export default {
                     this.stderr_position += output.stderr.length;
                 }
             }
-        }
+        },
     },
 };
 </script>
