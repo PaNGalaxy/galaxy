@@ -1,7 +1,7 @@
 <template>
     <div>
         <JobDetailsProvider auto-refresh :job-id="job_id" @update:result="updateJob"/>
-        <JobConsoleOutputProvider
+        <JobConsoleOutputProvider v-if="!jobIsTerminal"
             auto-refresh
             :job-id="job_id"
             :stdout_position="stdout_position"
@@ -145,12 +145,10 @@ export default {
             // Load stored stdout and stderr
             if (this.jobIsTerminal) {
                 if (job.tool_stdout) {
-                    this.stdout_text += job.tool_stdout;
-                    this.stdout_position += job.tool_stdout.length;
+                    this.stdout_text = job.tool_stdout;
                 }
                 if (job.tool_stderr) {
-                    this.stderr_text += job.tool_stderr;
-                    this.stderr_position += job.tool_stderr.length;
+                    this.stderr_text = job.tool_stderr;
                 }
             }
         },
