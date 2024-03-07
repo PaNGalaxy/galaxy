@@ -85,7 +85,11 @@ def parse_config_xml(config_xml):
         if e_xml:
             rucio_download_schemes = [{k: e.get(k) for k in attrs_schemes} for e in e_xml]
 
-        oidc_provider = config_xml.findtext("oidc_provider", None)
+        oidc_providers = []
+        e_xml = config_xml.findall("oidc_provider")
+        if e_xml:
+            oidc_providers = [e.text for e in e_xml]
+
         enable_cache_mon = string_as_bool(config_xml.findtext("enable_cache_monitor", "False"))
 
         e_xml = config_xml.findall("rucio_upload_scheme")
@@ -99,7 +103,6 @@ def parse_config_xml(config_xml):
             rucio_upload_scheme = None
             rucio_scope = None
             rucio_register_only = False
-            oidc_provider = None
 
         e_xml = config_xml.findall("rucio_auth")
         if not e_xml:
@@ -133,7 +136,7 @@ def parse_config_xml(config_xml):
             "cache": cache_dict,
             "rucio": rucio_dict,
             "extra_dirs": extra_dirs,
-            "oidc_provider": oidc_provider,
+            "oidc_providers": oidc_providers,
             "enable_cache_monitor": enable_cache_mon,
         }
     except Exception:
@@ -292,7 +295,7 @@ class RucioObjectStore(ConcreteObjectStore):
         rval = super().to_dict()
         rval["rucio"] = self.rucio_config
         rval["cache"] = self.cache_config
-        rval["oidc_provider"] = self.oidc_provider
+        rval["oidc_providers"] = self.oidc_providers
         rval["enable_cache_monitor"] = self.enable_cache_monitor
         return rval
 
@@ -300,7 +303,7 @@ class RucioObjectStore(ConcreteObjectStore):
         super().__init__(config, config_dict)
         self.rucio_config = config_dict.get("rucio") or {}
 
-        self.oidc_provider = config_dict.get("oidc_provider", None)
+        self.oidc_providers = config_dict.get("oidc_providers", None)
         self.rucio_broker = RucioBroker(self.rucio_config)
         cache_dict = config_dict.get("cache") or {}
         self.enable_cache_monitor, self.cache_monitor_interval = enable_cache_monitor(config, config_dict)
@@ -545,9 +548,11 @@ class RucioObjectStore(ConcreteObjectStore):
                 user = trans.user
             else:
                 user = arg_user
-            backend = provider_name_to_backend(self.oidc_provider)
-            tokens = user.get_oidc_tokens(backend)
-            return tokens["id"]
+            for oidc_provider in self.oidc_providers:
+                backend = provider_name_to_backend(oidc_provider)
+                tokens = user.get_oidc_tokens(backend)
+                if tokens["id"]:
+                    return tokens["id"]
         except Exception as e:
             log.debug("Failed to get auth token: %s", e)
             return None
