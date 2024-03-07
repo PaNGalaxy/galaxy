@@ -11,12 +11,15 @@ import threading
 import time
 import traceback
 import typing
+import uuid
 from queue import (
     Empty,
     Queue,
 )
 
 import jwt
+from sqlalchemy import select
+from sqlalchemy.orm import object_session
 
 import galaxy.jobs
 from galaxy import model
@@ -158,6 +161,10 @@ class BaseJobRunner:
                     name = method.__name__
                 except Exception:
                     name = UNKNOWN
+
+                # Ensure a Job object belongs to a session
+                self._ensure_db_session(arg)
+
                 try:
                     action_str = f"galaxy.jobs.runners.{self.__class__.__name__.lower()}.{name}"
                     action_timer = self.app.execution_timer_factory.get_timer(
@@ -174,6 +181,18 @@ class BaseJobRunner:
                     if method != self.fail_job:
                         # Prevent fail_job cycle in the work_queue
                         self.work_queue.put((self.fail_job, job_state))
+
+    def _ensure_db_session(self, arg: typing.Union["JobWrapper", "JobState"]) -> None:
+        """Ensure Job object belongs to current session."""
+        try:
+            job_wrapper = arg.job_wrapper  # type: ignore[union-attr]
+        except AttributeError:
+            job_wrapper = arg
+
+        if job_wrapper._job_io:
+            job = job_wrapper._job_io.job
+            if object_session(job) is None:
+                self.app.model.session().add(job)
 
     # Causes a runner's `queue_job` method to be called from a worker thread
     def put(self, job_wrapper: "MinimalJobWrapper"):
@@ -383,11 +402,12 @@ class BaseJobRunner:
                 dataset_assoc.dataset.dataset.history_associations + dataset_assoc.dataset.dataset.library_associations
             ):
                 if isinstance(dataset, self.app.model.HistoryDatasetAssociation):
-                    joda = (
-                        self.sa_session.query(self.app.model.JobToOutputDatasetAssociation)
+                    stmt = (
+                        select(self.app.model.JobToOutputDatasetAssociation)
                         .filter_by(job=job, dataset=dataset)
-                        .first()
+                        .limit(1)
                     )
+                    joda = self.sa_session.scalars(stmt).first()
                     yield (joda, dataset)
         # TODO: why is this not just something easy like:
         # for dataset_assoc in job.output_datasets + job.output_library_datasets:
@@ -515,7 +535,7 @@ class BaseJobRunner:
         username = None
         for token_provider, settings in providers.items():
             key = settings["user_key"]
-            template = settings.get("template",".*")
+            template = settings.get("template", ".*")
             try:
                 provider_backend = provider_name_to_backend(token_provider)
                 tokens = job_wrapper.get_job().user.get_oidc_tokens(provider_backend)
@@ -537,7 +557,6 @@ class BaseJobRunner:
         if env_var:
             destination_info["pass_host_user_to_env"] = env_var + "=" + username
         return
-
 
     def _find_container(
         self,
@@ -858,11 +877,18 @@ class AsynchronousJobRunner(BaseJobRunner, Monitors):
                     self.watched.append(async_job_state)
             except Empty:
                 pass
+            # Ideally we'd construct a sqlalchemy session now and pass it into `check_watched_items`
+            # and have that be the only session being used. The next best thing is to scope
+            # the session and discard it after each check_watched_item loop
+            scoped_id = str(uuid.uuid4())
+            self.app.model.set_request_id(scoped_id)
             # Iterate over the list of watched jobs and check state
             try:
                 self.check_watched_items()
             except Exception:
                 log.exception("Unhandled exception checking active jobs")
+            finally:
+                self.app.model.unset_request_id(scoped_id)
             # Sleep a bit before the next state check
             time.sleep(self.app.config.job_runner_monitor_sleep)
 

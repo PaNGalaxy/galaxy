@@ -98,15 +98,7 @@ class InteractiveToolSqlite:
                 )
                 c.execute(
                     insert,
-                    (
-                        key,
-                        key_type,
-                        token,
-                        host,
-                        port,
-                        info,
-                        protocol
-                    ),
+                    (key, key_type, token, host, port, info, protocol),
                 )
                 conn.commit()
             finally:
@@ -146,7 +138,7 @@ class InteractiveToolSqlite:
             entry_point.token,
             entry_point.host,
             entry_point.port,
-            info=json.dumps(
+            json.dumps(
                 {
                     "requires_path_in_url": entry_point.requires_path_in_url,
                     "requires_path_in_header_named": entry_point.requires_path_in_header_named,

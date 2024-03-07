@@ -1,24 +1,26 @@
-import { createPinia } from "pinia";
 import { mount } from "@vue/test-utils";
-import { useUserStore } from "stores/userStore";
-import { useHistoryStore } from "stores/historyStore";
-import { getLocalVue } from "tests/jest/helpers";
-import flushPromises from "flush-promises";
-import HistoryView from "./HistoryView";
-import { getHistoryByIdFromServer, setCurrentHistoryOnServer } from "stores/services/history.services";
-import MockAdapter from "axios-mock-adapter";
 import axios from "axios";
+import MockAdapter from "axios-mock-adapter";
+import flushPromises from "flush-promises";
+import { createPinia } from "pinia";
+import { useHistoryStore } from "stores/historyStore";
+import { getHistoryByIdFromServer, setCurrentHistoryOnServer } from "stores/services/history.services";
+import { useUserStore } from "stores/userStore";
+import { getLocalVue } from "tests/jest/helpers";
+
+import HistoryView from "./HistoryView";
 
 const localVue = getLocalVue();
 jest.mock("stores/services/history.services");
 
-function create_history(historyId, userId, purged = false) {
+function create_history(historyId, userId, purged = false, archived = false) {
     const historyName = `${userId}'s History ${historyId}`;
     return {
         model_class: "History",
         id: historyId,
         name: historyName,
         purged: purged,
+        archived: archived,
         count: 10,
         annotation: "This is a history",
         tags: ["tag_1", "tag_2"],
@@ -65,6 +67,7 @@ async function createWrapper(localVue, currentUserId, history) {
         localVue,
         stubs: {
             icon: { template: "<div></div>" },
+            ContentItem: true,
         },
         provide: {
             store: {
@@ -117,14 +120,13 @@ describe("History center panel View", () => {
         // parts of the layout that should be similar for all cases
         expectCorrectLayout(wrapper);
 
-        // all history items, make sure all show up with hids and names
-        const historyItems = wrapper.findAll(".content-item");
+        // make sure all history items show up
+        const historyItems = wrapper.findAll("contentitem-stub");
         expect(historyItems.length).toBe(10);
         for (let i = 0; i < historyItems.length; i++) {
             const hid = historyItems.length - i;
-            const itemHeader = historyItems.at(i).find("[data-description='content item header info']");
-            const headerText = `${hid}: Dataset ${hid}`;
-            expect(itemHeader.text()).toBe(headerText);
+            expect(historyItems.at(i).attributes("id")).toBe(`${hid}`);
+            expect(historyItems.at(i).attributes("name")).toBe(`Dataset ${hid}`);
         }
     });
 
@@ -163,13 +165,43 @@ describe("History center panel View", () => {
         const wrapper = await createWrapper(localVue, "user_1", history);
         expect(wrapper.vm.history).toEqual(history);
 
-        // switch/import buttons: purged they don't exist
+        // history purged, not switchable and not importable
         const switchButton = wrapper.find("[data-description='switch to history button']");
         const importButton = wrapper.find("[data-description='import history button']");
-        expect(switchButton.exists()).toBe(false);
+        expect(switchButton.attributes("disabled")).toBeTruthy();
         expect(importButton.exists()).toBe(false);
 
         // instead we have an alert
         expect(wrapper.find("[data-description='history state info']").text()).toBe("This history has been purged.");
+    });
+
+    it("should not display archived message and should be importable when user is not owner and history is archived", async () => {
+        const history = create_history("history_2", "user_2", false, true);
+        const wrapper = await createWrapper(localVue, "user_1", history);
+        expect(wrapper.vm.history).toEqual(history);
+
+        const switchButton = wrapper.find("[data-description='switch to history button']");
+        const importButton = wrapper.find("[data-description='import history button']");
+        expect(switchButton.exists()).toBe(false);
+        expect(importButton.exists()).toBe(true);
+        expect(importButton.attributes("disabled")).toBeFalsy();
+
+        expectCorrectLayout(wrapper);
+        expect(wrapper.find("[data-description='history state info']").exists()).toBe(false);
+    });
+
+    it("should display archived message and should not be importable when user is owner and history is archived", async () => {
+        const history = create_history("history_2", "user_1", false, true);
+        const wrapper = await createWrapper(localVue, "user_1", history);
+        expect(wrapper.vm.history).toEqual(history);
+
+        const switchButton = wrapper.find("[data-description='switch to history button']");
+        const importButton = wrapper.find("[data-description='import history button']");
+        expect(switchButton.exists()).toBe(true);
+        expect(switchButton.attributes("disabled")).toBeTruthy();
+        expect(importButton.exists()).toBe(false);
+
+        expectCorrectLayout(wrapper);
+        expect(wrapper.find("[data-description='history state info']").text()).toBe("This history has been archived.");
     });
 });

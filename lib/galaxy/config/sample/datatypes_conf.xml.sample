@@ -136,6 +136,9 @@
     </datatype>
     <datatype extension="fastg" type="galaxy.datatypes.sequence:Fastg" display_in_upload="true" description="fastg format faithfully represents genome assemblies in the face of allelic polymorphism and assembly uncertainty" description_url="http://fastg.sourceforge.net/FASTG_Spec_v1.00.pdf"/>
     <datatype extension="fastq" auto_compressed_types="gz,bz2" type="galaxy.datatypes.sequence:Fastq" display_in_upload="true" description="FASTQ format is a text-based format for storing both a biological sequence (usually nucleotide sequence) and its corresponding quality scores." description_url="https://wiki.galaxyproject.org/Learn/Datatypes#Fastq">
+      <upload_warning>
+        Generally a more specific fastq datatype should be specified, please consider selecting fastqsanger${auto_compressed_type} instead.
+      </upload_warning>
       <converter file="fastq_to_fqtoc.xml" target_datatype="fqtoc"/>
     </datatype>
     <datatype extension="fastqsanger" auto_compressed_types="gz,bz2" type="galaxy.datatypes.sequence:FastqSanger" display_in_upload="true" description="Sanger variant of the FASTQ format: phred+33">
@@ -147,6 +150,9 @@
       <converter file="fastq_to_fqtoc.xml" target_datatype="fqtoc"/>
     </datatype>
     <datatype extension="fastqcssanger" auto_compressed_types="gz,bz2" type="galaxy.datatypes.sequence:FastqCSSanger" display_in_upload="true" description="sequence in in color space phred scored quality values 0:93 represented by ASCII 33:126">
+      <upload_warning>
+        Color space data is rarely used in modern analyses, please consider selecting fastqsanger${auto_compressed_type} instead.
+      </upload_warning>
       <converter file="fastq_to_fqtoc.xml" target_datatype="fqtoc"/>
     </datatype>
     <datatype extension="fastqillumina" auto_compressed_types="gz,bz2" type="galaxy.datatypes.sequence:FastqIllumina" display_in_upload="true" description="Sanger variant of the FASTQ format: phred+64">
@@ -210,6 +216,9 @@
       <display file="igv/interval_as_bed.xml" inherit="true"/>
     </datatype>
     <datatype extension="jellyfish" type="galaxy.datatypes.binary:Binary" subclass="true" display_in_upload="true" description="Jellyfish database files are k-mer counts in binary format with a readable head. They are operated on and converted to human-readable text through jellyfish commands." />
+    <datatype extension="ktab" type="galaxy.datatypes.binary:Binary" subclass="true" description="A table of canonical k‑mers and their counts for the fastk toolkit." display_in_upload="true" description_url="https://github.com/thegenemyers/FASTK?tab=readme-ov-file#file-encodings"/>
+    <datatype extension="hist" type="galaxy.datatypes.binary:Binary" subclass="true" description="A binary histogram file of kmers and frequencies for the fastk toolkit." display_in_upload="true" description_url="https://github.com/thegenemyers/FASTK?tab=readme-ov-file#file-encodings"/>
+    <datatype extension="prof" type="galaxy.datatypes.binary:Binary" subclass="true" description="Read profile file for the fastk toolkit." display_in_upload="true" description_url="https://github.com/thegenemyers/FASTK?tab=readme-ov-file#file-encodings"/>
 
     <!-- ISA data types -->
     <datatype extension="isa-tab" type="galaxy.datatypes.isa:IsaTab" mimetype="application/isa-tools" display_in_upload="true" description="ISA-Tab data type." description_url="https://isa-tools.org"/>
@@ -223,6 +232,9 @@
     <datatype extension="gatk_dbsnp" type="galaxy.datatypes.tabular:Tabular" subclass="true" display_in_upload="true"/>
     <datatype extension="gatk_tranche" type="galaxy.datatypes.tabular:Tabular" subclass="true" display_in_upload="true"/>
     <datatype extension="gatk_recal" type="galaxy.datatypes.tabular:Tabular" subclass="true" display_in_upload="true"/>
+    <datatype extension="cnn" type="galaxy.datatypes.tabular:Tabular" subclass="true" display_in_upload="true"/>
+    <datatype extension="cns" type="galaxy.datatypes.tabular:Tabular" subclass="true" display_in_upload="true"/>
+    <datatype extension="cnr" type="galaxy.datatypes.tabular:Tabular" subclass="true" display_in_upload="true"/>
     <datatype extension="hhr" type="galaxy.datatypes.data:Text" subclass="true" display_in_upload="true"/>
     <datatype extension="jpg" type="galaxy.datatypes.images:Jpg" mimetype="image/jpeg"/>
     <datatype extension="tiff" type="galaxy.datatypes.images:Tiff" mimetype="image/tiff" display_in_upload="true"/>
@@ -434,6 +446,7 @@
     <datatype extension="taxonomy" type="galaxy.datatypes.tabular:Taxonomy" display_in_upload="true"/>
     <datatype extension="tabular" type="galaxy.datatypes.tabular:Tabular" auto_compressed_types="gz" display_in_upload="true" description="Any data in tab delimited format (tabular)." description_url="https://wiki.galaxyproject.org/Learn/Datatypes#Tabular_.28tab_delimited.29">
       <converter file="tabular_to_csv.xml" target_datatype="csv"/>
+      <display file="minerva/tabular.xml"/>
     </datatype>
     <datatype extension="twobit" type="galaxy.datatypes.binary:TwoBit" mimetype="application/octet-stream" display_in_upload="true"/>
     <datatype extension="sqmass" type="galaxy.datatypes.binary:SQmass" mimetype="application/octet-stream" display_in_upload="true"/>
@@ -558,6 +571,7 @@
     <!-- Excel datatypes -->
     <datatype extension="excel.xls" type="galaxy.datatypes.binary:ExcelXls" display_in_upload="true"/>
     <datatype extension="xlsx" type="galaxy.datatypes.binary:Xlsx" display_in_upload="true"/>
+    <datatype extension="docx" type="galaxy.datatypes.binary:Binary" subclass="true"/>
     <datatype extension="btwisted" type="galaxy.datatypes.data:Text" subclass="true"/>
     <datatype extension="cai" type="galaxy.datatypes.data:Text" subclass="true"/>
     <datatype extension="cat_db" type="galaxy.datatypes.data:Text" subclass="true"/>
@@ -764,10 +778,11 @@
     </datatype>
     <datatype extension="pdbqt" type="galaxy.datatypes.molecules:PDBQT" display_in_upload="true"/>
     <datatype extension="pqr" type="galaxy.datatypes.molecules:PQR" display_in_upload="true" />
-    <datatype extension="cell" type="galaxy.datatypes.molecules:Cell" display_in_upload="true"/>
-    <datatype extension="cif" type="galaxy.datatypes.molecules:CIF" display_in_upload="true"/>
-    <datatype extension="xyz" type="galaxy.datatypes.molecules:XYZ" display_in_upload="true"/>
-    <datatype extension="extxyz" type="galaxy.datatypes.molecules:ExtendedXYZ" display_in_upload="true"/>
+    <datatype extension="cell" type="galaxy.datatypes.molecules:Cell" display_in_upload="true" description="The .cell file contains geometry information, including cell parameters, atomic coordinates, and k-point coordinates and weights. The file consists of lines containing keywords and data blocks, and associated values" description_url="https://www.tcm.phy.cam.ac.uk/castep/documentation/WebHelp/content/modules/castep/expcastepfilecell.htm"/>
+    <datatype extension="cif" type="galaxy.datatypes.molecules:CIF" display_in_upload="true" description="CIF or Crystallographic Information File is the standard format for storing crystallographic structural data" description_url="https://www.iucr.org/resources/cif"/>
+    <datatype extension="xyz" type="galaxy.datatypes.molecules:XYZ" display_in_upload="true" description="Basic format for atomic positions in a structure" description_url="https://open-babel.readthedocs.io/en/latest/FileFormats/XYZ_cartesian_coordinates_format.html"/>
+    <datatype extension="extxyz" type="galaxy.datatypes.molecules:ExtendedXYZ" display_in_upload="true" description="Extended XYZ format is an enhanced version of the basic XYZ format that allows extra columns to be present in the file for additonal per-atom properties as well as standardising the format of the comment line to include the cell lattice and other per-frame parameters" description_url="https://wiki.fysik.dtu.dk/ase/ase/io/formatoptions.html#extxyz"/>
+    <datatype extension="magres" type="galaxy.datatypes.molecules:Magres" display_in_upload="true" description="Ab initio Nuclear Magnetic Resonance file format providing a complete archival and data processing format for the results of first principles calculation of NMR parameters" description_url="https://www.ccpnc.ac.uk/docs/magres"/>
     <datatype extension="trr" type="galaxy.datatypes.binary:Trr" display_in_upload="true">
       <converter file="mdconvert.xml" target_datatype="xtc"/>
       <converter file="mdconvert.xml" target_datatype="dcd"/>
@@ -934,6 +949,7 @@
     <datatype extension="gmsh.msh" type="galaxy.datatypes.constructive_solid_geometry:GmshMsh" display_in_upload="true"/>
     <datatype extension="gmsh.geo" type="galaxy.datatypes.constructive_solid_geometry:GmshGeo" display_in_upload="true"/>
     <datatype extension="zset.geof" type="galaxy.datatypes.constructive_solid_geometry:ZsetGeof" display_in_upload="true"/>
+    <datatype extension="stl" type="galaxy.datatypes.binary:Binary" mimetype="application/octet-stream" display_in_upload="true" description="STL is a file format native to the stereolithography CAD software created by 3D Systems."/>
     <!-- Povray script -->
     <datatype extension="pov" type="galaxy.datatypes.text:Text" subclass="true" display_in_upload="true"/>
     <!-- End Structural Materials datatypes -->
@@ -947,15 +963,23 @@
     <datatype extension="storm.check" type="galaxy.datatypes.text:StormCheck" display_in_upload="true"/>
     <datatype extension="ctl.result" type="galaxy.datatypes.text:CTLresult" display_in_upload="true"/>
     <!-- CASTEP types -->
-    <datatype extension="castep" type="galaxy.datatypes.text:Castep" display_in_upload="true"/>
-    <datatype extension="param" type="galaxy.datatypes.text:Param" display_in_upload="true"/>
-    <datatype extension="den_fmt" type="galaxy.datatypes.text:FormattedDensity" display_in_upload="true"/>
+    <datatype extension="castep" type="galaxy.datatypes.text:Castep" display_in_upload="true" description="numerical output of a CASTEP job in ASCII format" description_url="https://www.tcm.phy.cam.ac.uk/castep/documentation/WebHelp/content/modules/castep/expcastepfilecastep.htm"/>
+    <datatype extension="param" type="galaxy.datatypes.text:Param" display_in_upload="true" description="the param file contains all the input control parameters required to run a CASTEP job. Consists of lines containing keywords and associated values" description_url="https://www.tcm.phy.cam.ac.uk/castep/documentation/WebHelp/content/modules/castep/expcastepfileparam.htm"/>
+    <datatype extension="den_fmt" type="galaxy.datatypes.text:FormattedDensity" display_in_upload="true" description="formatted electronic density file output by CASTEP containing value of electron density for a grid of points"/>
+    <!-- Larch types -->
+    <datatype extension="prj" type="galaxy.datatypes.larch:AthenaProject" display_in_upload="true" description="Athena project file."/>
+    <datatype extension="inp" type="galaxy.datatypes.larch:FEFFInput" display_in_upload="true" description="FEFF input file."/>
+    <datatype extension="sp" type="galaxy.datatypes.tabular:CSV" subclass="true" description="CSV representing selected FEFF paths."/>
+    <datatype extension="gds" type="galaxy.datatypes.tabular:CSV" subclass="true" description="CSV representing GDS parameters."/>
+    <datatype extension="feff" type="galaxy.datatypes.tabular:CSV" subclass="true" description="CSV representing summary of FEFF paths."/>
+    <datatype extension="feffit" type="galaxy.datatypes.data:Text" subclass="true" description="Report of Artemis FEFFIT."/>
     <!-- ECOLOGY types -->
     <datatype extension="bil" type="galaxy.datatypes.binary:Binary" mimetype="application/octet-stream" display_in_upload="true" subclass="true" description="ENVI file with band interleave by line (BIL) format"/>
     <datatype extension="hdr" type="galaxy.datatypes.data:Text" mimetype="text/plain" display_in_upload="true" subclass="true" description="ENVI metadata header file"/>
     <datatype extension="shp" type="galaxy.datatypes.gis:Shapefile" mimetype="application/octet-stream" display_in_upload="true" description="geospatial vector data format for geographic information system"/>
     <!-- Flexible Image Transport System (FITS) used in Astronomy https://fits.gsfc.nasa.gov/ https://fits.gsfc.nasa.gov/rfc4047.txt -->
     <datatype extension="fits" type="galaxy.datatypes.binary:FITS" mimetype="application/octet-stream" display_in_upload="true" description="Flexible Image Transport System (FITS) used in Astronomy"/>
+    <datatype extension="chain" type="galaxy.datatypes.chain:Chain" display_in_upload="true"/>
   </registration>
   <sniffers>
     <!--
@@ -1057,6 +1081,7 @@
     <sniffer type="galaxy.datatypes.binary:Pretext"/>
     <sniffer type="galaxy.datatypes.annotation:Augustus"/>
     <sniffer type="galaxy.datatypes.xml:Owl"/>
+    <sniffer type="galaxy.datatypes.chain:Chain"/>
     <sniffer type="galaxy.datatypes.triples:Rdf"/>
     <sniffer type="galaxy.datatypes.blast:BlastXml"/>
     <sniffer type="galaxy.datatypes.images:Gifti" />
@@ -1116,6 +1141,7 @@
     <sniffer type="galaxy.datatypes.molecules:CIF"/>
     <sniffer type="galaxy.datatypes.molecules:ExtendedXYZ"/>
     <sniffer type="galaxy.datatypes.molecules:XYZ"/>
+    <sniffer type="galaxy.datatypes.molecules:Magres" />
     <sniffer type="galaxy.datatypes.molecules:MOL2"/>
     <sniffer type="galaxy.datatypes.molecules:InChI"/>
     <sniffer type="galaxy.datatypes.molecules:FPS"/>
@@ -1210,6 +1236,8 @@
     <sniffer type="galaxy.datatypes.media:Mpg"/>
     <sniffer type="galaxy.datatypes.speech:TextGrid" />
     <sniffer type="galaxy.datatypes.speech:BPF" />
+    <sniffer type="galaxy.datatypes.larch:FEFFInput" />
+    <sniffer type="galaxy.datatypes.larch:AthenaProject" />
     <sniffer type="galaxy.datatypes.text:Castep" />
     <sniffer type="galaxy.datatypes.text:CTLresult"/>
     <sniffer type="galaxy.datatypes.text:FormattedDensity" />

@@ -70,7 +70,7 @@ class BlastXml(GenericXml):
     def set_peek(self, dataset: DatasetProtocol, **kwd) -> None:
         """Set the peek and blurb text"""
         if not dataset.dataset.purged:
-            dataset.peek = get_file_peek(dataset.file_name)
+            dataset.peek = get_file_peek(dataset.get_file_name())
             dataset.blurb = "NCBI Blast XML data"
         else:
             dataset.peek = "file does not exist"
@@ -235,9 +235,6 @@ class _BlastDb(Data):
                 ck_size=ck_size,
                 **kwd,
             )
-
-        dataset.sync_cache(user=trans.user)
-
         if self.file_ext == "blastdbn":
             title = "This is a nucleotide BLAST database"
         elif self.file_ext == "blastdbp":
@@ -250,7 +247,7 @@ class _BlastDb(Data):
         msg = ""
         try:
             # Try to use any text recorded in the dummy index file:
-            with open(dataset.file_name, encoding="utf-8") as handle:
+            with open(dataset.get_file_name(user=trans.user), encoding="utf-8") as handle:
                 msg = handle.read().strip()
         except Exception:
             pass

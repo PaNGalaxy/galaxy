@@ -30,7 +30,8 @@ class HasExtraFilesPath(Protocol):
 
 
 class HasFileName(Protocol):
-    file_name: Any
+    def get_file_name(self, sync_cache=True, user=None) -> str:
+        ...
 
 
 class HasHid(Protocol):
@@ -81,9 +82,6 @@ class DatasetProtocol(
         ...
 
     def get_converted_files_by_type(self, file_type):
-        ...
-
-    def sync_cache(self, **kwargs):
         ...
 
     def get_mime(self) -> str:

@@ -20,12 +20,14 @@ from typing import (
     Optional,
     Tuple,
     Type,
+    TYPE_CHECKING,
 )
 
 import yaml
 from pydantic import BaseModel
 
 from galaxy.exceptions import (
+    MalformedContents,
     ObjectInvalid,
     ObjectNotFound,
 )
@@ -33,6 +35,7 @@ from galaxy.util import (
     asbool,
     directory_hash_id,
     force_symlink,
+    in_directory,
     parse_xml,
     umask_fix_perms,
 )
@@ -40,6 +43,7 @@ from galaxy.util.bunch import Bunch
 from galaxy.util.path import (
     safe_makedirs,
     safe_relpath,
+    safe_walk,
 )
 from galaxy.util.sleeper import Sleeper
 from .badges import (
@@ -49,6 +53,9 @@ from .badges import (
     StoredBadgeDict,
 )
 from .caching import CacheTarget
+
+if TYPE_CHECKING:
+    from galaxy.model import DatasetInstance
 
 NO_SESSION_ERROR_MESSAGE = (
     "Attempted to 'create' object store entity in configuration with no database session present."
@@ -196,7 +203,17 @@ class ObjectStore(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def get_filename(
-        self, obj, base_dir=None, dir_only=False, extra_dir=None, extra_dir_at_root=False, alt_name=None, obj_dir=False
+        self,
+        obj,
+        base_dir=None,
+        dir_only=False,
+        extra_dir=None,
+        extra_dir_at_root=False,
+        alt_name=None,
+        obj_dir=False,
+        sync_cache=False,
+        user=None,
+        auth_token=None,
     ):
         """
         Get the expected filename with absolute path for object with id `obj.id`.
@@ -216,6 +233,7 @@ class ObjectStore(metaclass=abc.ABCMeta):
         obj_dir=False,
         file_name=None,
         create=False,
+        preserve_symlinks=False,
     ):
         """
         Inform the store that the file associated with `obj.id` has been updated.
@@ -435,9 +453,6 @@ class BaseObjectStore(ObjectStore):
     def get_filename(self, obj, **kwargs):
         return self._invoke("get_filename", obj, **kwargs)
 
-    def sync_cache(self, obj, **kwargs):
-        return self._invoke("sync_cache", obj, **kwargs)
-
     def update_from_file(self, obj, **kwargs):
         return self._invoke("update_from_file", obj, **kwargs)
 
@@ -562,10 +577,6 @@ class ConcreteObjectStore(BaseObjectStore):
 
     def _get_store_by(self, obj):
         return self.store_by
-
-    # todo: refactor
-    def _sync_cache(self, obj, **kwargs):
-        pass
 
     def _is_private(self, obj):
         return self.private
@@ -967,9 +978,6 @@ class NestedObjectStore(BaseObjectStore):
     def _get_object_url(self, obj, **kwargs):
         """For the first backend that has this `obj`, get its URL."""
         return self._call_method("_get_object_url", obj, None, False, **kwargs)
-
-    def _sync_cache(self, obj, **kwargs):
-        return self._call_method("_sync_cache", obj, ObjectNotFound, True, **kwargs)
 
     def _get_concrete_store_name(self, obj):
         return self._call_method("_get_concrete_store_name", obj, None, False)
@@ -1588,3 +1596,31 @@ class ObjectStorePopulator:
         except ObjectInvalid:
             raise Exception("Unable to create output dataset: object store is full")
         self.object_store_id = dataset.object_store_id  # these will be the same thing after the first output
+
+
+def persist_extra_files(
+    object_store: ObjectStore,
+    src_extra_files_path: str,
+    primary_data: "DatasetInstance",
+    extra_files_path_name: Optional[str] = None,
+) -> None:
+    if os.path.exists(src_extra_files_path):
+        assert primary_data.dataset
+        if not extra_files_path_name:
+            extra_files_path_name = primary_data.dataset.extra_files_path_name_from(object_store)
+        assert extra_files_path_name
+        for root, _dirs, files in safe_walk(src_extra_files_path):
+            extra_dir = os.path.join(extra_files_path_name, os.path.relpath(root, src_extra_files_path))
+            extra_dir = os.path.normpath(extra_dir)
+            for f in files:
+                if not in_directory(f, src_extra_files_path):
+                    # Unclear if this can ever happen if we use safe_walk ... probably not ?
+                    raise MalformedContents(f"Invalid dataset path: {f}")
+                object_store.update_from_file(
+                    primary_data.dataset,
+                    extra_dir=extra_dir,
+                    alt_name=f,
+                    file_name=os.path.join(root, f),
+                    create=True,
+                    preserve_symlinks=True,
+                )

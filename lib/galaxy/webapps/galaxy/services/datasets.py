@@ -456,7 +456,7 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
             hash_function=payload.hash_function,
             user=trans.async_request_user,
         )
-        result = compute_dataset_hash.delay(request=request)
+        result = compute_dataset_hash.delay(request=request, task_user_id=getattr(trans.user, "id", None))
         return async_task_summary(result)
 
     def drs_dataset_instance(self, object_id: str) -> Tuple[int, DatasetSourceType]:
@@ -497,7 +497,7 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
                 hash_function=hash_funciton,
                 user=None,
             )
-            compute_dataset_hash.delay(request=request)
+            compute_dataset_hash.delay(request=request, task_user_id=getattr(trans.user, "id", None))
             raise galaxy_exceptions.AcceptedRetryLater(
                 "required checksum task for DRS object response launched.", retry_after=60
             )
@@ -545,15 +545,16 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
         Generate list of extra files.
         """
         hda = self.hda_manager.get_accessible(history_content_id, trans.user)
-        extra_files_path = hda.extra_files_path
         rval = []
-        for root, directories, files in safe_walk(extra_files_path):
-            for directory in directories:
-                rval.append(
-                    {"class": "Directory", "path": os.path.relpath(os.path.join(root, directory), extra_files_path)}
-                )
-            for file in files:
-                rval.append({"class": "File", "path": os.path.relpath(os.path.join(root, file), extra_files_path)})
+        if not hda.is_pending and hda.extra_files_path_exists():
+            extra_files_path = hda.extra_files_path
+            for root, directories, files in safe_walk(extra_files_path):
+                for directory in directories:
+                    rval.append(
+                        {"class": "Directory", "path": os.path.relpath(os.path.join(root, directory), extra_files_path)}
+                    )
+                for file in files:
+                    rval.append({"class": "File", "path": os.path.relpath(os.path.join(root, file), extra_files_path)})
 
         return rval
 
@@ -585,13 +586,11 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
                 if filename and filename != "index":
                     object_store = trans.app.object_store
                     dir_name = dataset_instance.dataset.extra_files_path_name
-                    dataset_instance.sync_cache(extra_dir=dir_name, alt_name=filename, user=trans.user)
                     file_path = object_store.get_filename(
-                        dataset_instance.dataset, extra_dir=dir_name, alt_name=filename
+                        dataset_instance.dataset, extra_dir=dir_name, alt_name=filename, user=trans.user
                     )
                 else:
-                    dataset_instance.sync_cache(user=trans.user)
-                    file_path = dataset_instance.file_name
+                    file_path = dataset_instance.get_file_name(user=trans.user)
                 rval = open(file_path, "rb")
             else:
                 if offset is not None:
@@ -649,8 +648,7 @@ class DatasetsService(ServiceBase, UsesVisualizationMixin):
         headers = {}
         headers["Content-Type"] = "application/octet-stream"
         headers["Content-Disposition"] = f'attachment; filename="Galaxy{hda.hid}-[{fname}].{file_ext}"'
-        hda.metadata.get(metadata_file).sync_cache(user=trans.user)
-        file_path = hda.metadata.get(metadata_file).file_name
+        file_path = hda.metadata.get(metadata_file).get_file_name(user=trans.user)
         if open_file:
             return open(file_path, "rb"), headers
         return file_path, headers

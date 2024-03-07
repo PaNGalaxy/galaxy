@@ -22,6 +22,7 @@ from typing import (
     Optional,
     Tuple,
     TYPE_CHECKING,
+    Union,
 )
 
 import h5py
@@ -231,7 +232,7 @@ class Cel(Binary):
         """
         Set metadata for Cel file.
         """
-        with open(dataset.file_name, "rb") as handle:
+        with open(dataset.get_file_name(), "rb") as handle:
             header_bytes = handle.read(8)
         if struct.unpack("<ii", header_bytes[:9]) == (64, 4):
             dataset.metadata.version = "4"
@@ -243,7 +244,7 @@ class Cel(Binary):
     def set_peek(self, dataset: DatasetProtocol, **kwd) -> None:
         if not dataset.dataset.purged:
             dataset.blurb = f"Cel version: {dataset.metadata.version}"
-            dataset.peek = get_file_peek(dataset.file_name)
+            dataset.peek = get_file_peek(dataset.get_file_name())
         else:
             dataset.peek = "file does not exist"
             dataset.blurb = "file purged from disk"
@@ -454,7 +455,7 @@ class _BamOrSam:
 
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         try:
-            bam_file = pysam.AlignmentFile(dataset.file_name, mode="rb")
+            bam_file = pysam.AlignmentFile(dataset.get_file_name(), mode="rb")
             # TODO: Reference names, lengths, read_groups and headers can become very large, truncate when necessary
             dataset.metadata.reference_names = list(bam_file.references)
             dataset.metadata.reference_lengths = list(bam_file.lengths)
@@ -602,16 +603,16 @@ class BamNative(CompressedArchive, _BamOrSam):
         except Exception:
             return f"Binary bam alignments file ({nice_size(dataset.get_size())})"
 
-    def to_archive(self, dataset: DatasetProtocol, name: str = "", trans=None) -> Iterable:
-        dataset.sync_cache(user=trans.user)
+    def to_archive(self, dataset: DatasetProtocol, name: str = "", user=None) -> Iterable:
+        file_name = dataset.get_file_name(user=user)
         rel_paths = []
         file_paths = []
-        rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}")
-        file_paths.append(dataset.file_name)
+        rel_paths.append(f"{name or file_name}.{dataset.extension}")
+        file_paths.append(file_name)
         # We may or may not have a bam index file (BamNative doesn't have it, but also index generation may have failed)
         if dataset.metadata.bam_index:
-            rel_paths.append(f"{name or dataset.file_name}.{dataset.extension}.bai")
-            file_paths.append(dataset.metadata.bam_index.file_name)
+            rel_paths.append(f"{name or file_name}.{dataset.extension}.bai")
+            file_paths.append(dataset.metadata.bam_index.get_file_name(user=user))
         return zip(file_paths, rel_paths)
 
     def groom_dataset_content(self, file_name: str) -> None:
@@ -649,7 +650,7 @@ class BamNative(CompressedArchive, _BamOrSam):
     def get_chunk(self, trans, dataset: HasFileName, offset: int = 0, ck_size: Optional[int] = None) -> str:
         if not offset == -1:
             try:
-                with pysam.AlignmentFile(dataset.file_name, "rb", check_sq=False) as bamfile:
+                with pysam.AlignmentFile(dataset.get_file_name(user=trans.user if trans else None), "rb", check_sq=False) as bamfile:
                     if ck_size is None:
                         ck_size = 300  # 300 lines
                     if offset == 0:
@@ -665,9 +666,9 @@ class BamNative(CompressedArchive, _BamOrSam):
                             break
 
                         offset = bamfile.tell()
-                        bamline = alignment.tostring(bamfile)
+                        bamline = alignment.to_string()
                         # With multiple tags, Galaxy would display each as a separate column
-                        # because the 'tostring()' function uses tabs also between tags.
+                        # because the 'to_string()' function uses tabs also between tags.
                         # Below code will turn these extra tabs into spaces.
                         n_tabs = bamline.count("\t")
                         if n_tabs > 11:
@@ -702,12 +703,10 @@ class BamNative(CompressedArchive, _BamOrSam):
         headers = kwd.get("headers", {})
         preview = util.string_as_bool(preview)
         if offset is not None:
-            dataset.sync_cache(user=trans.user)
             return self.get_chunk(trans, dataset, offset, ck_size), headers
         elif to_ext or not preview:
             return super().display_data(trans, dataset, preview, filename, to_ext, **kwd)
         else:
-            dataset.sync_cache(user=trans.user)
             column_names = dataset.metadata.column_names
             if not column_names:
                 column_names = []
@@ -730,9 +729,9 @@ class BamNative(CompressedArchive, _BamOrSam):
             )
 
     def validate(self, dataset: DatasetProtocol, **kwd) -> DatatypeValidation:
-        if not BamNative.is_bam(dataset.file_name):
+        if not BamNative.is_bam(dataset.get_file_name()):
             return DatatypeValidation.invalid("This dataset does not appear to a BAM file.")
-        elif self.dataset_content_needs_grooming(dataset.file_name):
+        elif self.dataset_content_needs_grooming(dataset.get_file_name()):
             return DatatypeValidation.invalid(
                 "This BAM file does not appear to have the correct sorting for declared datatype."
             )
@@ -823,7 +822,7 @@ class Bam(BamNative):
     ) -> None:
         # These metadata values are not accessible by users, always overwrite
         super().set_meta(dataset=dataset, overwrite=overwrite, **kwd)
-        index_flag = self.get_index_flag(dataset.file_name)
+        index_flag = self.get_index_flag(dataset.get_file_name())
         if index_flag == "-b":
             spec_key = "bam_index"
             index_file = dataset.metadata.bam_index
@@ -836,9 +835,9 @@ class Bam(BamNative):
             )
         if index_flag == "-b":
             # IOError: No such file or directory: '-b' if index_flag is set to -b (pysam 0.15.4)
-            pysam.index("-o", index_file.file_name, dataset.file_name)  # type: ignore [attr-defined]
+            pysam.index("-o", index_file.get_file_name(), dataset.get_file_name())  # type: ignore [attr-defined]
         else:
-            pysam.index(index_flag, "-o", index_file.file_name, dataset.file_name)  # type: ignore [attr-defined]
+            pysam.index(index_flag, "-o", index_file.get_file_name(), dataset.get_file_name())  # type: ignore [attr-defined]
         dataset.metadata.bam_index = index_file
 
     def sniff(self, filename: str) -> bool:
@@ -1007,7 +1006,7 @@ class CRAM(Binary):
     def set_meta(
         self, dataset: DatasetProtocol, overwrite: bool = True, metadata_tmp_files_dir: Optional[str] = None, **kwd
     ) -> None:
-        major_version, minor_version = self.get_cram_version(dataset.file_name)
+        major_version, minor_version = self.get_cram_version(dataset.get_file_name())
         if major_version != -1:
             dataset.metadata.cram_version = f"{str(major_version)}.{str(minor_version)}"
 
@@ -1029,7 +1028,7 @@ class CRAM(Binary):
 
     def set_index_file(self, dataset: HasFileName, index_file) -> bool:
         try:
-            pysam.index("-o", index_file.file_name, dataset.file_name)  # type: ignore [attr-defined]
+            pysam.index("-o", index_file.get_file_name(), dataset.get_file_name())  # type: ignore [attr-defined]
             return True
         except Exception as exc:
             log.warning("%s, set_index_file Exception: %s", self, exc)
@@ -1099,14 +1098,14 @@ class Bcf(BaseBcf):
             )
         # Create the bcf index
         dataset_symlink = os.path.join(
-            os.path.dirname(index_file.file_name),
-            "__dataset_%d_%s" % (dataset.id, os.path.basename(index_file.file_name)),
+            os.path.dirname(index_file.get_file_name()),
+            "__dataset_%d_%s" % (dataset.id, os.path.basename(index_file.get_file_name())),
         )
-        os.symlink(dataset.file_name, dataset_symlink)
+        os.symlink(dataset.get_file_name(), dataset_symlink)
         try:
             cmd = ["python", "-c", f"import pysam.bcftools; pysam.bcftools.index('{dataset_symlink}')"]
             subprocess.check_call(cmd)
-            shutil.move(f"{dataset_symlink}.csi", index_file.file_name)
+            shutil.move(f"{dataset_symlink}.csi", index_file.get_file_name())
         except Exception as e:
             raise Exception(f"Error setting BCF metadata: {util.unicodify(e)}")
         finally:
@@ -1202,7 +1201,7 @@ class H5(Binary):
         This allows the h5web visualization tool (https://github.com/silx-kit/h5web)
         to be used directly with Galaxy datasets.
         """
-        with get_content_from_file(dataset.file_name, path, self._create_error) as content:
+        with get_content_from_file(dataset.get_file_name(), path, self._create_error) as content:
             if content_type == "attr":
                 assert isinstance(content, ResolvedEntityContent)
                 resp = encode(content.attributes(), "json")
@@ -1328,7 +1327,7 @@ class Loom(H5):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            with h5py.File(dataset.file_name, "r") as loom_file:
+            with h5py.File(dataset.get_file_name(), "r") as loom_file:
                 dataset.metadata.title = loom_file.attrs.get("title")
                 dataset.metadata.description = loom_file.attrs.get("description")
                 dataset.metadata.url = loom_file.attrs.get("url")
@@ -1472,7 +1471,7 @@ class Anndata(H5):
 
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
-        with h5py.File(dataset.file_name, "r") as anndata_file:
+        with h5py.File(dataset.get_file_name(), "r") as anndata_file:
             dataset.metadata.title = anndata_file.attrs.get("title")
             dataset.metadata.description = anndata_file.attrs.get("description")
             dataset.metadata.url = anndata_file.attrs.get("url")
@@ -1484,6 +1483,22 @@ class Anndata(H5):
             dataset.metadata.layers_count = len(anndata_file)
             dataset.metadata.layers_names = list(anndata_file.keys())
 
+            def get_index_value(tmp: Union[h5py.Dataset, h5py.Datatype, h5py.Group]):
+                if isinstance(tmp, (h5py.Dataset, h5py.Datatype)):
+                    if "index" in tmp.dtype.names:
+                        return tmp["index"]
+                    if "_index" in tmp.dtype.names:
+                        return tmp["_index"]
+                    return None
+                else:
+                    index_var = tmp.attrs.get("index")
+                    if index_var is not None:
+                        return tmp[index_var]
+                    index_var = tmp.attrs.get("_index")
+                    if index_var is not None:
+                        return tmp[index_var]
+                    return None
+
             def _layercountsize(tmp, lennames=0):
                 "From TMP and LENNAMES, return layers, their number, and the length of one of the layers (all equal)."
                 if hasattr(tmp, "dtype"):
@@ -1491,30 +1506,17 @@ class Anndata(H5):
                     count = len(tmp.dtype)
                     size = int(tmp.size)
                 else:
-                    layers = list(tmp.keys())
+                    layers = list(tmp.attrs)
                     count = len(layers)
                     size = lennames
                 return (layers, count, size)
 
             if "obs" in dataset.metadata.layers_names:
                 tmp = anndata_file["obs"]
-                obs_index = None
-                if "index" in tmp:
-                    obs_index = "index"
-                elif "_index" in tmp:
-                    obs_index = "_index"
+                obs = get_index_value(tmp)
                 # Determine cell labels
-                if obs_index:
-                    dataset.metadata.obs_names = list(tmp[obs_index])
-                elif hasattr(tmp, "dtype"):
-                    if "index" in tmp.dtype.names:
-                        # Yes, we call tmp["index"], and not tmp.dtype["index"]
-                        # here, despite the above tests.
-                        dataset.metadata.obs_names = list(tmp["index"])
-                    elif "_index" in tmp.dtype.names:
-                        dataset.metadata.obs_names = list(tmp["_index"])
-                    else:
-                        log.warning("Could not determine cell labels for %s", self)
+                if obs is not None:
+                    dataset.metadata.obs_names = [n.decode() for n in obs]
                 else:
                     log.warning("Could not determine observation index for %s", self)
 
@@ -1538,15 +1540,11 @@ class Anndata(H5):
 
             if "var" in dataset.metadata.layers_names:
                 tmp = anndata_file["var"]
-                var_index = None
-                if "index" in tmp:
-                    var_index = "index"
-                elif "_index" in tmp:
-                    var_index = "_index"
+                index = get_index_value(tmp)
                 # We never use var_names
                 # dataset.metadata.var_names = tmp[var_index]
-                if var_index:
-                    x, y, z = _layercountsize(tmp, len(tmp[var_index]))
+                if index is not None:
+                    x, y, z = _layercountsize(tmp, len(index))
                 else:
                     # failing to detect a var_index is not an indicator
                     # that the dataset is empty
@@ -1667,7 +1665,7 @@ class Grib(Binary):
         """
         Set the GRIB edition.
         """
-        dataset.metadata.grib_edition = self._get_grib_edition(dataset.file_name)
+        dataset.metadata.grib_edition = self._get_grib_edition(dataset.get_file_name())
 
     def _get_grib_edition(self, filename: str) -> int:
         _uint8struct = struct.Struct(b">B")
@@ -1833,7 +1831,7 @@ class Biom2(H5):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            with h5py.File(dataset.file_name, "r") as f:
+            with h5py.File(dataset.get_file_name(), "r") as f:
                 attributes = f.attrs
 
                 dataset.metadata.id = util.unicodify(attributes["id"])
@@ -1856,7 +1854,7 @@ class Biom2(H5):
         if not dataset.dataset.purged:
             lines = ["Biom2 (HDF5) file"]
             try:
-                with h5py.File(dataset.file_name) as f:
+                with h5py.File(dataset.get_file_name()) as f:
                     for k, v in f.attrs.items():
                         lines.append(f"{k}:  {util.unicodify(v)}")
             except Exception as e:
@@ -2025,10 +2023,10 @@ class H5MLM(H5):
                 params_file = dataset.metadata.spec[spec_key].param.new_file(
                     dataset=dataset, metadata_tmp_files_dir=metadata_tmp_files_dir
                 )
-            with h5py.File(dataset.file_name, "r") as handle:
+            with h5py.File(dataset.get_file_name(), "r") as handle:
                 hyper_params = handle[self.HYPERPARAMETER][()]
             hyper_params = json.loads(util.unicodify(hyper_params))
-            with open(params_file.file_name, "w") as f:
+            with open(params_file.get_file_name(), "w") as f:
                 f.write("\tParameter\tValue\n")
                 for p in hyper_params:
                     f.write("\t".join(p) + "\n")
@@ -2081,7 +2079,7 @@ class H5MLM(H5):
 
     def set_peek(self, dataset: DatasetProtocol, **kwd) -> None:
         if not dataset.dataset.purged:
-            repr = self.get_repr(dataset.file_name)
+            repr = self.get_repr(dataset.get_file_name())
             dataset.peek = repr[: self.max_peek_size]
             dataset.blurb = nice_size(dataset.get_size())
         else:
@@ -2110,11 +2108,10 @@ class H5MLM(H5):
             to_ext = to_ext or dataset.extension
             return self._serve_raw(dataset, to_ext, headers, **kwd)
 
-        dataset.sync_cache(user=trans.user)
-
         out_dict: Dict = {}
+        fname = dataset.get_file_name(user=trans.user)
         try:
-            with h5py.File(dataset.file_name, "r") as handle:
+            with h5py.File(fname, "r") as handle:
                 out_dict["Attributes"] = {}
                 attributes = handle.attrs
                 for k in set(attributes.keys()) - {self.HTTP_REPR, self.REPR, self.URL}:
@@ -2122,13 +2119,13 @@ class H5MLM(H5):
         except Exception as e:
             log.warning(e)
 
-        config = self.get_config_string(dataset.file_name)
+        config = self.get_config_string(fname)
         out_dict["Config"] = json.loads(config) if config else ""
         out = json.dumps(out_dict, sort_keys=True, indent=2)
         out = out[: self.max_preview_size]
 
-        repr = self.get_repr(dataset.file_name)
-        html_repr = self.get_html_repr(dataset.file_name)
+        repr = self.get_repr(fname)
+        html_repr = self.get_html_repr(fname)
 
         return f"<div>{html_repr}</div><div><pre>{repr}</pre></div><div><pre>{out}</pre></div>", headers
 
@@ -2213,7 +2210,7 @@ class HexrdMaterials(H5):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            with h5py.File(dataset.file_name, "r") as mat_file:
+            with h5py.File(dataset.get_file_name(), "r") as mat_file:
                 dataset.metadata.materials = list(mat_file.keys())
                 sgn = dict()
                 lp = dict()
@@ -2408,7 +2405,7 @@ class SQlite(Binary):
             tables = []
             columns = dict()
             rowcounts = dict()
-            conn = sqlite.connect(dataset.file_name)
+            conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             tables_query = "SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name"
             rslt = c.execute(tables_query).fetchall()
@@ -2517,7 +2514,7 @@ class GeminiSQLite(SQlite):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            conn = sqlite.connect(dataset.file_name)
+            conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             tables_query = "SELECT version FROM version"
             result = c.execute(tables_query).fetchall()
@@ -2599,7 +2596,7 @@ class CuffDiffSQlite(SQlite):
         try:
             genes = []
             samples = []
-            conn = sqlite.connect(dataset.file_name)
+            conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             tables_query = "SELECT value FROM runInfo where param = 'version'"
             result = c.execute(tables_query).fetchall()
@@ -2799,7 +2796,7 @@ class BlibSQlite(SQlite):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            conn = sqlite.connect(dataset.file_name)
+            conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             tables_query = "SELECT majorVersion,minorVersion FROM LibInfo"
             (majorVersion, minorVersion) = c.execute(tables_query).fetchall()[0]
@@ -2852,7 +2849,7 @@ class DlibSQlite(SQlite):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            conn = sqlite.connect(dataset.file_name)
+            conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             tables_query = "SELECT Value FROM metadata WHERE Key = 'version'"
             version = c.execute(tables_query).fetchall()[0]
@@ -2896,7 +2893,7 @@ class ElibSQlite(SQlite):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            conn = sqlite.connect(dataset.file_name)
+            conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             tables_query = "SELECT Value FROM metadata WHERE Key = 'version'"
             version = c.execute(tables_query).fetchall()[0]
@@ -2992,7 +2989,7 @@ class GAFASQLite(SQlite):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            conn = sqlite.connect(dataset.file_name)
+            conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             version_query = "SELECT version FROM meta"
             results = c.execute(version_query).fetchall()
@@ -3038,7 +3035,7 @@ class NcbiTaxonomySQlite(SQlite):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            conn = sqlite.connect(dataset.file_name)
+            conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             version_query = "SELECT version FROM __diesel_schema_migrations ORDER BY run_on DESC LIMIT 1"
             results = c.execute(version_query).fetchall()
@@ -3161,7 +3158,7 @@ class RData(CompressedArchive):
     >>> from galaxy.util.bunch import Bunch
     >>> dataset = Bunch()
     >>> dataset.metadata = Bunch
-    >>> dataset.file_name = fname
+    >>> dataset.get_file_name = lambda : fname
     >>> dataset.has_data = lambda: True
     >>> RData().set_meta(dataset)
     >>> dataset.metadata.version
@@ -3184,7 +3181,7 @@ class RData(CompressedArchive):
 
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
-        _, fh = compression_utils.get_fileobj_raw(dataset.file_name, "rb")
+        _, fh = compression_utils.get_fileobj_raw(dataset.get_file_name(), "rb")
         try:
             dataset.metadata.version = self._parse_rdata_header(fh)
         except Exception:
@@ -3224,7 +3221,7 @@ class RDS(CompressedArchive):
     >>> from galaxy.util.bunch import Bunch
     >>> dataset = Bunch()
     >>> dataset.metadata = Bunch
-    >>> dataset.file_name = get_test_fname('int-r4.rds')
+    >>> dataset.get_file_name = lambda : get_test_fname('int-r4.rds')
     >>> dataset.has_data = lambda: True
     >>> RDS().set_meta(dataset)
     >>> dataset.metadata.version
@@ -3267,7 +3264,7 @@ class RDS(CompressedArchive):
 
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
-        _, fh = compression_utils.get_fileobj_raw(dataset.file_name, "rb")
+        _, fh = compression_utils.get_fileobj_raw(dataset.get_file_name(), "rb")
         try:
             (
                 _,
@@ -3515,8 +3512,8 @@ class PostgresqlArchive(CompressedArchive):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            if dataset and tarfile.is_tarfile(dataset.file_name):
-                with tarfile.open(dataset.file_name, "r") as temptar:
+            if dataset and tarfile.is_tarfile(dataset.get_file_name()):
+                with tarfile.open(dataset.get_file_name(), "r") as temptar:
                     pg_version_file = temptar.extractfile("postgresql/db/PG_VERSION")
                     if not pg_version_file:
                         raise Exception("Error setting PostgresqlArchive metadata: PG_VERSION file not found")
@@ -3571,8 +3568,8 @@ class MongoDBArchive(CompressedArchive):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            if dataset and tarfile.is_tarfile(dataset.file_name):
-                with tarfile.open(dataset.file_name, "r") as temptar:
+            if dataset and tarfile.is_tarfile(dataset.get_file_name()):
+                with tarfile.open(dataset.get_file_name(), "r") as temptar:
                     metrics_file = next(
                         filter(lambda x: x.startswith("mongo_db/diagnostic.data/metrics"), temptar.getnames()), None
                     )
@@ -3647,8 +3644,8 @@ class Fast5Archive(CompressedArchive):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            if dataset and tarfile.is_tarfile(dataset.file_name):
-                with tarfile.open(dataset.file_name, "r") as temptar:
+            if dataset and tarfile.is_tarfile(dataset.get_file_name()):
+                with tarfile.open(dataset.get_file_name(), "r") as temptar:
                     dataset.metadata.fast5_count = sum(1 for f in temptar if f.name.endswith(".fast5"))
         except Exception as e:
             log.warning("%s, set_meta Exception: %s", self, e)
@@ -3755,8 +3752,8 @@ class SearchGuiArchive(CompressedArchive):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            if dataset and zipfile.is_zipfile(dataset.file_name):
-                with zipfile.ZipFile(dataset.file_name) as tempzip:
+            if dataset and zipfile.is_zipfile(dataset.get_file_name()):
+                with zipfile.ZipFile(dataset.get_file_name()) as tempzip:
                     if "searchgui.properties" in tempzip.namelist():
                         with tempzip.open("searchgui.properties") as fh:
                             for line in io.TextIOWrapper(fh):
@@ -4312,7 +4309,7 @@ class Npz(CompressedArchive):
 
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         try:
-            with np.load(dataset.file_name) as npz:
+            with np.load(dataset.get_file_name()) as npz:
                 dataset.metadata.nfiles = len(npz.files)
                 dataset.metadata.files = npz.files
         except Exception as e:
@@ -4381,7 +4378,7 @@ class HexrdImagesNpz(Npz):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            with np.load(dataset.file_name) as npz:
+            with np.load(dataset.get_file_name()) as npz:
                 if "panel_id" in npz.files:
                     dataset.metadata.panel_id = str(npz["panel_id"])
                 if "omega" in npz.files:
@@ -4447,7 +4444,7 @@ class HexrdEtaOmeNpz(Npz):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            with np.load(dataset.file_name) as npz:
+            with np.load(dataset.get_file_name()) as npz:
                 dataset.metadata.HKLs = npz["iHKLList"].tolist()
                 dataset.metadata.nframes = len(npz["omegas"])
         except Exception as e:
@@ -4520,7 +4517,7 @@ class FITS(Binary):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         super().set_meta(dataset, overwrite=overwrite, **kwd)
         try:
-            with fits.open(dataset.file_name) as hdul:
+            with fits.open(dataset.get_file_name()) as hdul:
                 dataset.metadata.HDUs = []
                 for i in range(len(hdul)):
                     dataset.metadata.HDUs.append(

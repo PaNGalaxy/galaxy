@@ -284,7 +284,8 @@ class _Isa(Data):
         if not preview:
             return super().display_data(trans, dataset, preview, filename, to_ext, **kwd)
 
-        dataset.sync_cache(user=trans.user)
+        # this forces sync with objectstore
+        dataset.get_file_name(user=trans.user)
 
         # prepare the preview of the ISA dataset
         investigation = self._get_investigation(dataset)

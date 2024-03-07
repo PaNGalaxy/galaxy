@@ -361,8 +361,8 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
                     annotation = sanitize_html(payload.get("annotation"))
                     self.add_item_annotation(trans.sa_session, trans.get_user(), data, annotation)
                 # if setting metadata previously failed and all required elements have now been set, clear the failed state.
-                if data._state == trans.model.Dataset.states.FAILED_METADATA and not data.missing_meta():
-                    data._state = None
+                if data.state == trans.model.Dataset.states.FAILED_METADATA and not data.missing_meta():
+                    data.set_metadata_success_state()
                 message = f"Attributes updated. {message}" if message else "Attributes updated."
             else:
                 message = "Attributes updated, but metadata could not be changed because this dataset is currently being used as input or output. You must cancel or wait for these jobs to complete before changing metadata."
@@ -384,7 +384,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
                         "This dataset is currently being used as input or output.  You cannot change datatype until the jobs have completed or you have canceled them.",
                     )
                 else:
-                    path = data.dataset.file_name
+                    path = data.dataset.get_file_name()
                     datatype = guess_ext(path, trans.app.datatypes_registry.sniff_order)
                     trans.app.datatypes_registry.change_datatype(data, datatype)
                     with transaction(trans.sa_session):
@@ -501,7 +501,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
             or isinstance(dataset.datatype, datatypes.text.Html)
         ):
             trans.response.set_content_type(dataset.get_mime())
-            return open(dataset.file_name, "rb")
+            return open(dataset.get_file_name(), "rb")
         else:
             return trans.fill_template_mako(
                 "/dataset/display.mako",
@@ -674,7 +674,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
                                     ), f"Extra file content requested ({action_param_extra}), but allow_extra_files_access is False."
                                     file_name = os.path.join(value.extra_files_path, action_param_extra)
                                 else:
-                                    file_name = value.file_name
+                                    file_name = value.get_file_name()
                                 content_length = os.path.getsize(file_name)
                                 rval = open(file_name, "rb")
                             except OSError as e:
@@ -697,24 +697,17 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
                         msg.append((f"Invalid action provided: {app_action}", "error"))
                 else:
                     if app_action is None:
-                        if trans.history != data.history:
-                            msg.append(
-                                (
-                                    "You must import this dataset into your current history before you can view it at the desired display application.",
-                                    "error",
-                                )
+                        refresh = True
+                        trans.response.status = 202
+                        msg.append(
+                            (
+                                "Launching this display application requires additional datasets to be generated, you can view the status of these jobs below. ",
+                                "info",
                             )
-                        else:
-                            refresh = True
-                            msg.append(
-                                (
-                                    "Launching this display application required additional datasets to be generated, you can view the status of these jobs below. ",
-                                    "info",
-                                )
-                            )
-                            if not display_link.preparing_display():
-                                display_link.prepare_display()
-                            preparable_steps = display_link.get_prepare_steps()
+                        )
+                        if not display_link.preparing_display():
+                            display_link.prepare_display()
+                        preparable_steps = display_link.get_prepare_steps()
                     else:
                         raise Exception(f"Attempted a view action ({app_action}) on a non-ready display application")
             return trans.fill_template_mako(
@@ -815,9 +808,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
             if hda.dataset.user_can_purge:
                 try:
                     hda.dataset.full_delete(user=user)
-                    trans.log_event(
-                        f"Dataset id {hda.dataset.id} has been purged upon the the purge of HDA id {hda.id}"
-                    )
+                    trans.log_event(f"Dataset id {hda.dataset.id} has been purged upon the purge of HDA id {hda.id}")
                     trans.sa_session.add(hda.dataset)
                 except Exception:
                     log.exception(f"Unable to purge dataset ({hda.dataset.id}) on purge of HDA ({hda.id}):")

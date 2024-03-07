@@ -122,6 +122,7 @@ class ToolEvaluator:
         self.environment_variables: List[Dict[str, str]] = []
         self.version_command_line: Optional[str] = None
         self.command_line: Optional[str] = None
+        self.interactivetools: List[Dict[str, Any]] = []
 
     def set_compute_environment(self, compute_environment: ComputeEnvironment, get_special: Optional[Callable] = None):
         """
@@ -197,7 +198,9 @@ class ToolEvaluator:
             param_dict["__history_id__"] = self.app.security.encode_id(self._history.id)
         param_dict["__galaxy_url__"] = self.compute_environment.galaxy_url()
         if hasattr(self.job, "interactive_url") and isinstance(self.job.interactive_url, str):
-            param_dict["__tool_url_prefix__"] = ''.join([self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname])
+            param_dict["__tool_url_prefix__"] = "".join(
+                [self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname]
+            )
 
         param_dict.update(self.tool.template_macro_params)
         # All parameters go into the param_dict
@@ -518,6 +521,11 @@ class ToolEvaluator:
             # the paths rewritten.
             self.__walk_inputs(self.tool.inputs, param_dict, rewrite_unstructured_paths)
 
+    def _create_interactivetools_entry_points(self):
+        if hasattr(self.app, "interactivetool_manager"):
+            self.interactivetools = self.populate_interactivetools()
+            self.app.interactivetool_manager.create_interactivetool(self.job, self.tool, self.interactivetools)
+
     def populate_interactivetools(self):
         """
         Populate InteractiveTools templated values.
@@ -581,7 +589,12 @@ class ToolEvaluator:
         global_tool_logs(self._build_command_line, config_file, "Building Command Line")
         global_tool_logs(self._build_version_command, config_file, "Building Version Command Line")
         global_tool_logs(self._build_environment_variables, config_file, "Building Environment Variables")
-        return self.command_line, self.version_command_line, self.extra_filenames, self.environment_variables
+        return (
+            self.command_line,
+            self.version_command_line,
+            self.extra_filenames,
+            self.environment_variables,
+        )
 
     def _build_command_line(self):
         """
@@ -828,7 +841,13 @@ class PartialToolEvaluator(ToolEvaluator):
     def build(self):
         config_file = self.tool.config_file
         global_tool_logs(self._build_environment_variables, config_file, "Building Environment Variables")
-        return self.command_line, self.version_command_line, self.extra_filenames, self.environment_variables
+        return (
+            self.command_line,
+            self.version_command_line,
+            self.extra_filenames,
+            self.environment_variables,
+            self.interactivetools,
+        )
 
 
 class RemoteToolEvaluator(ToolEvaluator):
@@ -846,4 +865,10 @@ class RemoteToolEvaluator(ToolEvaluator):
         global_tool_logs(self._build_param_file, config_file, "Building Param File")
         global_tool_logs(self._build_command_line, config_file, "Building Command Line")
         global_tool_logs(self._build_version_command, config_file, "Building Version Command Line")
-        return self.command_line, self.version_command_line, self.extra_filenames, self.environment_variables
+        return (
+            self.command_line,
+            self.version_command_line,
+            self.extra_filenames,
+            self.environment_variables,
+            self.interactivetools,
+        )

@@ -3,11 +3,52 @@ History
 
 .. to_doc
 
--------
-23.1rc1
--------
+-----------
+23.2.2.dev0
+-----------
 
 
+
+-------------------
+23.2.1 (2024-02-21)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+23.1.4 (2024-01-04)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+23.1.3 (2023-12-01)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+23.1.2 (2023-11-29)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+23.1.1 (2023-10-23)
+-------------------
+
+
+============
+Enhancements
+============
+
+* Update Python dependencies by `@galaxybot <https://github.com/galaxybot>`_ in `#15435 <https://github.com/galaxyproject/galaxy/pull/15435>`_
+
+-------------------
+23.0.6 (2023-10-23)
+-------------------
+
+No recorded changes since last release
 
 -------------------
 23.0.5 (2023-07-29)
