@@ -231,7 +231,7 @@ class JobIO(Dictifiable):
         return paths
 
     def get_input_path(self, dataset: DatasetInstance) -> DatasetPath:
-        real_path = dataset.get_file_name()
+        real_path = dataset.get_file_name(sync_cache=False)
         false_path = self.dataset_path_rewriter.rewrite_dataset_path(dataset, "input")
         return DatasetPath(
             dataset.dataset.id,
