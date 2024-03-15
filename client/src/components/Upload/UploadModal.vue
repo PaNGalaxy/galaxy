@@ -8,7 +8,7 @@ import { ref, watch } from "vue";
 import { useUserStore } from "@/stores/userStore";
 import { wait } from "@/utils/utils";
 
-import UploadContainer from "./UploadContainer.vue";
+import UploadContainerORNL from "./UploadContainerORNL.vue";
 
 const { currentUser } = storeToRefs(useUserStore());
 const { currentHistoryId } = useUserHistories(currentUser);
@@ -83,7 +83,7 @@ defineExpose({
         <template v-slot:modal-header>
             <h2 class="title h-sm" tabindex="0">{{ options.title }}</h2>
         </template>
-        <UploadContainer
+        <UploadContainerORNL
             v-if="currentHistoryId"
             ref="content"
             :current-user-id="currentUser?.id"
@@ -99,7 +99,7 @@ defineExpose({
 }
 
 .upload-dialog-body {
-    height: 500px;
+    height: 550px;
     overflow: initial;
 }
 </style>
