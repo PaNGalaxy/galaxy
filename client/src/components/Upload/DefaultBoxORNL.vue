@@ -163,7 +163,6 @@ function eventAnnounce(index, file) {
 
 /** Populates collection builder with uploaded files */
 function eventBuild() {
-    //collectionBuilder(historyId, collectionType.value, uploadValues.value, props.collectionName);
     const Galaxy = getGalaxyInstance();
     const models = {};
     uploadValues.value.forEach((model) => {
@@ -177,24 +176,20 @@ function eventBuild() {
             console.debug("Warning, upload response does not contain outputs.", model);
         }
     });
-    // Build selection object
-    const selection = {
-        models: Object.values(models),
-        historyId: historyId,
-    };
-    const selectionContent = new Map();
-    selection.models.forEach((obj) => {
-        selectionContent.set(obj.id, obj);
-    });
-    var elements = Array.from(selectionContent.values());
+    var elements = Object.values(models);
     elements = elements.map((element) => ({
         id: element.id,
         name: element.name,
         //TODO: this allows for list:list even if the filter above does not - reconcile
         src: element.src || (element.history_content_type == "dataset" ? "hda" : "hdca"),
     }));
-    const queryBody = {collection_type: "list", name: props.collectionName, hide_source_items: true, element_identifiers: elements, options: {}};
-    console.log(queryBody);
+    const queryBody = {
+        collection_type: "list",
+        name: props.collectionName,
+        hide_source_items: true,
+        element_identifiers: elements,
+        options: {}
+    };
     createDatasetCollection({ id: Galaxy.currHistoryPanel.model.id }, queryBody);
     counterRunning.value = 0;
     eventReset();
