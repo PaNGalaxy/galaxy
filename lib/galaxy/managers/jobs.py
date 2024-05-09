@@ -280,6 +280,7 @@ class JobManager:
                     console_output["stdout"] = stdout_file.read(stdout_length)
                 except Exception as e:
                     log.error("Could not read STDOUT: %s", e)
+                    console_output["stdout"] = ""
             if stderr_length > 0 and stderr_position > -1:
                 try:
                     stderr_path = Path(working_directory) / STDERR_LOCATION
@@ -288,6 +289,7 @@ class JobManager:
                     console_output["stderr"] = stderr_file.read(stderr_length)
                 except Exception as e:
                     log.error("Could not read STDERR: %s", e)
+                    console_output["stderr"] = ""
         else:
             console_output["stdout"] = job.tool_stdout
             console_output["stderr"] = job.tool_stderr
