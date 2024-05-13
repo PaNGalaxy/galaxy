@@ -399,6 +399,9 @@ def guess_ext(fname_or_file_prefix: Union[str, "FilePrefix"], sniff_order, is_bi
     >>> fname = get_test_fname('Si.cif')
     >>> guess_ext(fname, sniff_order)
     'cif'
+    >>> fname = get_test_fname('LaMnO3.cif')
+    >>> guess_ext(fname, sniff_order)
+    'cif'
     >>> fname = get_test_fname('Si.xyz')
     >>> guess_ext(fname, sniff_order)
     'xyz'
@@ -420,6 +423,9 @@ def guess_ext(fname_or_file_prefix: Union[str, "FilePrefix"], sniff_order, is_bi
     >>> fname = get_test_fname('Si.den_fmt')
     >>> guess_ext(fname, sniff_order)
     'den_fmt'
+    >>> fname = get_test_fname('ethanol.magres')
+    >>> guess_ext(fname, sniff_order)
+    'magres'
     >>> fname = get_test_fname('mothur_datatypetest_true.mothur.otu')
     >>> guess_ext(fname, sniff_order)
     'mothur.otu'

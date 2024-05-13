@@ -108,7 +108,7 @@ def build_docker_run_command(
     sudo_cmd: str = DEFAULT_SUDO_COMMAND,
     auto_rm: bool = DEFAULT_AUTO_REMOVE,
     set_user: Optional[str] = DEFAULT_SET_USER,
-    set_user_from_host: str = None,
+    set_user_from_host: Optional[str] = None,
     host: Optional[str] = DEFAULT_HOST,
     guest_ports: Union[bool, List[str]] = False,
     container_name: Optional[str] = None,

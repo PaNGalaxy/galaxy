@@ -26,9 +26,9 @@
 </template>
 
 <script>
-import Vue from "vue";
 import BootstrapVue from "bootstrap-vue";
 import ariaAlert from "utils/ariaAlert";
+import Vue from "vue";
 
 Vue.use(BootstrapVue);
 
@@ -79,6 +79,9 @@ export default {
 </script>
 
 <style scoped>
+.toolTitle {
+    overflow-wrap: anywhere;
+}
 .logo {
     width: 2.5rem;
 }

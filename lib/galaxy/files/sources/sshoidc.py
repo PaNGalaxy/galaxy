@@ -52,7 +52,7 @@ class SshOidcFilesSource(PyFilesystem2FilesSource):
     required_module = SSHFS
     required_package = "fs.sshfs"
 
-    def _open_fs(self, user_context, opts: Optional[FilesSourceOptions] = None):
+    def _open_fs(self, user_context=None, opts: Optional[FilesSourceOptions] = None):
         props = self._serialization_props(user_context)
         extra_props: Union[FilesSourceProperties, dict] = opts.extra_props or {} if opts else {}
         path = props.pop("path")
@@ -61,7 +61,8 @@ class SshOidcFilesSource(PyFilesystem2FilesSource):
         oidc_token = props.pop("oidc_token")
         props["passwd"] = oidc_token
         user = jwt.decode(oidc_token, options={"verify_signature": False})[username_in_token]
-        props["user"] = re.match(username_template, user).group(0)
+        match = re.match(username_template, user)
+        props["user"] = match.group(0) if match else ""
         props["keepalive"] = 0
         props["transport_factory"] = OIDCTransport
         props["look_for_keys"] = False

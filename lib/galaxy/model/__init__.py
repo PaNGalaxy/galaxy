@@ -19,6 +19,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import timedelta
 from enum import Enum
+from secrets import token_hex
 from string import Template
 from typing import (
     Any,
@@ -60,6 +61,7 @@ from sqlalchemy import (
     Column,
     column,
     DateTime,
+    delete,
     desc,
     event,
     false,
@@ -134,18 +136,21 @@ from galaxy.model.item_attrs import (
 from galaxy.model.orm.now import now
 from galaxy.model.orm.util import add_object_to_object_session
 from galaxy.objectstore import ObjectStore
+from galaxy.schema.invocation import InvocationCancellationUserRequest
 from galaxy.schema.schema import (
     DatasetCollectionPopulatedState,
     DatasetState,
     DatasetValidatedState,
     JobState,
 )
+from galaxy.schema.workflow.comments import WorkflowCommentModel
 from galaxy.security import get_permitted_actions
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.security.validate_user_input import validate_password_str
 from galaxy.util import (
     directory_hash_id,
     enum_values,
+    hex_to_lowercase_alphanum,
     listify,
     ready_name_for_url,
     unicodify,
@@ -579,11 +584,7 @@ def calculate_user_disk_usage_statements(user_id, quota_source_map, for_sqlite=F
     default_cond = "dataset.object_store_id IS NULL" if default_quota_enabled and default_exclude_ids else ""
     exclude_cond = "dataset.object_store_id NOT IN :exclude_object_store_ids" if default_exclude_ids else ""
     use_or = " OR " if (default_cond != "" and exclude_cond != "") else ""
-    default_usage_dataset_condition = "{default_cond} {use_or} {exclude_cond}".format(
-        default_cond=default_cond,
-        exclude_cond=exclude_cond,
-        use_or=use_or,
-    )
+    default_usage_dataset_condition = f"{default_cond} {use_or} {exclude_cond}"
     if default_usage_dataset_condition.strip():
         default_usage_dataset_condition = f"AND ( {default_usage_dataset_condition} )"
     default_usage = UNIQUE_DATASET_USER_USAGE.format(and_dataset_condition=default_usage_dataset_condition)
@@ -607,7 +608,7 @@ WHERE id = :id
         )
         if for_sqlite:
             # hacky alternative for older sqlite
-            statement = """
+            statement = f"""
 WITH new (user_id, quota_source_label, disk_usage) AS (
     VALUES(:id, :label, ({label_usage}))
 )
@@ -617,19 +618,15 @@ FROM new
     LEFT JOIN user_quota_source_usage AS old
         ON new.user_id = old.user_id
             AND new.quota_source_label = old.quota_source_label
-""".format(
-                label_usage=label_usage
-            )
+"""
         else:
-            statement = """
+            statement = f"""
 INSERT INTO user_quota_source_usage(user_id, quota_source_label, disk_usage)
 VALUES(:id, :label, ({label_usage}))
 ON CONFLICT
 ON constraint uqsu_unique_label_per_user
 DO UPDATE SET disk_usage = excluded.disk_usage
-""".format(
-                label_usage=label_usage
-            )
+"""
         statements.append(
             (statement, {"id": user_id, "label": quota_source_label, "include_object_store_ids": object_store_ids})
         )
@@ -919,7 +916,7 @@ WHERE user_id = :user_id and quota_source_label = :label
         assert amount is not None
         if amount != 0:
             if quota_source_label is None:
-                self.disk_usage = func.coalesce(self.table.c.disk_usage, 0) + amount
+                self.disk_usage = (self.disk_usage or 0) + amount
             else:
                 # else would work on newer sqlite - 3.24.0
                 engine = object_session(self).bind
@@ -982,40 +979,6 @@ ON CONFLICT
 
         return tokens
 
-    def _get_social_auth(self, provider_backend):
-        if not self.social_auth:
-            return None
-        for auth in self.social_auth:
-            if auth.provider == provider_backend and auth.extra_data:
-                return auth
-        return None
-
-    def _get_custos_auth(self, provider_backend):
-        if not self.custos_auth:
-            return None
-        for auth in self.custos_auth:
-            if auth.provider == provider_backend and auth.refresh_token:
-                return auth
-        return None
-
-    def get_oidc_tokens(self, provider_backend):
-        tokens = {"id": None, "access": None, "refresh": None}
-        auth = self._get_social_auth(provider_backend)
-        if auth:
-            tokens["access"] = auth.extra_data.get("access_token", None)
-            tokens["refresh"] = auth.extra_data.get("refresh_token", None)
-            tokens["id"] = auth.extra_data.get("id_token", None)
-            return tokens
-
-        # no social auth found, check custos auth
-        auth = self._get_custos_auth(provider_backend)
-        if auth:
-            tokens["access"] = auth.access_token
-            tokens["refresh"] = auth.refresh_token
-            tokens["id"] = auth.id_token
-
-        return tokens
-
     @property
     def nice_total_disk_usage(self):
         """
@@ -1035,11 +998,7 @@ ON CONFLICT
         exclude_objectstore_ids = quota_source_map.default_usage_excluded_ids()
         default_cond = "dataset.object_store_id IS NULL OR" if default_quota_enabled and exclude_objectstore_ids else ""
         default_usage_dataset_condition = (
-            (
-                "AND ( {default_cond} dataset.object_store_id NOT IN :exclude_object_store_ids )".format(
-                    default_cond=default_cond,
-                )
-            )
+            f"AND ( {default_cond} dataset.object_store_id NOT IN :exclude_object_store_ids )"
             if exclude_objectstore_ids
             else ""
         )
@@ -1208,6 +1167,12 @@ ON CONFLICT
             if quota_source_usage.quota_source_label == quota_source_label:
                 return quota_source_usage
         return None
+
+    def count_stored_workflow_user_assocs(self, stored_workflow) -> int:
+        stmt = select(StoredWorkflowUserShareAssociation).filter_by(user=self, stored_workflow=stored_workflow)
+        stmt = select(func.count()).select_from(stmt)
+        session = object_session(self)
+        return session.scalar(stmt)
 
 
 class PasswordResetToken(Base):
@@ -1405,7 +1370,10 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
 
     states = JobState
 
+    # states that are not expected to change, except through admin action or re-scheduling
     terminal_states = [states.OK, states.ERROR, states.DELETED]
+    # deleting state should not turn back into any of the non-ready states
+    finished_states = terminal_states + [states.DELETING]
     #: job states where the job hasn't finished and the model may still change
     non_ready_states = [
         states.NEW,
@@ -1430,21 +1398,15 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
 
     @property
     def finished(self):
-        states = self.states
-        return self.state in [
-            states.OK,
-            states.ERROR,
-            states.DELETING,
-            states.DELETED,
-        ]
+        return self.state in self.finished_states
 
     def io_dicts(self, exclude_implicit_outputs=False) -> IoDicts:
-        inp_data: Dict[str, Optional["DatasetInstance"]] = {da.name: da.dataset for da in self.input_datasets}
-        out_data: Dict[str, "DatasetInstance"] = {da.name: da.dataset for da in self.output_datasets}
+        inp_data: Dict[str, Optional[DatasetInstance]] = {da.name: da.dataset for da in self.input_datasets}
+        out_data: Dict[str, DatasetInstance] = {da.name: da.dataset for da in self.output_datasets}
         inp_data.update([(da.name, da.dataset) for da in self.input_library_datasets])
         out_data.update([(da.name, da.dataset) for da in self.output_library_datasets])
 
-        out_collections: Dict[str, Union["DatasetCollectionInstance", "DatasetCollection"]]
+        out_collections: Dict[str, Union[DatasetCollectionInstance, DatasetCollection]]
         if not exclude_implicit_outputs:
             out_collections = {
                 obj.name: obj.dataset_collection_instance for obj in self.output_dataset_collection_instances
@@ -1673,12 +1635,32 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             all_configured = ep.configured and all_configured
         return all_configured
 
-    def set_state(self, state):
+    def set_state(self, state: JobState) -> bool:
         """
-        Save state history
+        Save state history. Returns True if state has changed, else False.
         """
-        self.state = state
-        self.state_history.append(JobStateHistory(self))
+        if self.state == state:
+            # Nothing changed, no action needed
+            return False
+        session = object_session(self)
+        if session and self.id and state not in Job.finished_states:
+            # generate statement that will not revert DELETING or DELETED back to anything non-terminal
+            rval = session.execute(
+                update(Job.table)
+                .where(Job.id == self.id, ~Job.state.in_((Job.states.DELETING, Job.states.DELETED)))
+                .values(state=state)
+            )
+            if rval.rowcount == 1:
+                # Need to expire state since we just updated it, but ORM doesn't know about it.
+                session.expire(self, ["state"])
+                self.state_history.append(JobStateHistory(self))
+                return True
+            else:
+                return False
+        else:
+            self.state = state
+            self.state_history.append(JobStateHistory(self))
+            return True
 
     def get_param_values(self, app, ignore_errors=False):
         """
@@ -2554,8 +2536,10 @@ class FakeDatasetAssociation:
 
     def __init__(self, dataset=None):
         self.dataset = dataset
-        self.file_name = dataset.file_name
         self.metadata = dict()
+
+    def get_file_name(self, sync_cache=True, user=None):
+        return self.dataset.get_file_name(sync_cache, user)
 
     def __eq__(self, other):
         return isinstance(other, FakeDatasetAssociation) and self.dataset == other.dataset
@@ -2704,17 +2688,21 @@ class InteractiveToolEntryPoint(Base, Dictifiable, RepresentById):
     protocol = Column(TEXT)
     entry_url = Column(TEXT)
     requires_domain = Column(Boolean, default=True)
+    requires_path_in_url = Column(Boolean, default=False)
+    requires_path_in_header_named = Column(TEXT)
     info = Column(MutableJSONType, nullable=True)
     configured = Column(Boolean, default=False)
     deleted = Column(Boolean, default=False)
     created_time = Column(DateTime, default=now)
     modified_time = Column(DateTime, default=now, onupdate=now)
+    label = Column(TEXT)
     job = relationship("Job", back_populates="interactivetool_entry_points", uselist=False)
 
     dict_collection_visible_keys = [
         "id",
         "job_id",
         "name",
+        "label",
         "active",
         "created_time",
         "modified_time",
@@ -2724,21 +2712,27 @@ class InteractiveToolEntryPoint(Base, Dictifiable, RepresentById):
         "id",
         "job_id",
         "name",
+        "label",
         "active",
         "created_time",
         "modified_time",
         "output_datasets_ids",
     ]
 
-    def __init__(self, requires_domain=True, configured=False, deleted=False, short_token=False, **kwd):
+    def __init__(
+        self,
+        requires_domain=True,
+        requires_path_in_url=False,
+        configured=False,
+        deleted=False,
+        **kwd,
+    ):
         super().__init__(**kwd)
         self.requires_domain = requires_domain
+        self.requires_path_in_url = requires_path_in_url
         self.configured = configured
         self.deleted = deleted
-        if short_token:
-            self.token = (self.token or uuid4().hex)[:10]
-        else:
-            self.token = self.token or uuid4().hex
+        self.token = self.token or hex_to_lowercase_alphanum(token_hex(8))
         self.info = self.info or {}
 
     @property
@@ -2747,6 +2741,10 @@ class InteractiveToolEntryPoint(Base, Dictifiable, RepresentById):
             # FIXME: don't included queued?
             return not self.job.finished
         return False
+
+    @property
+    def class_id(self):
+        return "ep"
 
     @property
     def output_datasets_ids(self):
@@ -2874,12 +2872,12 @@ class HistoryAudit(Base, RepresentById):
     @classmethod
     def prune(cls, sa_session):
         latest_subq = (
-            sa_session.query(cls.history_id, func.max(cls.update_time).label("max_update_time"))
+            select(cls.history_id, func.max(cls.update_time).label("max_update_time"))
             .group_by(cls.history_id)
             .subquery()
         )
         not_latest_query = (
-            sa_session.query(cls.history_id, cls.update_time)
+            select(cls.history_id, cls.update_time)
             .select_from(latest_subq)
             .join(
                 cls,
@@ -3299,8 +3297,8 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
 
     @property
     def paused_jobs(self):
-        db_session = object_session(self)
-        return db_session.query(Job).filter(Job.history_id == self.id, Job.state == Job.states.PAUSED).all()
+        stmt = select(Job).where(Job.history_id == self.id, Job.state == Job.states.PAUSED)
+        return object_session(self).scalars(stmt).all()
 
     @hybrid.hybrid_property
     def disk_size(self):
@@ -3309,23 +3307,17 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         all non-purged, unique datasets within it.
         """
         # non-.expression part of hybrid.hybrid_property: called when an instance is the namespace (not the class)
-        db_session = object_session(self)
-        rval = db_session.query(
-            func.sum(
-                db_session.query(HistoryDatasetAssociation.dataset_id, Dataset.total_size)
-                .join(Dataset)
-                .filter(HistoryDatasetAssociation.table.c.history_id == self.id)
-                .filter(HistoryDatasetAssociation.purged != true())
-                .filter(Dataset.purged != true())
-                # unique datasets only
-                .distinct()
-                .subquery()
-                .c.total_size
-            )
-        ).first()[0]
-        if rval is None:
-            rval = 0
-        return rval
+        subq = (
+            select(HistoryDatasetAssociation.dataset_id, Dataset.total_size)
+            .join(Dataset)
+            .where(HistoryDatasetAssociation.history_id == self.id)
+            .where(HistoryDatasetAssociation.purged != true())
+            .where(Dataset.purged != true())
+            .distinct()  # unique datasets only
+            .subquery()
+        )
+        stmt = select(func.sum(subq.c.total_size))
+        return object_session(self).scalar(stmt) or 0
 
     @disk_size.expression  # type: ignore[no-redef]
     def disk_size(cls):
@@ -3340,12 +3332,10 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         )
         distinct_datasets = (
             select(
-                [
-                    # use labels here to better access from the query above
-                    HistoryDatasetAssociation.table.c.history_id.label("history_id"),
-                    Dataset.total_size.label("dataset_size"),
-                    Dataset.id.label("dataset_id"),
-                ]
+                # use labels here to better access from the query above
+                HistoryDatasetAssociation.table.c.history_id.label("history_id"),
+                Dataset.total_size.label("dataset_size"),
+                Dataset.id.label("dataset_id"),
             )
             .where(HistoryDatasetAssociation.table.c.purged != true())
             .where(Dataset.table.c.purged != true())
@@ -3357,7 +3347,7 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         distinct_datasets_alias = aliased(distinct_datasets.subquery(), name="datasets")
         # then, bind as property of history using the cls.id
         size_query = (
-            select([func.coalesce(func.sum(distinct_datasets_alias.c.dataset_size), 0)])
+            select(func.coalesce(func.sum(distinct_datasets_alias.c.dataset_size), 0))
             .select_from(distinct_datasets_alias)
             .where(distinct_datasets_alias.c.history_id == cls.id)
         )
@@ -3369,14 +3359,12 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         """Returns human readable size of history on disk."""
         return galaxy.util.nice_size(self.disk_size)
 
-    @property
-    def active_dataset_and_roles_query(self):
-        db_session = object_session(self)
+    def _active_dataset_and_roles_query(self):
         return (
-            db_session.query(HistoryDatasetAssociation)
-            .filter(HistoryDatasetAssociation.table.c.history_id == self.id)
-            .filter(not_(HistoryDatasetAssociation.deleted))
-            .order_by(HistoryDatasetAssociation.table.c.hid.asc())
+            select(HistoryDatasetAssociation)
+            .where(HistoryDatasetAssociation.history_id == self.id)
+            .where(not_(HistoryDatasetAssociation.deleted))
+            .order_by(HistoryDatasetAssociation.hid.asc())
             .options(
                 joinedload(HistoryDatasetAssociation.dataset)
                 .joinedload(Dataset.actions)
@@ -3388,33 +3376,32 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
     @property
     def active_datasets_and_roles(self):
         if not hasattr(self, "_active_datasets_and_roles"):
-            self._active_datasets_and_roles = self.active_dataset_and_roles_query.all()
+            stmt = self._active_dataset_and_roles_query()
+            self._active_datasets_and_roles = object_session(self).scalars(stmt).unique().all()
         return self._active_datasets_and_roles
 
     @property
     def active_visible_datasets_and_roles(self):
         if not hasattr(self, "_active_visible_datasets_and_roles"):
-            self._active_visible_datasets_and_roles = self.active_dataset_and_roles_query.filter(
-                HistoryDatasetAssociation.visible
-            ).all()
+            stmt = self._active_dataset_and_roles_query().where(HistoryDatasetAssociation.visible)
+            self._active_visible_datasets_and_roles = object_session(self).scalars(stmt).unique().all()
         return self._active_visible_datasets_and_roles
 
     @property
     def active_visible_dataset_collections(self):
         if not hasattr(self, "_active_visible_dataset_collections"):
-            db_session = object_session(self)
-            query = (
-                db_session.query(HistoryDatasetCollectionAssociation)
-                .filter(HistoryDatasetCollectionAssociation.table.c.history_id == self.id)
-                .filter(not_(HistoryDatasetCollectionAssociation.deleted))
-                .filter(HistoryDatasetCollectionAssociation.visible)
-                .order_by(HistoryDatasetCollectionAssociation.table.c.hid.asc())
+            stmt = (
+                select(HistoryDatasetCollectionAssociation)
+                .where(HistoryDatasetCollectionAssociation.history_id == self.id)
+                .where(not_(HistoryDatasetCollectionAssociation.deleted))
+                .where(HistoryDatasetCollectionAssociation.visible)
+                .order_by(HistoryDatasetCollectionAssociation.hid.asc())
                 .options(
                     joinedload(HistoryDatasetCollectionAssociation.collection),
                     joinedload(HistoryDatasetCollectionAssociation.tags),
                 )
             )
-            self._active_visible_dataset_collections = query.all()
+            self._active_visible_dataset_collections = object_session(self).scalars(stmt).unique().all()
         return self._active_visible_dataset_collections
 
     @property
@@ -3440,35 +3427,36 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
     def __dataset_contents_iter(self, **kwds):
         return self.__filter_contents(HistoryDatasetAssociation, **kwds)
 
+    def __collection_contents_iter(self, **kwds):
+        return self.__filter_contents(HistoryDatasetCollectionAssociation, **kwds)
+
     def __filter_contents(self, content_class, **kwds):
-        db_session = object_session(self)
-        assert db_session is not None
-        query = db_session.query(content_class).filter(content_class.table.c.history_id == self.id)
-        query = query.order_by(content_class.table.c.hid.asc())
+        session = object_session(self)
+        stmt = select(content_class).where(content_class.history_id == self.id).order_by(content_class.hid.asc())
+
         deleted = galaxy.util.string_as_bool_or_none(kwds.get("deleted", None))
         if deleted is not None:
-            query = query.filter(content_class.deleted == deleted)
+            stmt = stmt.where(content_class.deleted == deleted)
+
         visible = galaxy.util.string_as_bool_or_none(kwds.get("visible", None))
         if visible is not None:
-            query = query.filter(content_class.visible == visible)
+            stmt = stmt.where(content_class.visible == visible)
+
         if "object_store_ids" in kwds:
             if content_class == HistoryDatasetAssociation:
-                query = query.join(content_class.dataset).filter(
-                    Dataset.table.c.object_store_id.in_(kwds.get("object_store_ids"))
-                )
+                stmt = stmt.join(content_class.dataset).where(Dataset.object_store_id.in_(kwds.get("object_store_ids")))
             # else ignoring object_store_ids on HDCAs...
+
         if "ids" in kwds:
             assert "object_store_ids" not in kwds
             ids = kwds["ids"]
             max_in_filter_length = kwds.get("max_in_filter_length", MAX_IN_FILTER_LENGTH)
             if len(ids) < max_in_filter_length:
-                query = query.filter(content_class.id.in_(ids))
+                stmt = stmt.where(content_class.id.in_(ids))
             else:
-                query = (content for content in query if content.id in ids)
-        return query
+                return (content for content in session.scalars(stmt) if content.id in ids)
 
-    def __collection_contents_iter(self, **kwds):
-        return self.__filter_contents(HistoryDatasetCollectionAssociation, **kwds)
+        return session.scalars(stmt)
 
 
 class UserShareAssociation(RepresentById):
@@ -3906,6 +3894,7 @@ class Dataset(Base, StorableObject, Serializable):
     non_ready_states = (states.NEW, states.UPLOAD, states.QUEUED, states.RUNNING, states.SETTING_METADATA)
     ready_states = tuple(set(states.__members__.values()) - set(non_ready_states))
     valid_input_states = tuple(set(states.__members__.values()) - {states.ERROR, states.DISCARDED})
+    no_data_states = (states.PAUSED, states.DEFERRED, states.DISCARDED, *non_ready_states)
     terminal_states = (
         states.OK,
         states.EMPTY,
@@ -3973,14 +3962,14 @@ class Dataset(Base, StorableObject, Serializable):
         if not self.shareable:
             raise Exception(CANNOT_SHARE_PRIVATE_DATASET_MESSAGE)
 
-    def get_file_name(self):
+    def get_file_name(self, sync_cache=True, user=None):
         if self.purged:
             log.warning(f"Attempt to get file name of purged dataset {self.id}")
             return ""
         if not self.external_filename:
             object_store = self._assert_object_store_set()
             if object_store.exists(self):
-                file_name = object_store.get_filename(self)
+                file_name = object_store.get_filename(self, sync_cache=sync_cache, user=user)
             else:
                 file_name = ""
             if not file_name and self.state not in (self.states.NEW, self.states.QUEUED):
@@ -4008,8 +3997,6 @@ class Dataset(Base, StorableObject, Serializable):
             self.external_filename = None
         else:
             self.external_filename = filename
-
-    file_name = property(get_file_name, set_file_name)
 
     def _assert_object_store_set(self):
         assert self.object_store is not None, f"Object Store has not been initialized for dataset {self.id}"
@@ -4213,11 +4200,6 @@ class Dataset(Base, StorableObject, Serializable):
         serialization_options.attach_identifier(id_encoder, self, rval)
         return rval
 
-    def sync_cache(self, **kwargs):
-        object_store = self._assert_object_store_set()
-        if object_store.exists(self):
-            object_store.sync_cache(self, **kwargs)
-
 
 class DatasetSource(Base, Dictifiable, Serializable):
     __tablename__ = "dataset_source"
@@ -4326,11 +4308,11 @@ def datatype_for_extension(extension, datatypes_registry=None) -> "Data":
     return ret
 
 
-class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
+class DatasetInstance(RepresentById, UsesCreateAndUpdateTime, _HasTable):
     """A base class for all 'dataset instances', HDAs, LDAs, etc"""
 
     states = Dataset.states
-    _state: str
+    _state: Optional[str]
     conversion_messages = Dataset.conversion_messages
     permitted_actions = Dataset.permitted_actions
     purged: bool
@@ -4414,45 +4396,40 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
 
     @property
     def has_deferred_data(self):
-        return self.get_dataset_state() == Dataset.states.DEFERRED
+        return self.dataset.state == Dataset.states.DEFERRED
 
-    def get_dataset_state(self):
-        # self._state is currently only used when setting metadata externally
-        # leave setting the state as-is, we'll currently handle this specially in the external metadata code
+    @property
+    def state(self):
+        # self._state holds state that should only affect this particular dataset association, not the dataset state itself
         if self._state:
             return self._state
         return self.dataset.state
 
-    def raw_set_dataset_state(self, state):
-        if state != self.dataset.state:
-            self.dataset.state = state
-            return True
-        else:
-            return False
+    @state.setter
+    def state(self, state: Optional[DatasetState]):
+        if state != self.state:
+            if state in (DatasetState.FAILED_METADATA, DatasetState.SETTING_METADATA):
+                self._state = state
+            else:
+                self.set_metadata_success_state()
+                sa_session = object_session(self)
+                if sa_session:
+                    sa_session.add(self.dataset)
+                self.dataset.state = state
 
-    def set_dataset_state(self, state):
-        if self.raw_set_dataset_state(state):
-            sa_session = object_session(self)
-            if sa_session:
-                object_session(self).add(self.dataset)
-                session = object_session(self)
-                with transaction(session):
-                    session.commit()  # flush here, because hda.flush() won't flush the Dataset object
+    def set_metadata_success_state(self):
+        self._state = None
 
-    state = property(get_dataset_state, set_dataset_state)
-
-    def get_file_name(self) -> str:
+    def get_file_name(self, sync_cache=True, user=None) -> str:
         if self.dataset.purged:
             return ""
-        return self.dataset.get_file_name()
+        return self.dataset.get_file_name(sync_cache=sync_cache, user=user)
 
     def set_file_name(self, filename: str):
         return self.dataset.set_file_name(filename)
 
-    file_name = property(get_file_name, set_file_name)
-
     def link_to(self, path):
-        self.file_name = os.path.abspath(path)
+        self.dataset.set_file_name(os.path.abspath(path))
         # Since we are not copying the file into Galaxy's managed
         # default file location, the dataset should never be purgable.
         self.dataset.purgable = False
@@ -4504,7 +4481,7 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
             file_ext = metadata.spec[metadata_name].file_ext
             metadata_file = metadata[metadata_name]
             if metadata_file:
-                path = metadata_file.file_name
+                path = metadata_file.get_file_name()
                 metadata_files.append((file_ext, path))
         return metadata_files
 
@@ -4527,16 +4504,27 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
     dbkey = property(get_dbkey, set_dbkey)
 
     def ok_to_edit_metadata(self):
-        # prevent modifying metadata when dataset is queued or running as input/output
-        # This code could be more efficient, i.e. by using mappers, but to prevent slowing down loading a History panel, we'll leave the code here for now
-        sa_session = object_session(self)
-        for job_to_dataset_association in (
-            sa_session.query(JobToInputDatasetAssociation).filter_by(dataset_id=self.id).all()
-            + sa_session.query(JobToOutputDatasetAssociation).filter_by(dataset_id=self.id).all()
-        ):
-            if job_to_dataset_association.job.state not in Job.terminal_states:
-                return False
-        return True
+        """
+        Prevent modifying metadata when dataset is queued or running as input/output:
+        return `False` if there exists an associated job with a non-terminal state.
+        """
+
+        def exists_clause(assoc_model):
+            return (
+                select(assoc_model.job_id)
+                .join(Job)
+                .where(assoc_model.dataset_id == self.id)
+                .where(Job.state.not_in(Job.terminal_states))
+                .exists()
+            )
+
+        stmt = select(
+            or_(
+                exists_clause(JobToInputDatasetAssociation),
+                exists_clause(JobToOutputDatasetAssociation),
+            )
+        )
+        return not object_session(self).scalar(stmt)
 
     def change_datatype(self, new_ext):
         self.clear_associated_files()
@@ -4685,12 +4673,14 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
                 ).values()
             )
         )
+        return self.attach_implicitly_converted_dataset(trans.sa_session, new_dataset, target_ext)
+
+    def attach_implicitly_converted_dataset(self, session, new_dataset, target_ext: str):
         new_dataset.name = self.name
         self.copy_attributes(new_dataset)
         assoc = ImplicitlyConvertedDatasetAssociation(
             parent=self, file_type=target_ext, dataset=new_dataset, metadata_safe=False
         )
-        session = trans.sa_session
         session.add(new_dataset)
         session.add(assoc)
         with transaction(session):
@@ -4713,7 +4703,7 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
             if dataset_ext == "bai" and name == "bam_index" and isinstance(value, MetadataFile):
                 # HACK: MetadataFile objects cannot be used by tools, so return
                 # a fake HDA that points to metadata file.
-                fake_dataset = Dataset(state=Dataset.states.OK, external_filename=value.file_name)
+                fake_dataset = Dataset(state=Dataset.states.OK, external_filename=value.get_file_name())
                 fake_hda = HistoryDatasetAssociation(dataset=fake_dataset)
                 return fake_hda
 
@@ -4877,13 +4867,9 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
         # Check dataset state and return any messages.
         msg = None
         if converted_dataset and converted_dataset.state == Dataset.states.ERROR:
-            job_id = (
-                trans.sa_session.query(JobToOutputDatasetAssociation)
-                .filter_by(dataset_id=converted_dataset.id)
-                .first()
-                .job_id
-            )
-            job = trans.sa_session.query(Job).get(job_id)
+            stmt = select(JobToOutputDatasetAssociation.job_id).filter_by(dataset_id=converted_dataset.id).limit(1)
+            job_id = trans.sa_session.scalars(stmt).first()
+            job = trans.sa_session.get(Job, job_id)
             msg = {"kind": self.conversion_messages.ERROR, "message": job.stderr}
         elif not converted_dataset or converted_dataset.state != Dataset.states.OK:
             msg = self.conversion_messages.PENDING
@@ -4931,9 +4917,6 @@ class DatasetInstance(UsesCreateAndUpdateTime, _HasTable):
 
             rval["file_metadata"] = file_metadata
 
-    def sync_cache(self, **kwargs):
-        self.dataset.sync_cache(**kwargs)
-
 
 class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable):
     """
@@ -4960,6 +4943,20 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
         self.history = history
         self.copied_from_history_dataset_association = copied_from_history_dataset_association
         self.copied_from_library_dataset_dataset_association = copied_from_library_dataset_dataset_association
+
+    def __strict_check_before_flush__(self):
+        if self.extension != "len":
+            # TODO: Custom builds (with .len extension) do not get a history or a HID.
+            # These should get some other type of permanent storage, perhaps UserDatasetAssociation ?
+            # Everything else needs to have a hid and a history
+            if not self.history and not getattr(self, "history_id", None):
+                raise Exception(f"HistoryDatasetAssociation {self} without history detected, this is not valid")
+            elif not self.hid:
+                raise Exception(f"HistoryDatasetAssociation {self} without hid, this is not valid")
+            elif self.dataset.file_size is None and self.dataset.state not in self.dataset.no_data_states:
+                raise Exception(
+                    f"HistoryDatasetAssociation {self} in state {self.dataset.state} with null file size, this is not valid"
+                )
 
     @property
     def user(self):
@@ -5251,7 +5248,7 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
                 # only when explicitly set: fetching filepaths can be expensive
                 if not expose_dataset_path:
                     continue
-                val = val.file_name
+                val = val.get_file_name()
             # If no value for metadata, look in datatype for metadata.
             elif not hda.metadata.element_is_set(name) and hasattr(hda.datatype, name):
                 val = getattr(hda.datatype, name)
@@ -5693,7 +5690,7 @@ class LibraryDataset(Base, Serializable):
             model_class=self.__class__.__name__,
             state=ldda.state,
             name=ldda.name,
-            file_name=ldda.file_name,
+            file_name=ldda.get_file_name(),
             created_from_basename=ldda.created_from_basename,
             uploaded_by=ldda.user and ldda.user.email,
             message=ldda.message,
@@ -5714,7 +5711,7 @@ class LibraryDataset(Base, Serializable):
         for name in ldda.metadata.spec.keys():
             val = ldda.metadata.get(name)
             if isinstance(val, MetadataFile):
-                val = val.file_name
+                val = val.get_file_name()
             elif isinstance(val, list):
                 val = ", ".join(str(v) for v in val)
             rval[f"metadata_{name}"] = val
@@ -5772,7 +5769,7 @@ class LibraryDatasetDatasetAssociation(DatasetInstance, HasName, Serializable):
             sa_session.commit()
         return hda
 
-    def copy(self, parent_id=None, target_folder=None):
+    def copy(self, parent_id=None, target_folder=None, flush=True):
         sa_session = object_session(self)
         ldda = LibraryDatasetDatasetAssociation(
             name=self.name,
@@ -5841,7 +5838,7 @@ class LibraryDatasetDatasetAssociation(DatasetInstance, HasName, Serializable):
             state=ldda.state,
             library_dataset_id=ldda.library_dataset_id,
             file_size=file_size,
-            file_name=ldda.file_name,
+            file_name=ldda.get_file_name(),
             update_time=ldda.update_time.isoformat(),
             file_ext=ldda.ext,
             data_type=f"{ldda.datatype.__class__.__module__}.{ldda.datatype.__class__.__name__}",
@@ -5860,7 +5857,7 @@ class LibraryDatasetDatasetAssociation(DatasetInstance, HasName, Serializable):
         for name in ldda.metadata.spec.keys():
             val = ldda.metadata.get(name)
             if isinstance(val, MetadataFile):
-                val = val.file_name
+                val = val.get_file_name()
             # If no value for metadata, look in datatype for metadata.
             elif val is None and hasattr(ldda.datatype, name):
                 val = getattr(ldda.datatype, name)
@@ -6027,7 +6024,7 @@ class LibraryDatasetDatasetInfoAssociation(Base, RepresentById):
         return True  # always allow inheriting, used for replacement
 
 
-class ImplicitlyConvertedDatasetAssociation(Base, RepresentById):
+class ImplicitlyConvertedDatasetAssociation(Base, Serializable):
     __tablename__ = "implicitly_converted_dataset_association"
 
     id = Column(Integer, primary_key=True)
@@ -6065,7 +6062,15 @@ class ImplicitlyConvertedDatasetAssociation(Base, RepresentById):
     )
 
     def __init__(
-        self, id=None, parent=None, dataset=None, file_type=None, deleted=False, purged=False, metadata_safe=True
+        self,
+        id=None,
+        parent=None,
+        dataset=None,
+        file_type=None,
+        deleted=False,
+        purged=False,
+        metadata_safe=True,
+        for_import=False,
     ):
         self.id = id
         add_object_to_object_session(self, dataset)
@@ -6073,14 +6078,18 @@ class ImplicitlyConvertedDatasetAssociation(Base, RepresentById):
             self.dataset = dataset
         elif isinstance(dataset, LibraryDatasetDatasetAssociation):
             self.dataset_ldda = dataset
-        else:
+        elif not for_import:
             raise AttributeError(f"Unknown dataset type provided for dataset: {type(dataset)}")
+            # else if for import - these connections might not have been included in the store,
+            # recover the data we can?
         if isinstance(parent, HistoryDatasetAssociation):
             self.parent_hda = parent
         elif isinstance(parent, LibraryDatasetDatasetAssociation):
             self.parent_ldda = parent
-        else:
+        elif not for_import:
             raise AttributeError(f"Unknown dataset type provided for parent: {type(parent)}")
+            # else if for import - these connections might not have been included in the store,
+            # recover the data we can?
         self.type = file_type
         self.deleted = deleted
         self.purged = purged
@@ -6096,9 +6105,21 @@ class ImplicitlyConvertedDatasetAssociation(Base, RepresentById):
         if purge and self.dataset.deleted:  # do something with purging
             self.purged = True
             try:
-                os.unlink(self.file_name)
+                os.unlink(self.get_file_name())
             except Exception as e:
-                log.error(f"Failed to purge associated file ({self.file_name}) from disk: {unicodify(e)}")
+                log.error(f"Failed to purge associated file ({self.get_file_name()}) from disk: {unicodify(e)}")
+
+    def _serialize(self, id_encoder, serialization_options):
+        rval = dict_for(
+            self,
+            file_type=self.type,
+        )
+        if self.parent_hda:
+            rval["parent_hda"] = serialization_options.get_identifier(id_encoder, self.parent_hda)
+        if self.dataset:
+            rval["hda"] = serialization_options.get_identifier(id_encoder, self.dataset)
+        serialization_options.attach_identifier(id_encoder, self, rval)
+        return rval
 
 
 DEFAULT_COLLECTION_NAME = "Unnamed Collection"
@@ -6196,9 +6217,9 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
             inner_dc = alias(DatasetCollection)
             inner_dce = alias(DatasetCollectionElement)
             order_by_columns.append(inner_dce.c.element_index)
-            q = q.join(inner_dc, inner_dc.c.id == dce.c.child_collection_id).outerjoin(
-                inner_dce, inner_dce.c.dataset_collection_id == inner_dc.c.id
-            )
+            q = q.join(
+                inner_dc, and_(inner_dc.c.id == dce.c.child_collection_id, dce.c.dataset_collection_id == dc.c.id)
+            ).outerjoin(inner_dce, inner_dce.c.dataset_collection_id == inner_dc.c.id)
             q = q.add_columns(
                 *attribute_columns(inner_dce.c, element_attributes, nesting_level),
                 *attribute_columns(inner_dc.c, collection_attributes, nesting_level),
@@ -6310,7 +6331,7 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
         q = self._get_nested_collection_attributes(
             element_attributes=("element_identifier",), hda_attributes=("extension",), return_entities=(Dataset,)
         )
-        return [(row[:-2], row.extension, row.Dataset.file_name) for row in q]
+        return [(row[:-2], row.extension, row.Dataset.get_file_name()) for row in q]
 
     @property
     def element_identifiers_extensions_paths_and_metadata_files(
@@ -6325,7 +6346,7 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
             )
             # element_identifiers, extension, path
             for row in q:
-                result = [row[:-3], row.extension, row.Dataset.file_name]
+                result = [row[:-3], row.extension, row.Dataset.get_file_name()]
                 hda = row.HistoryDatasetAssociation
                 result.append(hda.get_metadata_file_paths_and_extensions())
                 results.append(result)
@@ -6337,7 +6358,7 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
                     [
                         dataset_element._identifiers,
                         dataset_element.hda.extension,
-                        dataset_element.hda.file_name,
+                        dataset_element.hda.get_file_name(),
                         dataset_element.hda.get_metadata_file_paths_and_extensions(),
                     ]
                 )
@@ -6748,7 +6769,8 @@ class HistoryDatasetCollectionAssociation(
                             dbkeys.add(dbkey)
                     else:
                         dbkeys.add(dbkey_field)
-                    extensions.add(row.extension)
+                    if row.extension:
+                        extensions.add(row.extension)
             self._dataset_dbkeys_and_extensions_summary = (dbkeys, extensions)
         return self._dataset_dbkeys_and_extensions_summary
 
@@ -7044,6 +7066,9 @@ class DatasetCollectionElement(Base, Dictifiable, Serializable):
         self.collection = collection
         self.element_index = element_index
         self.element_identifier = element_identifier or str(element_index)
+
+    def __strict_check_before_flush__(self):
+        assert self.element_object, "Dataset Collection Element without child entity detected, this is not valid"
 
     @property
     def element_type(self):
@@ -7382,16 +7407,21 @@ class StoredWorkflow(Base, HasTags, Dictifiable, RepresentById):
             raise Exception("Version does not exist")
         return list(reversed(self.workflows))[version]
 
+    def version_of(self, workflow):
+        for version, workflow_instance in enumerate(reversed(self.workflows)):
+            if workflow_instance.id == workflow.id:
+                return version
+        raise KeyError("Failed to find a version of target workflow instance in stored workflow.")
+
     def show_in_tool_panel(self, user_id):
         sa_session = object_session(self)
-        return bool(
-            sa_session.query(StoredWorkflowMenuEntry)
-            .filter(
-                StoredWorkflowMenuEntry.stored_workflow_id == self.id,
-                StoredWorkflowMenuEntry.user_id == user_id,
-            )
-            .count()
+        stmt = (
+            select(func.count())
+            .select_from(StoredWorkflowMenuEntry)
+            .where(StoredWorkflowMenuEntry.stored_workflow_id == self.id)
+            .where(StoredWorkflowMenuEntry.user_id == user_id)
         )
+        return bool(sa_session.scalar(stmt))
 
     def copy_tags_from(self, target_user, source_workflow):
         # Override to only copy owner tags.
@@ -7438,6 +7468,13 @@ class Workflow(Base, Dictifiable, RepresentById):
         back_populates="workflow",
         primaryjoin=(lambda: Workflow.id == WorkflowStep.workflow_id),  # type: ignore[has-type]
         order_by=lambda: asc(WorkflowStep.order_index),  # type: ignore[has-type]
+        cascade="all, delete-orphan",
+        lazy=False,
+    )
+    comments: List["WorkflowComment"] = relationship(
+        "WorkflowComment",
+        back_populates="workflow",
+        primaryjoin=(lambda: Workflow.id == WorkflowComment.workflow_id),  # type: ignore[has-type]
         cascade="all, delete-orphan",
         lazy=False,
     )
@@ -7570,6 +7607,10 @@ class Workflow(Base, Dictifiable, RepresentById):
         copied_workflow.steps = copied_steps
         return copied_workflow
 
+    @property
+    def version(self):
+        return self.stored_workflow.version_of(self)
+
     def log_str(self):
         extra = ""
         if self.stored_workflow:
@@ -7607,6 +7648,13 @@ class WorkflowStep(Base, RepresentById):
     uuid = Column(UUIDType)
     label = Column(Unicode(255))
     temp_input_connections: Optional[InputConnDictType]
+    parent_comment_id = Column(Integer, ForeignKey("workflow_comment.id"), nullable=True)
+
+    parent_comment = relationship(
+        "WorkflowComment",
+        primaryjoin=(lambda: WorkflowComment.id == WorkflowStep.parent_comment_id),
+        back_populates="child_steps",
+    )
 
     subworkflow: Optional[Workflow] = relationship(
         "Workflow",
@@ -7668,10 +7716,20 @@ class WorkflowStep(Base, RepresentById):
 
     @property
     def input_default_value(self):
-        tool_state = self.tool_inputs
-        default_value = tool_state.get("default")
-        if default_value:
-            default_value = json.loads(default_value)["value"]
+        self.get_input_default_value(None)
+
+    def get_input_default_value(self, default_default):
+        # parameter_input and the data parameters handle this slightly differently
+        # unfortunately.
+        if self.type == "parameter_input":
+            tool_state = self.tool_inputs
+            default_value = tool_state.get("default", default_default)
+        else:
+            default_value = default_default
+            for step_input in self.inputs:
+                if step_input.name == "input" and step_input.default_value_set:
+                    default_value = step_input.default_value
+                    break
         return default_value
 
     @property
@@ -7816,6 +7874,7 @@ class WorkflowStep(Base, RepresentById):
         copied_step.order_index = self.order_index
         copied_step.type = self.type
         copied_step.tool_id = self.tool_id
+        copied_step.tool_version = self.tool_version
         copied_step.tool_inputs = self.tool_inputs
         copied_step.tool_errors = self.tool_errors
         copied_step.position = self.position
@@ -8015,6 +8074,82 @@ class WorkflowOutput(Base, Serializable):
         )
 
 
+class WorkflowComment(Base, RepresentById):
+    """
+    WorkflowComment represents an in-editor comment which is no associated to any WorkflowStep.
+    It is purely decorative, and should not influence how a workflow is ran.
+    """
+
+    __tablename__ = "workflow_comment"
+
+    id = Column(Integer, primary_key=True)
+    order_index: int = Column(Integer)
+    workflow_id = Column(Integer, ForeignKey("workflow.id"), index=True, nullable=False)
+    position = Column(MutableJSONType)
+    size = Column(JSONType)
+    type = Column(String(16))
+    color = Column(String(16))
+    data = Column(JSONType)
+    parent_comment_id = Column(Integer, ForeignKey("workflow_comment.id"), nullable=True)
+
+    workflow = relationship(
+        "Workflow",
+        primaryjoin=(lambda: Workflow.id == WorkflowComment.workflow_id),
+        back_populates="comments",
+    )
+
+    child_steps: List["WorkflowStep"] = relationship(
+        "WorkflowStep",
+        primaryjoin=(lambda: WorkflowStep.parent_comment_id == WorkflowComment.id),
+        back_populates="parent_comment",
+    )
+
+    parent_comment: "WorkflowComment" = relationship(
+        "WorkflowComment",
+        primaryjoin=(lambda: WorkflowComment.id == WorkflowComment.parent_comment_id),
+        back_populates="child_comments",
+        remote_side=[id],
+    )
+
+    child_comments: List["WorkflowComment"] = relationship(
+        "WorkflowComment",
+        primaryjoin=(lambda: WorkflowComment.parent_comment_id == WorkflowComment.id),
+        back_populates="parent_comment",
+    )
+
+    def to_dict(self):
+        comment_dict = {
+            "id": self.order_index,
+            "position": self.position,
+            "size": self.size,
+            "type": self.type,
+            "color": self.color,
+            "data": self.data,
+        }
+
+        if self.child_steps:
+            comment_dict["child_steps"] = [step.order_index for step in self.child_steps]
+
+        if self.child_comments:
+            comment_dict["child_comments"] = [comment.order_index for comment in self.child_comments]
+
+        WorkflowCommentModel(__root__=comment_dict)
+
+        return comment_dict
+
+    def from_dict(dict):
+        WorkflowCommentModel(__root__=dict)
+
+        comment = WorkflowComment()
+        comment.order_index = dict.get("id", 0)
+        comment.type = dict.get("type", "text")
+        comment.position = dict.get("position", None)
+        comment.size = dict.get("size", None)
+        comment.color = dict.get("color", "none")
+        comment.data = dict.get("data", None)
+        return comment
+
+
 class StoredWorkflowUserShareAssociation(Base, UserShareAssociation):
     __tablename__ = "stored_workflow_user_share_connection"
 
@@ -8111,6 +8246,7 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
         READY = "ready"  # Workflow ready for another iteration of scheduling.
         SCHEDULED = "scheduled"  # Workflow has been scheduled.
         CANCELLED = "cancelled"
+        CANCELLING = "cancelling"  # invocation scheduler will cancel job in next iteration
         FAILED = "failed"
 
     non_terminal_states = [states.NEW, states.READY]
@@ -8155,12 +8291,72 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
         states = WorkflowInvocation.states
         return self.state in [states.NEW, states.READY]
 
-    def cancel(self):
-        if not self.active:
-            return False
+    def set_state(self, state: "WorkflowInvocation.states"):
+        session = object_session(self)
+        priority_states = (WorkflowInvocation.states.CANCELLING, WorkflowInvocation.states.CANCELLED)
+        if session and self.id and state not in priority_states:
+            # generate statement that will not revert CANCELLING or CANCELLED back to anything non-terminal
+            session.execute(
+                update(WorkflowInvocation.table)
+                .where(
+                    WorkflowInvocation.id == self.id,
+                    or_(~WorkflowInvocation.state.in_(priority_states), WorkflowInvocation.state.is_(None)),
+                )
+                .values(state=state)
+            )
         else:
-            self.state = WorkflowInvocation.states.CANCELLED
+            # Not bound to a session, or setting cancelling/cancelled
+            self.state = state
+
+    def cancel(self):
+        if self.state not in [WorkflowInvocation.states.CANCELLING, WorkflowInvocation.states.CANCELLED]:
+            # No use cancelling workflow again, for all others we may still want to be able to cancel
+            # remaining tool and workflow steps
+            self.state = WorkflowInvocation.states.CANCELLING
             return True
+        return False
+
+    def cancel_invocation_steps(self):
+        sa_session = object_session(self)
+        assert sa_session
+        job_subq = (
+            select(Job.id)
+            .join(WorkflowInvocationStep)
+            .filter(WorkflowInvocationStep.workflow_invocation_id == self.id)
+            .filter(~Job.state.in_(Job.finished_states))
+            .with_for_update()
+        )
+        sa_session.execute(update(Job.table).where(Job.id.in_(job_subq)).values({"state": Job.states.DELETING}))
+
+        job_collection_subq = (
+            select(Job.id)
+            .join(ImplicitCollectionJobsJobAssociation)
+            .join(ImplicitCollectionJobs)
+            .join(
+                WorkflowInvocationStep, WorkflowInvocationStep.implicit_collection_jobs_id == ImplicitCollectionJobs.id
+            )
+            .filter(WorkflowInvocationStep.workflow_invocation_id == self.id)
+            .filter(~Job.state.in_(Job.finished_states))
+            .with_for_update()
+            .subquery()
+        )
+
+        sa_session.execute(
+            update(Job.table)
+            .where(Job.table.c.id.in_(job_collection_subq.element))
+            .values({"state": Job.states.DELETING})
+        )
+
+        for invocation in self.subworkflow_invocations:
+            subworkflow_invocation = invocation.subworkflow_invocation
+            cancelled = subworkflow_invocation.cancel()
+            if cancelled:
+                subworkflow_invocation.add_message(InvocationCancellationUserRequest(reason="user_request"))
+            sa_session.add(subworkflow_invocation)
+        sa_session.commit()
+
+    def mark_cancelled(self):
+        self.state = WorkflowInvocation.states.CANCELLED
 
     def fail(self):
         self.state = WorkflowInvocation.states.FAILED
@@ -8196,16 +8392,13 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
 
     @staticmethod
     def poll_unhandled_workflow_ids(sa_session):
-        and_conditions = [
-            WorkflowInvocation.state == WorkflowInvocation.states.NEW,
-            WorkflowInvocation.handler.is_(None),
-        ]
-        query = (
-            sa_session.query(WorkflowInvocation.id)
-            .filter(and_(*and_conditions))
-            .order_by(WorkflowInvocation.table.c.id.asc())
+        stmt = (
+            select(WorkflowInvocation.id)
+            .where(WorkflowInvocation.state == WorkflowInvocation.states.NEW)
+            .where(WorkflowInvocation.handler.is_(None))
+            .order_by(WorkflowInvocation.id.asc())
         )
-        return [wid for wid in query.all()]
+        return [wid for wid in sa_session.scalars(stmt)]
 
     @staticmethod
     def poll_active_workflow_ids(engine, scheduler=None, handler=None):
@@ -8213,6 +8406,7 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
             or_(
                 WorkflowInvocation.state == WorkflowInvocation.states.NEW,
                 WorkflowInvocation.state == WorkflowInvocation.states.READY,
+                WorkflowInvocation.state == WorkflowInvocation.states.CANCELLING,
             ),
         ]
         if scheduler is not None:
@@ -8415,7 +8609,7 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
                 # TODO: does this work correctly if outputs are mapped over?
                 label = output_assoc.workflow_output.label
                 if not label:
-                    continue
+                    label = f"{output_assoc.workflow_output.output_name} (Step {output_assoc.workflow_output.workflow_step.order_index + 1})"
 
                 outputs[label] = {
                     "src": "hda",
@@ -8427,7 +8621,9 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
             for output_assoc in self.output_dataset_collections:
                 label = output_assoc.workflow_output.label
                 if not label:
-                    continue
+                    label = (
+                        label
+                    ) = f"{output_assoc.workflow_output.output_name} (Step {output_assoc.workflow_output.workflow_step.order_index + 1})"
 
                 output_collections[label] = {
                     "src": "hdca",
@@ -8656,7 +8852,7 @@ class WorkflowInvocationStep(Base, Dictifiable, Serializable):
         viewonly=True,
     )
     order_index = column_property(
-        select([WorkflowStep.order_index]).where(WorkflowStep.id == workflow_step_id).scalar_subquery()
+        select(WorkflowStep.order_index).where(WorkflowStep.id == workflow_step_id).scalar_subquery()
     )
 
     subworkflow_invocation_id: column_property
@@ -8722,7 +8918,7 @@ class WorkflowInvocationStep(Base, Dictifiable, Serializable):
         preferred_object_store_id = None
         preferred_outputs_object_store_id = None
         preferred_intermediate_object_store_id = None
-        step_effective_outputs: Optional[List["EffectiveOutput"]] = None
+        step_effective_outputs: Optional[List[EffectiveOutput]] = None
 
         workflow_invocation = self.workflow_invocation
         for input_parameter in workflow_invocation.input_parameters:
@@ -9124,18 +9320,10 @@ class MetadataFile(Base, StorableObject, Serializable):
             file_name=file_name,
             extra_dir="_metadata_files",
             extra_dir_at_root=True,
-            alt_name=os.path.basename(self.file_name),
+            alt_name=os.path.basename(self.get_file_name()),
         )
 
-    def sync_cache(self, **kwargs):
-        object_store = self.dataset.object_store
-        store_by = object_store.get_store_by(self.dataset)
-        identifier = getattr(self, store_by)
-        alt_name = f"metadata_{identifier}.dat"
-        object_store.sync_cache(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name, **kwargs)
-
-    @property
-    def file_name(self):
+    def get_file_name(self, sync_cache=True, user=None):
         # Ensure the directory structure and the metadata file object exist
         try:
             da = self.history_dataset or self.library_dataset
@@ -9150,7 +9338,12 @@ class MetadataFile(Base, StorableObject, Serializable):
             if not object_store.exists(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name):
                 object_store.create(self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name)
             path = object_store.get_filename(
-                self, extra_dir="_metadata_files", extra_dir_at_root=True, alt_name=alt_name
+                self,
+                extra_dir="_metadata_files",
+                extra_dir_at_root=True,
+                alt_name=alt_name,
+                sync_cache=sync_cache,
+                user=user,
             )
             return path
         except AttributeError:
@@ -9215,7 +9408,7 @@ class FormDefinition(Base, Dictifiable, RepresentById):
     dict_collection_visible_keys = ["id", "name"]
     dict_element_visible_keys = ["id", "name", "desc", "form_definition_current_id", "fields", "layout"]
 
-    def to_dict(self, user=None, values=None, security=None):
+    def populate(self, user=None, values=None, security=None):
         values = values or {}
         form_def = {"id": security.encode_id(self.id) if security else self.id, "name": self.name, "inputs": []}
         for field in self.fields:
@@ -9347,10 +9540,17 @@ class PSAAssociation(Base, AssociationMixin, RepresentById):
 
     @classmethod
     def store(cls, server_url, association):
-        try:
-            assoc = cls.sa_session.query(cls).filter_by(server_url=server_url, handle=association.handle)[0]
-        except IndexError:
-            assoc = cls(server_url=server_url, handle=association.handle)
+        """
+        Create an Association instance
+        (Required by social_core.storage.AssociationMixin interface)
+        """
+
+        def get_or_create():
+            stmt = select(PSAAssociation).filter_by(server_url=server_url, handle=association.handle).limit(1)
+            assoc = cls.sa_session.scalars(stmt).first()
+            return assoc or cls(server_url=server_url, handle=association.handle)
+
+        assoc = get_or_create()
         assoc.secret = base64.encodebytes(association.secret).decode()
         assoc.issued = association.issued
         assoc.lifetime = association.lifetime
@@ -9361,11 +9561,25 @@ class PSAAssociation(Base, AssociationMixin, RepresentById):
 
     @classmethod
     def get(cls, *args, **kwargs):
-        return cls.sa_session.query(cls).filter_by(*args, **kwargs)
+        """
+        Get an Association instance
+        (Required by social_core.storage.AssociationMixin interface)
+        """
+        stmt = select(PSAAssociation).filter_by(*args, **kwargs)
+        return cls.sa_session.scalars(stmt).all()
 
     @classmethod
     def remove(cls, ids_to_delete):
-        cls.sa_session.query(cls).filter(cls.id.in_(ids_to_delete)).delete(synchronize_session="fetch")
+        """
+        Remove an Association instance
+        (Required by social_core.storage.AssociationMixin interface)
+        """
+        stmt = (
+            delete(PSAAssociation)
+            .where(PSAAssociation.id.in_(ids_to_delete))
+            .execution_options(synchronize_session="fetch")
+        )
+        PSAAssociation.sa_session.execute(stmt)
 
 
 class PSACode(Base, CodeMixin, RepresentById):
@@ -9390,7 +9604,11 @@ class PSACode(Base, CodeMixin, RepresentById):
 
     @classmethod
     def get_code(cls, code):
-        return cls.sa_session.query(cls).filter(cls.code == code).first()
+        """
+        (Required by social_core.storage.CodeMixin interface)
+        """
+        stmt = select(PSACode).where(PSACode.code == code).limit(1)
+        return cls.sa_session.scalars(stmt).first()
 
 
 class PSANonce(Base, NonceMixin, RepresentById):
@@ -9416,8 +9634,13 @@ class PSANonce(Base, NonceMixin, RepresentById):
 
     @classmethod
     def use(cls, server_url, timestamp, salt):
+        """
+        Create a Nonce instance
+        (Required by social_core.storage.NonceMixin interface)
+        """
         try:
-            return cls.sa_session.query(cls).filter_by(server_url=server_url, timestamp=timestamp, salt=salt)[0]
+            stmt = select(PSANonce).where(server_url=server_url, timestamp=timestamp, salt=salt).limit(1)
+            return cls.sa_session.scalars(stmt).first()
         except IndexError:
             instance = cls(server_url=server_url, timestamp=timestamp, salt=salt)
             cls.sa_session.add(instance)
@@ -9451,13 +9674,23 @@ class PSAPartial(Base, PartialMixin, RepresentById):
 
     @classmethod
     def load(cls, token):
-        return cls.sa_session.query(cls).filter(cls.token == token).first()
+        """
+        (Required by social_core.storage.PartialMixin interface)
+        """
+        stmt = select(PSAPartial).where(PSAPartial.token == token).limit(1)
+        return cls.sa_session.scalars(stmt).first()
 
     @classmethod
     def destroy(cls, token):
+        """
+        (Required by social_core.storage.PartialMixin interface)
+        """
         partial = cls.load(token)
         if partial:
-            cls.sa_session.delete(partial)
+            session = cls.sa_session
+            session.execute(delete(partial))
+            with transaction(session):
+                session.commit()
 
 
 class UserAuthnzToken(Base, UserMixin, RepresentById):
@@ -9503,42 +9736,62 @@ class UserAuthnzToken(Base, UserMixin, RepresentById):
             self.sa_session.commit()
 
     @classmethod
-    def username_max_length(cls):
-        # Note: This is the maximum field length set for the username column of the galaxy_user table.
-        # A better alternative is to retrieve this number from the table, instead of this const value.
-        return 255
-
-    @classmethod
-    def user_model(cls):
-        return User
-
-    @classmethod
     def changed(cls, user):
+        """
+        The given user instance is ready to be saved
+        (Required by social_core.storage.UserMixin interface)
+        """
         cls.sa_session.add(user)
         with transaction(cls.sa_session):
             cls.sa_session.commit()
 
     @classmethod
-    def user_query(cls):
-        return cls.sa_session.query(cls.user_model())
+    def get_username(cls, user):
+        """
+        Return the username for given user
+        (Required by social_core.storage.UserMixin interface)
+        """
+        return getattr(user, "username", None)
+
+    @classmethod
+    def user_model(cls):
+        """
+        Return the user model
+        (Required by social_core.storage.UserMixin interface)
+        """
+        return User
+
+    @classmethod
+    def username_max_length(cls):
+        """
+        Return the max length for username
+        (Required by social_core.storage.UserMixin interface)
+        """
+        # Note: This is the maximum field length set for the username column of the galaxy_user table.
+        # A better alternative is to retrieve this number from the table, instead of this const value.
+        return 255
 
     @classmethod
     def user_exists(cls, *args, **kwargs):
-        return cls.user_query().filter_by(*args, **kwargs).count() > 0
-
-    @classmethod
-    def get_username(cls, user):
-        return getattr(user, "username", None)
+        """
+        Return True/False if a User instance exists with the given arguments.
+        Arguments are directly passed to filter() manager method.
+        (Required by social_core.storage.UserMixin interface)
+        """
+        stmt_user = select(User).filter_by(*args, **kwargs)
+        stmt_count = select(func.count()).select_from(stmt_user)
+        return cls.sa_session.scalar(stmt_count) > 0
 
     @classmethod
     def create_user(cls, *args, **kwargs):
         """
         This is used by PSA authnz, do not use directly.
         Prefer using the user manager.
+        (Required by social_core.storage.UserMixin interface)
         """
         model = cls.user_model()
         instance = model(*args, **kwargs)
-        if cls.get_users_by_email(instance.email).first():
+        if cls.get_users_by_email(instance.email):
             raise Exception(f"User with this email '{instance.email}' already exists.")
         instance.set_random_password()
         cls.sa_session.add(instance)
@@ -9548,31 +9801,50 @@ class UserAuthnzToken(Base, UserMixin, RepresentById):
 
     @classmethod
     def get_user(cls, pk):
-        return cls.user_query().get(pk)
+        """
+        Return user instance for given id
+        (Required by social_core.storage.UserMixin interface)
+        """
+        return cls.sa_session.get(User, pk)
 
     @classmethod
     def get_users_by_email(cls, email):
-        return cls.user_query().filter(func.lower(User.email) == email.lower())
+        """
+        Return users instances for given email address
+        (Required by social_core.storage.UserMixin interface)
+        """
+        stmt = select(User).where(func.lower(User.email) == email.lower())
+        return cls.sa_session.scalars(stmt).all()
 
     @classmethod
     def get_social_auth(cls, provider, uid):
+        """
+        Return UserSocialAuth for given provider and uid
+        (Required by social_core.storage.UserMixin interface)
+        """
         uid = str(uid)
-        try:
-            return cls.sa_session.query(cls).filter_by(provider=provider, uid=uid)[0]
-        except IndexError:
-            return None
+        stmt = select(cls).filter_by(provider=provider, uid=uid).limit(1)
+        return cls.sa_session.scalars(stmt).first()
 
     @classmethod
     def get_social_auth_for_user(cls, user, provider=None, id=None):
-        qs = cls.sa_session.query(cls).filter_by(user_id=user.id)
+        """
+        Return all the UserSocialAuth instances for given user
+        (Required by social_core.storage.UserMixin interface)
+        """
+        stmt = select(cls).filter_by(user_id=user.id)
         if provider:
-            qs = qs.filter_by(provider=provider)
+            stmt = stmt.filter_by(provider=provider)
         if id:
-            qs = qs.filter_by(id=id)
-        return qs
+            stmt = stmt.filter_by(id=id)
+        return cls.sa_session.scalars(stmt).all()
 
     @classmethod
     def create_social_auth(cls, user, uid, provider):
+        """
+        Create a UserSocialAuth instance for given user
+        (Required by social_core.storage.UserMixin interface)
+        """
         uid = str(uid)
         instance = cls(user=user, uid=uid, provider=provider)
         cls.sa_session.add(instance)
@@ -9590,7 +9862,7 @@ class CustosAuthnzToken(Base, RepresentById):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("galaxy_user.id"))
-    external_user_id = Column(String(64))
+    external_user_id = Column(String(255))
     provider = Column(String(255))
     access_token = Column(Text)
     id_token = Column(Text)
@@ -9749,7 +10021,7 @@ class PageUserShareAssociation(Base, UserShareAssociation):
     page = relationship("Page", back_populates="users_shared_with")
 
 
-class Visualization(Base, HasTags, RepresentById):
+class Visualization(Base, HasTags, Dictifiable, RepresentById):
     __tablename__ = "visualization"
     __table_args__ = (
         Index("ix_visualization_dbkey", "dbkey", mysql_length=200),
@@ -9808,10 +10080,31 @@ class Visualization(Base, HasTags, RepresentById):
     # returns a list of users that visualization is shared with.
     users_shared_with_dot_users = association_proxy("users_shared_with", "user")
 
+    dict_element_visible_keys = [
+        "id",
+        "annotation",
+        "create_time",
+        "db_key",
+        "deleted",
+        "importable",
+        "published",
+        "tags",
+        "title",
+        "type",
+        "update_time",
+        "username",
+    ]
+
     def __init__(self, **kwd):
         super().__init__(**kwd)
         if self.latest_revision:
             self.revisions.append(self.latest_revision)
+
+    @property
+    def annotation(self):
+        if len(self.annotations) == 1:
+            return self.annotations[0].annotation
+        return None
 
     def copy(self, user=None, title=None):
         """
@@ -9833,6 +10126,15 @@ class Visualization(Base, HasTags, RepresentById):
         copy_revision = self.latest_revision.copy(visualization=copy_viz)
         copy_viz.latest_revision = copy_revision
         return copy_viz
+
+    def to_dict(self, view="element"):
+        rval = super().to_dict(view=view)
+        return rval
+
+    # username needed for slug generation
+    @property
+    def username(self):
+        return self.user.username
 
 
 class VisualizationRevision(Base, RepresentById):
@@ -10457,6 +10759,24 @@ class CleanupEventImplicitlyConvertedDatasetAssociationAssociation(Base):
     icda_id = Column(Integer, ForeignKey("implicitly_converted_dataset_association.id"), index=True)
 
 
+class CeleryUserRateLimit(Base):
+    """
+    For each user stores the last time a task was scheduled for execution.
+    Used to limit the number of tasks allowed per user per second.
+    """
+
+    __tablename__ = "celery_user_rate_limit"
+
+    user_id = Column(Integer, ForeignKey("galaxy_user.id", ondelete="CASCADE"), primary_key=True)
+    last_scheduled_time = Column(DateTime, nullable=False)
+
+    def __repr__(self):
+        return (
+            f"CeleryUserRateLimit(id_type={self.id_type!r}, "
+            f"id={self.id!r}, last_scheduled_time={self.last_scheduled_time!r})"
+        )
+
+
 # The following models (HDA, LDDA) are mapped imperatively (for details see discussion in PR #12064)
 # TLDR: there are issues ('metadata' property, Galaxy object wrapping) that need to be addressed separately
 # before these models can be mapped declaratively. Keeping them in the mapping module breaks the auth package
@@ -10798,7 +11118,9 @@ User.preferences = association_proxy("_preferences", "value", creator=UserPrefer
 # See https://github.com/sqlalchemy/sqlalchemy/discussions/7638 for approach
 session_partition = select(
     GalaxySession,
-    func.row_number().over(order_by=GalaxySession.update_time, partition_by=GalaxySession.user_id).label("index"),
+    func.row_number()
+    .over(order_by=GalaxySession.update_time.desc(), partition_by=GalaxySession.user_id)
+    .label("index"),
 ).alias()
 partitioned_session = aliased(GalaxySession, session_partition)
 User.current_galaxy_session = relationship(

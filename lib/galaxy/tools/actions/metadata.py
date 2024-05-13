@@ -106,7 +106,7 @@ class SetMetadataToolAction(ToolAction):
         # add parameters to job_parameter table
         # Store original dataset state, so we can restore it. A separate table might be better (no chance of 'losing' the original state)?
         incoming["__ORIGINAL_DATASET_STATE__"] = dataset.state
-        input_paths = [DatasetPath(dataset.id, real_path=dataset.file_name, mutable=False)]
+        input_paths = [DatasetPath(dataset.id, real_path=dataset.get_file_name(), mutable=False)]
         app.object_store.create(job, base_dir="job_work", dir_only=True, extra_dir=str(job.id))
         job_working_dir = app.object_store.get_filename(job, base_dir="job_work", dir_only=True, extra_dir=str(job.id))
         datatypes_config = os.path.join(job_working_dir, "registry.xml")
@@ -145,7 +145,7 @@ class SetMetadataToolAction(ToolAction):
             job.add_input_library_dataset(dataset_name, dataset)
         # Need a special state here to show that metadata is being set and also allow the job to run
         # i.e. if state was set to 'running' the set metadata job would never run, as it would wait for input (the dataset to set metadata on) to be in a ready state
-        dataset._state = dataset.states.SETTING_METADATA
+        dataset.state = dataset.states.SETTING_METADATA
         job.state = start_job_state  # job inputs have been configured, restore initial job state
         with transaction(sa_session):
             sa_session.commit()

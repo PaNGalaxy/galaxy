@@ -122,6 +122,7 @@ class ToolEvaluator:
         self.environment_variables: List[Dict[str, str]] = []
         self.version_command_line: Optional[str] = None
         self.command_line: Optional[str] = None
+        self.interactivetools: List[Dict[str, Any]] = []
 
     def set_compute_environment(self, compute_environment: ComputeEnvironment, get_special: Optional[Callable] = None):
         """
@@ -197,7 +198,9 @@ class ToolEvaluator:
             param_dict["__history_id__"] = self.app.security.encode_id(self._history.id)
         param_dict["__galaxy_url__"] = self.compute_environment.galaxy_url()
         if hasattr(self.job, "interactive_url") and isinstance(self.job.interactive_url, str):
-            param_dict["__tool_url_prefix__"] = ''.join([self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname])
+            param_dict["__tool_url_prefix__"] = "".join(
+                [self.job.interactive_url, ".", urlparse(self.compute_environment.galaxy_url()).hostname]
+            )
 
         param_dict.update(self.tool.template_macro_params)
         # All parameters go into the param_dict
@@ -518,6 +521,11 @@ class ToolEvaluator:
             # the paths rewritten.
             self.__walk_inputs(self.tool.inputs, param_dict, rewrite_unstructured_paths)
 
+    def _create_interactivetools_entry_points(self):
+        if hasattr(self.app, "interactivetool_manager"):
+            self.interactivetools = self.populate_interactivetools()
+            self.app.interactivetool_manager.create_interactivetool(self.job, self.tool, self.interactivetools)
+
     def populate_interactivetools(self):
         """
         Populate InteractiveTools templated values.
@@ -525,7 +533,16 @@ class ToolEvaluator:
         it = []
         for ep in getattr(self.tool, "ports", []):
             ep_dict = {}
-            for key in "port", "name", "url", "requires_domain", "protocol":
+            for key in (
+                "port",
+                "name",
+                "label",
+                "url",
+                "requires_domain",
+                "protocol",
+                "requires_path_in_url",
+                "requires_path_in_header_named",
+            ):
                 val = ep.get(key, None)
                 if val is not None and not isinstance(val, bool):
                     val = fill_template(
@@ -572,7 +589,12 @@ class ToolEvaluator:
         global_tool_logs(self._build_command_line, config_file, "Building Command Line")
         global_tool_logs(self._build_version_command, config_file, "Building Version Command Line")
         global_tool_logs(self._build_environment_variables, config_file, "Building Environment Variables")
-        return self.command_line, self.version_command_line, self.extra_filenames, self.environment_variables
+        return (
+            self.command_line,
+            self.version_command_line,
+            self.extra_filenames,
+            self.environment_variables,
+        )
 
     def _build_command_line(self):
         """
@@ -657,6 +679,18 @@ class ToolEvaluator:
                 is_template = False
             elif inject and inject.startswith("oidc_"):
                 environment_variable_template = self.get_oidc_token(inject)
+                is_template = False
+            elif inject and inject == "entry_point_path_for_label" and environment_variable_template:
+                from galaxy.managers.interactivetool import InteractiveToolManager
+
+                entry_point_label = environment_variable_template
+                matching_eps = [ep for ep in self.job.interactivetool_entry_points if ep.label == entry_point_label]
+                if matching_eps:
+                    entry_point = matching_eps[0]
+                    entry_point_path = InteractiveToolManager(self.app).get_entry_point_path(self.app, entry_point)
+                    environment_variable_template = entry_point_path.rstrip("/")
+                else:
+                    environment_variable_template = ""
                 is_template = False
             else:
                 is_template = True
@@ -807,7 +841,13 @@ class PartialToolEvaluator(ToolEvaluator):
     def build(self):
         config_file = self.tool.config_file
         global_tool_logs(self._build_environment_variables, config_file, "Building Environment Variables")
-        return self.command_line, self.version_command_line, self.extra_filenames, self.environment_variables
+        return (
+            self.command_line,
+            self.version_command_line,
+            self.extra_filenames,
+            self.environment_variables,
+            self.interactivetools,
+        )
 
 
 class RemoteToolEvaluator(ToolEvaluator):
@@ -825,4 +865,10 @@ class RemoteToolEvaluator(ToolEvaluator):
         global_tool_logs(self._build_param_file, config_file, "Building Param File")
         global_tool_logs(self._build_command_line, config_file, "Building Command Line")
         global_tool_logs(self._build_version_command, config_file, "Building Version Command Line")
-        return self.command_line, self.version_command_line, self.extra_filenames, self.environment_variables
+        return (
+            self.command_line,
+            self.version_command_line,
+            self.extra_filenames,
+            self.environment_variables,
+            self.interactivetools,
+        )

@@ -51,7 +51,7 @@ def write_dataset_collection(dataset_collection_instance, archive, user):
             if file_extension == hda.extension or (file_extension != "" and type(hda.datatype).__name__ == "Data"):
                 name = file_name
                 hda.extension = file_extension
-        except:
+        except Exception:
             pass
         for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name, user=user):
             archive.write(file_path, relpath)
@@ -324,6 +324,7 @@ class HDCASerializer(DCASerializer, taggable.TaggableSerializerMixin, annotatabl
             "contents_url": self.generate_contents_url,
             "job_state_summary": self.serialize_job_state_summary,
             "elements_datatypes": self.serialize_elements_datatypes,
+            "collection_id": self.serialize_id,
         }
         self.serializers.update(serializers)
 

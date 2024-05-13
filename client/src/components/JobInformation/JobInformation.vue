@@ -1,8 +1,8 @@
 <template>
     <div>
-        <job-details-provider auto-refresh :job-id="job_id" @update:result="updateJob"/>
-        <JobConsoleOutputProvider
-            auto-refresh="True"
+        <JobDetailsProvider auto-refresh :job-id="job_id" @update:result="updateJob"/>
+        <JobConsoleOutputProvider v-if="!jobIsTerminal"
+            auto-refresh
             :job-id="job_id"
             :stdout_position="stdout_position"
             :stdout_length="stdout_length"
@@ -16,7 +16,7 @@
                     <td>Galaxy Tool ID</td>
                     <td id="galaxy-tool-id">
                         {{ job.tool_id }}
-                        <copy-to-clipboard
+                        <CopyToClipboard
                             message="Tool ID was copied to your clipboard"
                             :text="job.tool_id"
                             title="Copy Tool ID" />
@@ -48,10 +48,11 @@
                         {{ runTime }}
                     </td>
                 </tr>
-                <code-row v-if="job" id="command-line" :code-label="'Command Line'" :code-item="job.command_line" />
-                <code-row v-if="job" id="stdout" :code-label="'Tool Standard Output'" :code-item="stdout_text" />
-                <code-row v-if="job" id="stderr" :code-label="'Tool Standard Error'" :code-item="stderr_text" />
-                <code-row
+
+                <CodeRow v-if="job" id="command-line" :code-label="'Command Line'" :code-item="job.command_line" />
+                <CodeRow v-if="job" id="stdout" :code-label="'Tool Standard Output'" :code-item="stdout_text" />
+                <CodeRow v-if="job" id="stderr" :code-label="'Tool Standard Error'" :code-item="stderr_text" />
+                <CodeRow
                     v-if="job && job.traceback"
                     id="traceback"
                     :code-label="'Unexpected Job Errors'"
@@ -71,12 +72,12 @@
                 <slot></slot>
                 <tr v-if="job && job.id">
                     <td>Job API ID</td>
-                    <td id="encoded-job-id">{{ job.id }} <decoded-id :id="job.id" /></td>
+                    <td id="encoded-job-id">{{ job.id }} <DecodedId :id="job.id" /></td>
                 </tr>
                 <tr v-if="job && job.copied_from_job_id">
                     <td>Copied from Job API ID</td>
                     <td id="encoded-copied-from-job-id">
-                        {{ job.copied_from_job_id }} <decoded-id :id="job.copied_from_job_id" />
+                        {{ job.copied_from_job_id }} <DecodedId :id="job.copied_from_job_id" />
                     </td>
                 </tr>
             </tbody>
@@ -85,14 +86,15 @@
 </template>
 
 <script>
-import { getAppRoot } from "onload/loadConfig";
-import DecodedId from "../DecodedId.vue";
-import CodeRow from "./CodeRow.vue";
+import CopyToClipboard from "components/CopyToClipboard";
 import { JobDetailsProvider, JobConsoleOutputProvider } from "components/providers/JobProvider";
 import UtcDate from "components/UtcDate";
-import CopyToClipboard from "components/CopyToClipboard";
-import JOB_STATES_MODEL from "utils/job-states-model";
 import { formatDuration, intervalToDuration } from "date-fns";
+import { getAppRoot } from "onload/loadConfig";
+import JOB_STATES_MODEL from "utils/job-states-model";
+
+import DecodedId from "../DecodedId.vue";
+import CodeRow from "./CodeRow.vue";
 
 export default {
     components: {
@@ -143,12 +145,10 @@ export default {
             // Load stored stdout and stderr
             if (this.jobIsTerminal) {
                 if (job.tool_stdout) {
-                    this.stdout_text += job.tool_stdout;
-                    this.stdout_position += job.tool_stdout.length;
+                    this.stdout_text = job.tool_stdout;
                 }
                 if (job.tool_stderr) {
-                    this.stderr_text += job.tool_stderr;
-                    this.stderr_position += job.tool_stderr.length;
+                    this.stderr_text = job.tool_stderr;
                 }
             }
         },
@@ -164,7 +164,7 @@ export default {
                     this.stderr_position += output.stderr.length;
                 }
             }
-        }
+        },
     },
 };
 </script>

@@ -3,6 +3,7 @@ Shared model and mapping code between Galaxy and Tool Shed, trying to
 generalize to generic database connections.
 """
 import contextlib
+import logging
 import os
 import threading
 from contextvars import ContextVar
@@ -28,6 +29,8 @@ from galaxy.util.bunch import Bunch
 
 if TYPE_CHECKING:
     from galaxy.model.store import SessionlessContext
+
+log = logging.getLogger(__name__)
 
 # Create a ContextVar with mutable state, this allows sync tasks in the context
 # of a request (which run within a threadpool) to see changes to the ContextVar
@@ -55,11 +58,24 @@ def transaction(session: Union[scoped_session, Session, "SessionlessContext"]):
         yield
 
 
+def check_database_connection(session):
+    """
+    In the event of a database disconnect, if there exists an active database
+    transaction, that transaction becomes invalidated. Accessing the database
+    will raise sqlalchemy.exc.PendingRollbackError. This handles this situation
+    by rolling back the invalidated transaction.
+    Ref: https://docs.sqlalchemy.org/en/14/errors.html#can-t-reconnect-until-invalid-transaction-is-rolled-back
+    """
+    if session and session.connection().invalidated:
+        log.error("Database transaction rolled back due to invalid state.")
+        session.rollback()
+
+
 # TODO: Refactor this to be a proper class, not a bunch.
 class ModelMapping(Bunch):
     def __init__(self, model_modules, engine):
         self.engine = engine
-        self._SessionLocal = sessionmaker(autoflush=False, autocommit=True)
+        self._SessionLocal = sessionmaker(autoflush=False, autocommit=False)
         versioned_session(self._SessionLocal)
         context = scoped_session(self._SessionLocal, scopefunc=self.request_scopefunc)
         # For backward compatibility with "context.current"
@@ -146,19 +162,14 @@ def versioned_objects(iter):
 
 def versioned_objects_strict(iter):
     for obj in iter:
+        if hasattr(obj, "__strict_check_before_flush__"):
+            obj.__strict_check_before_flush__()
         if hasattr(obj, "__create_version__"):
-            if obj.extension != "len":
-                # TODO: Custom builds (with .len extension) do not get a history or a HID.
-                # These should get some other type of permanent storage, perhaps UserDatasetAssociation ?
-                # Everything else needs to have a hid and a history
-                if not obj.history and not obj.history_id:
-                    raise Exception(f"HistoryDatsetAssociation {obj} without history detected, this is not valid")
-                elif not obj.hid:
-                    raise Exception(f"HistoryDatsetAssociation {obj} without has no hid, this is not valid")
             yield obj
 
 
 if os.environ.get("GALAXY_TEST_RAISE_EXCEPTION_ON_HISTORYLESS_HDA"):
+    log.debug("Using strict flush checks")
     versioned_objects = versioned_objects_strict  # noqa: F811
 
 

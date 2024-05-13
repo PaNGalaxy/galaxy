@@ -286,8 +286,9 @@ class DataSourceParser:
             test_result = test_elem.text.strip() if test_elem.text else None
             if not test_type or not test_result:
                 log.warning(
-                    "Skipping test. Needs both type attribute and text node to be parsed: "
-                    + f"{test_type}, {test_elem.text}"
+                    "Skipping test. Needs both type attribute and text node to be parsed: %s, %s",
+                    test_type,
+                    test_elem.text,
                 )
                 continue
             test_result = test_result.strip()
@@ -313,7 +314,7 @@ class DataSourceParser:
 
             elif test_type == "not_isinstance":
                 # is test_attr attribute is not an instance of result
-                def test_fn(o, result):
+                def test_fn(o, result, getter=getter):
                     return not isinstance(getter(o), result)
 
             elif test_type == "has_dataprovider":

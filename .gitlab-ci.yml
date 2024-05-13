@@ -9,8 +9,8 @@ variables:
   CONTAINER_GALAXY_URL: "${CI_REGISTRY_IMAGE}"
   CONTAINER_GALAXY_BASE_URL: "${CONTAINER_GALAXY_URL}/base"
   CONTAINER_GALAXY_COMMIT_URL: "${CONTAINER_GALAXY_URL}/commit"
-  GALAXY_VERSION_PYTHON: 23.1.dev2+ornl
-  GALAXY_VERSION_DOCKER: 23.1.dev2.ornl
+  GALAXY_VERSION_PYTHON: 23.2.dev1+ornl
+  GALAXY_VERSION_DOCKER: 23.2.dev1.ornl
 
 # This import is for the func_rse_docker_* functions
 before_script:
@@ -56,11 +56,16 @@ client-tests:
 api-tests:
   stage: test
   script:
-    - >    
+    - docker run --name postgres -e POSTGRES_PASSWORD=psql -d --network=host postgres
+    - sleep 10
+    - docker logs postgres
+    - >
       docker run
       --entrypoint=""
+      --network=host
       $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
-      bash -c "./run_tests.sh -api"
+      bash -c "GALAXY_TEST_DBURI=postgresql://postgres:psql@127.0.0.1:5432/galaxy_test ./run_tests.sh -api"
+    - docker rm -f postgres
   tags:
     - rse-multi-builder
   except:

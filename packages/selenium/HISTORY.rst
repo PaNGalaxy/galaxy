@@ -3,11 +3,85 @@ History
 
 .. to_doc
 
--------
-23.1rc1
--------
+-----------
+23.2.2.dev0
+-----------
 
 
+
+-------------------
+23.2.1 (2024-02-21)
+-------------------
+
+
+============
+Enhancements
+============
+
+* Vueify Data Uploader by `@guerler <https://github.com/guerler>`_ in `#16472 <https://github.com/galaxyproject/galaxy/pull/16472>`_
+* Create reusable `FilterMenu` with advanced options by `@ahmedhamidawan <https://github.com/ahmedhamidawan>`_ in `#16522 <https://github.com/galaxyproject/galaxy/pull/16522>`_
+* Implement datatype upload warnings by `@jmchilton <https://github.com/jmchilton>`_ in `#16564 <https://github.com/galaxyproject/galaxy/pull/16564>`_
+* Update Python dependencies by `@galaxybot <https://github.com/galaxybot>`_ in `#16577 <https://github.com/galaxyproject/galaxy/pull/16577>`_
+* Vueify Tool Form Data Selector by `@guerler <https://github.com/guerler>`_ in `#16578 <https://github.com/galaxyproject/galaxy/pull/16578>`_
+* Workflow Comments 💬 by `@ElectronicBlueberry <https://github.com/ElectronicBlueberry>`_ in `#16612 <https://github.com/galaxyproject/galaxy/pull/16612>`_
+* Workflow Embed by `@ElectronicBlueberry <https://github.com/ElectronicBlueberry>`_ in `#16657 <https://github.com/galaxyproject/galaxy/pull/16657>`_
+* Remove "Create Workflow" form and allow workflow creation in editor by `@ahmedhamidawan <https://github.com/ahmedhamidawan>`_ in `#16938 <https://github.com/galaxyproject/galaxy/pull/16938>`_
+
+-------------------
+23.1.4 (2024-01-04)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+23.1.3 (2023-12-01)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+23.1.2 (2023-11-29)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+23.1.1 (2023-10-23)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Improve robustness of collection upload tests. by `@jmchilton <https://github.com/jmchilton>`_ in `#16093 <https://github.com/galaxyproject/galaxy/pull/16093>`_
+* Accessibility fixes for workflows, login, and registration. by `@jmchilton <https://github.com/jmchilton>`_ in `#16146 <https://github.com/galaxyproject/galaxy/pull/16146>`_
+* Login/Register fixes by `@dannon <https://github.com/dannon>`_ in `#16652 <https://github.com/galaxyproject/galaxy/pull/16652>`_
+
+============
+Enhancements
+============
+
+* Upgraded to new multiselect Tags component for Workflows, DatasetList, Attributes by `@hujambo-dunia <https://github.com/hujambo-dunia>`_ in `#15225 <https://github.com/galaxyproject/galaxy/pull/15225>`_
+* Add basic selenium test for shared histories by `@davelopez <https://github.com/davelopez>`_ in `#15538 <https://github.com/galaxyproject/galaxy/pull/15538>`_
+* Initial end-to-end tests for separate quota sources per object store by `@jmchilton <https://github.com/jmchilton>`_ in `#15800 <https://github.com/galaxyproject/galaxy/pull/15800>`_
+* Vueify Select field by `@guerler <https://github.com/guerler>`_ in `#16010 <https://github.com/galaxyproject/galaxy/pull/16010>`_
+* implement admin jobs filtering by `@martenson <https://github.com/martenson>`_ in `#16020 <https://github.com/galaxyproject/galaxy/pull/16020>`_
+* Selenium test for displaying workflows with problems in pages. by `@jmchilton <https://github.com/jmchilton>`_ in `#16085 <https://github.com/galaxyproject/galaxy/pull/16085>`_
+* Integrate accessibility testing into Selenium testing by `@jmchilton <https://github.com/jmchilton>`_ in `#16122 <https://github.com/galaxyproject/galaxy/pull/16122>`_
+* bring grids for (published) pages on par with workflows by `@martenson <https://github.com/martenson>`_ in `#16209 <https://github.com/galaxyproject/galaxy/pull/16209>`_
+* Small test decorator improvements. by `@jmchilton <https://github.com/jmchilton>`_ in `#16220 <https://github.com/galaxyproject/galaxy/pull/16220>`_
+* Initial e2e test for history storage. by `@jmchilton <https://github.com/jmchilton>`_ in `#16221 <https://github.com/galaxyproject/galaxy/pull/16221>`_
+* Selenium test for page history links. by `@jmchilton <https://github.com/jmchilton>`_ in `#16222 <https://github.com/galaxyproject/galaxy/pull/16222>`_
+* E2E Tests for Edit Dataset Attributes Page by `@jmchilton <https://github.com/jmchilton>`_ in `#16224 <https://github.com/galaxyproject/galaxy/pull/16224>`_
+* Selenium type fixes and annotations. by `@jmchilton <https://github.com/jmchilton>`_ in `#16242 <https://github.com/galaxyproject/galaxy/pull/16242>`_
+* e2e test for workflow license selector by `@jmchilton <https://github.com/jmchilton>`_ in `#16243 <https://github.com/galaxyproject/galaxy/pull/16243>`_
+
+-------------------
+23.0.6 (2023-10-23)
+-------------------
+
+No recorded changes since last release
 
 -------------------
 23.0.5 (2023-07-29)
@@ -47,9 +121,6 @@ Enhancements
 Enhancements
 ============
 
-* 
-* 
-* 
 * Add support for launching workflows via Tutorial Mode by `@hexylena <https://github.com/hexylena>`_ in `#15684 <https://github.com/galaxyproject/galaxy/pull/15684>`_
 
 -------------------

@@ -1,6 +1,6 @@
 <template>
     <div>
-        <login-form
+        <LoginForm
             v-if="showLogin"
             :allow-user-creation="allowUserCreation"
             :disable-internal-login="disableInternalLogin"
@@ -12,7 +12,7 @@
             :terms-url="termsUrl"
             :welcome-url="welcomeUrl"
             @toggle-login="toggleLogin" />
-        <register-form
+        <RegisterForm
             v-else
             :enable-oidc="enableOidc"
             :mailing-join-addr="mailingJoinAddr"
@@ -26,8 +26,9 @@
     </div>
 </template>
 <script>
-import Vue from "vue";
 import BootstrapVue from "bootstrap-vue";
+import Vue from "vue";
+
 import LoginForm from "./LoginForm";
 import RegisterForm from "./RegisterForm";
 
