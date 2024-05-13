@@ -2,6 +2,7 @@ import json
 import os
 from uuid import uuid4
 
+import pytest
 import yaml
 
 from galaxy.tool_util.cwl import (
@@ -240,6 +241,7 @@ def test_workflow_simple_optional_input():
     assert input_step["tool_state"]["parameter_type"] == "field", input_step
 
 
+@pytest.mark.skip(reason="download link broken, disable for now")
 def test_boolean_defaults():
     proxy = workflow_proxy(_cwl_tool_path("v1.2/tests/conditionals/cond-wf-002_nojs.cwl"))
     galaxy_workflow_dict = proxy.to_dict()
