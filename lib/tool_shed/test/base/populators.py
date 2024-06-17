@@ -2,6 +2,7 @@ import tarfile
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import (
+    Iterator,
     List,
     Optional,
     Union,
@@ -11,7 +12,7 @@ import requests
 from typing_extensions import Protocol
 
 from galaxy.util.resources import (
-    files,
+    as_file,
     resource_path,
     Traversable,
 )
@@ -50,31 +51,27 @@ from .api_util import (
 HasRepositoryId = Union[str, Repository]
 
 DEFAULT_PREFIX = "repofortest"
-COLUMN_MAKER_PATH = resource_path(__package__, "../test_data/column_maker/column_maker.tar")
-COLUMN_MAKER_1_1_1_PATH = resource_path(__package__, "../test_data/column_maker/column_maker.tar")
+TEST_DATA_REPO_FILES = resource_path(__package__, "../test_data")
+COLUMN_MAKER_PATH = TEST_DATA_REPO_FILES.joinpath("column_maker/column_maker.tar")
+COLUMN_MAKER_1_1_1_PATH = TEST_DATA_REPO_FILES.joinpath("column_maker/column_maker_1.1.1.tar")
 DEFAULT_COMMIT_MESSAGE = "a test commit message"
-TEST_DATA_REPO_FILES = files("tool_shed.test.test_data")
 
 
-def repo_files(test_data_path: str) -> List[Path]:
+def repo_files(test_data_path: str) -> Iterator[Path]:
     repos = TEST_DATA_REPO_FILES.joinpath(f"repos/{test_data_path}")
-    paths = sorted(Path(str(x)) for x in repos.iterdir())
-    return paths
+    for child in sorted(_.name for _ in repos.iterdir()):
+        with as_file(repos.joinpath(child)) as path:
+            yield path
 
 
-def repo_tars(test_data_path: str) -> List[Path]:
-    tar_paths = []
+def repo_tars(test_data_path: str) -> Iterator[Path]:
     for path in repo_files(test_data_path):
-        if path.is_dir():
-            prefix = f"shedtest_{test_data_path}_{path.name}_"
-            tf = NamedTemporaryFile(delete=False, prefix=prefix)
+        assert path.is_dir()
+        prefix = f"shedtest_{test_data_path}_{path.name}_"
+        with NamedTemporaryFile(prefix=prefix) as tf:
             with tarfile.open(tf.name, "w:gz") as tar:
                 tar.add(str(path.absolute()), arcname=test_data_path or path.name)
-            tar_path = tf.name
-        else:
-            tar_path = str(path)
-        tar_paths.append(Path(tar_path))
-    return tar_paths
+            yield Path(tf.name)
 
 
 class HostsTestToolShed(Protocol):
@@ -130,7 +127,7 @@ class ToolShedPopulator:
             response = self.upload_revision_raw(repository_id, repo_tar, commit_message)
             if assert_ok:
                 api_asserts.assert_status_code_is_ok(response)
-                assert RepositoryUpdate(__root__=response.json()).is_ok
+                assert RepositoryUpdate(root=response.json()).is_ok
         return repository_id
 
     def setup_test_data_repo(
@@ -187,12 +184,12 @@ class ToolShedPopulator:
             changeset_revision=revision_metadata.changeset_revision,
         )
         revisions_response = self._api_interactor.get(
-            "repositories/get_repository_revision_install_info", params=request.dict()
+            "repositories/get_repository_revision_install_info", params=request.model_dump()
         )
         api_asserts.assert_status_code_is_ok(revisions_response)
         return from_legacy_install_info(revisions_response.json())
 
-    def update_column_maker_repo(self, repository: HasRepositoryId) -> requests.Response:
+    def update_column_maker_repo(self, repository: HasRepositoryId) -> RepositoryUpdate:
         response = self.upload_revision(
             repository,
             COLUMN_MAKER_1_1_1_PATH,
@@ -208,13 +205,13 @@ class ToolShedPopulator:
         files = {"file": path.open("rb")}
         repository_id = self._repository_id(repository)
         response = self._api_interactor.post(
-            f"repositories/{repository_id}/changeset_revision", params=body.dict(), files=files
+            f"repositories/{repository_id}/changeset_revision", params=body.model_dump(), files=files
         )
         return response
 
     def upload_revision(
         self, repository: HasRepositoryId, path: Traversable, commit_message: str = DEFAULT_COMMIT_MESSAGE
-    ):
+    ) -> RepositoryUpdate:
         response = self.upload_revision_raw(repository, path, commit_message=commit_message)
         if response.status_code != 200:
             response_json = None
@@ -229,7 +226,7 @@ class ToolShedPopulator:
                 assert_msg = f"Updating repository [{repository}] with path [{path}] and commit_message {commit_message} failed to update repository contents, no changes found. Response: [{response_json}]"
                 raise AssertionError(assert_msg)
             api_asserts.assert_status_code_is_ok(response)
-        return RepositoryUpdate(__root__=response.json())
+        return RepositoryUpdate(root=response.json())
 
     def new_repository(self, category_ids: Union[List[str], str], prefix: str = DEFAULT_PREFIX) -> Repository:
         name = random_name(prefix=prefix)
@@ -242,7 +239,7 @@ class ToolShedPopulator:
         return self.create_repository(request)
 
     def create_repository(self, request: CreateRepositoryRequest) -> Repository:
-        response = self._api_interactor.post("repositories", json=request.dict(by_alias=True))
+        response = self._api_interactor.post("repositories", json=request.model_dump(by_alias=True))
         api_asserts.assert_status_code_is_ok(response)
         return Repository(**response.json())
 
@@ -257,7 +254,7 @@ class ToolShedPopulator:
         category_name = name or random_name(prefix=prefix)
         category_description = description or "testcreaterepo"
         request = CreateCategoryRequest(name=category_name, description=category_description)
-        response = self._admin_api_interactor.post("categories", json=request.dict())
+        response = self._admin_api_interactor.post("categories", json=request.model_dump())
         response.raise_for_status()
         return Category(**response.json())
 
@@ -290,14 +287,14 @@ class ToolShedPopulator:
     def get_ordered_installable_revisions(self, owner: str, name: str) -> OrderedInstallableRevisions:
         request = GetOrderedInstallableRevisionsRequest(owner=owner, name=name)
         revisions_response = self._api_interactor.get(
-            "repositories/get_ordered_installable_revisions", params=request.dict()
+            "repositories/get_ordered_installable_revisions", params=request.model_dump()
         )
         api_asserts.assert_status_code_is_ok(revisions_response)
-        return OrderedInstallableRevisions(__root__=revisions_response.json())
+        return OrderedInstallableRevisions(root=revisions_response.json())
 
     def assert_has_n_installable_revisions(self, repository: Repository, n: int):
         revisions = self.get_ordered_installable_revisions(repository.owner, repository.name)
-        actual_n = len(revisions.__root__)
+        actual_n = len(revisions.root)
         assert actual_n == n, f"Expected {n} repository revisions, found {actual_n} for {repository}"
 
     def get_repository_for(self, owner: str, name: str, deleted: str = "false") -> Optional[Repository]:
@@ -307,12 +304,12 @@ class ToolShedPopulator:
             deleted=deleted,
         )
         index = self.repository_index(request)
-        return index.__root__[0] if index.__root__ else None
+        return index.root[0] if index.root else None
 
     def repository_index(self, request: Optional[RepositoryIndexRequest]) -> RepositoryIndexResponse:
-        repository_response = self._api_interactor.get("repositories", params=(request.dict() if request else {}))
+        repository_response = self._api_interactor.get("repositories", params=(request.model_dump() if request else {}))
         api_asserts.assert_status_code_is_ok(repository_response)
-        return RepositoryIndexResponse(__root__=repository_response.json())
+        return RepositoryIndexResponse(root=repository_response.json())
 
     def get_usernames_allowed_to_push(self, repository: HasRepositoryId) -> List[str]:
         repository_id = self._repository_id(repository)
@@ -373,12 +370,14 @@ class ToolShedPopulator:
             f"repositories/{repository_id}/metadata?downloadable_only={downloadable_only}"
         )
         api_asserts.assert_status_code_is_ok(metadata_response)
-        return RepositoryMetadata(__root__=metadata_response.json())
+        return RepositoryMetadata(root=metadata_response.json())
 
     def reset_metadata(self, repository: HasRepositoryId) -> ResetMetadataOnRepositoryResponse:
         repository_id = self._repository_id(repository)
         request = ResetMetadataOnRepositoryRequest(repository_id=repository_id)
-        reset_response = self._api_interactor.post("repositories/reset_metadata_on_repository", json=request.dict())
+        reset_response = self._api_interactor.post(
+            "repositories/reset_metadata_on_repository", json=request.model_dump()
+        )
         api_asserts.assert_status_code_is_ok(reset_response)
         return ResetMetadataOnRepositoryResponse(**reset_response.json())
 
@@ -391,7 +390,7 @@ class ToolShedPopulator:
         return self.tool_search(ToolSearchRequest(q=query))
 
     def tool_search(self, search_request: ToolSearchRequest) -> ToolSearchResults:
-        search_response = self._api_interactor.get("tools", params=search_request.dict())
+        search_response = self._api_interactor.get("tools", params=search_request.model_dump())
         api_asserts.assert_status_code_is_ok(search_response)
         return ToolSearchResults(**search_response.json())
 
@@ -415,7 +414,7 @@ class ToolShedPopulator:
         return self.repo_search(RepositorySearchRequest(q=query))
 
     def repo_search(self, repo_search_request: RepositorySearchRequest) -> RepositorySearchResults:
-        search_response = self._api_interactor.get("repositories", params=repo_search_request.dict())
+        search_response = self._api_interactor.get("repositories", params=repo_search_request.model_dump())
         api_asserts.assert_status_code_is_ok(search_response)
         return RepositorySearchResults(**search_response.json())
 

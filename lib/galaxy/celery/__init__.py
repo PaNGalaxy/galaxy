@@ -102,8 +102,7 @@ def get_galaxy_app():
 
 @lru_cache(maxsize=1)
 def build_app():
-    kwargs = get_app_properties()
-    if kwargs:
+    if kwargs := get_app_properties():
         kwargs["check_migrate_databases"] = False
         kwargs["use_display_applications"] = False
         kwargs["use_converters"] = False
@@ -239,7 +238,10 @@ def setup_periodic_tasks(config, celery_app):
     beat_schedule: Dict[str, Dict[str, Any]] = {}
     schedule_task("prune_history_audit_table", config.history_audit_table_prune_interval)
     schedule_task("cleanup_short_term_storage", config.short_term_storage_cleanup_interval)
-    schedule_task("cleanup_expired_notifications", config.expired_notifications_cleanup_interval)
+
+    if config.enable_notification_system:
+        schedule_task("cleanup_expired_notifications", config.expired_notifications_cleanup_interval)
+        schedule_task("dispatch_pending_notifications", config.dispatch_notifications_interval)
 
     if config.object_store_cache_monitor_driver in ["auto", "celery"]:
         schedule_task("clean_object_store_caches", config.object_store_cache_monitor_interval)

@@ -4,12 +4,11 @@
 
 import BootstrapVue from "bootstrap-vue";
 import { iconPlugin, localizationPlugin, vueRxShortcutPlugin } from "components/plugins";
+import { getActivePinia, PiniaVuePlugin } from "pinia";
 import Vue from "vue";
-import Vuex from "vuex";
 
-import store from "../store";
-
-Vue.use(Vuex);
+// Load Pinia
+Vue.use(PiniaVuePlugin);
 
 // Bootstrap components
 Vue.use(BootstrapVue);
@@ -25,13 +24,15 @@ Vue.use(iconPlugin);
 
 export const mountVueComponent = (ComponentDefinition) => {
     const component = Vue.extend(ComponentDefinition);
-    return (propsData, el) => new component({ store, propsData, el });
+    const pinia = getActivePinia();
+    return (propsData, el) => new component({ propsData, el, pinia });
 };
 
 export const replaceChildrenWithComponent = (el, ComponentDefinition, propsData = {}) => {
     const container = document.createElement("div");
     el.replaceChildren(container);
     const component = Vue.extend(ComponentDefinition);
-    const mountFn = (propsData, el) => new component({ propsData, el });
+    const pinia = getActivePinia();
+    const mountFn = (propsData, el) => new component({ propsData, el, pinia });
     return mountFn(propsData, container);
 };

@@ -4,6 +4,7 @@ Manager and Serializers for Visualizations.
 Visualizations are saved configurations/variables used to
 reproduce a specific view in a Galaxy visualization.
 """
+
 import logging
 from typing import (
     Dict,
@@ -13,7 +14,9 @@ from typing import (
 
 from sqlalchemy import (
     false,
+    func,
     or_,
+    select,
     true,
 )
 from sqlalchemy.orm import aliased
@@ -75,42 +78,39 @@ class VisualizationManager(sharable.SharableModelManager):
         self, trans: ProvidesUserContext, payload: VisualizationIndexQueryPayload, include_total_count: bool = False
     ) -> Tuple[List[model.Visualization], int]:
         show_deleted = payload.deleted
-        show_shared = payload.show_shared
-        show_published = payload.show_published
         show_own = payload.show_own
+        show_published = payload.show_published
+        show_shared = payload.show_shared
         is_admin = trans.user_is_admin
         user = trans.user
 
-        if show_shared is None:
-            show_shared = not show_deleted
-
-        if show_shared and show_deleted:
-            message = "show_shared and show_deleted cannot both be specified as true"
+        if not user and not show_published:
+            message = "Requires user to log in."
             raise exceptions.RequestParameterInvalidException(message)
 
-        query = trans.sa_session.query(self.model_class)
+        stmt = select(self.model_class)
 
         filters = []
-        if show_own or (not show_published and not is_admin):
+        if show_own or (not show_published and not show_shared and not is_admin):
             filters = [self.model_class.user == user]
         if show_published:
             filters.append(self.model_class.published == true())
         if user and show_shared:
             filters.append(self.user_share_model.user == user)
-            query = query.outerjoin(self.model_class.users_shared_with)
-        query = query.filter(or_(*filters))
+            stmt = stmt.outerjoin(self.model_class.users_shared_with)
+        stmt = stmt.where(or_(*filters))
 
         if payload.user_id:
-            query = query.filter(self.model_class.user_id == payload.user_id)
+            stmt = stmt.where(self.model_class.user_id == payload.user_id)
 
         if payload.search:
             search_query = payload.search
             parsed_search = parse_filters_structured(search_query, INDEX_SEARCH_FILTERS)
 
             def p_tag_filter(term_text: str, quoted: bool):
-                nonlocal query
+                nonlocal stmt
                 alias = aliased(model.VisualizationTagAssociation)
-                query = query.outerjoin(self.model_class.tags.of_type(alias))
+                stmt = stmt.outerjoin(self.model_class.tags.of_type(alias))
                 return tag_filter(alias, term_text, quoted)
 
             for term in parsed_search.terms:
@@ -119,30 +119,30 @@ class VisualizationManager(sharable.SharableModelManager):
                     q = term.text
                     if key == "tag":
                         pg = p_tag_filter(term.text, term.quoted)
-                        query = query.filter(pg)
+                        stmt = stmt.where(pg)
                     elif key == "title":
-                        query = query.filter(text_column_filter(self.model_class.title, term))
+                        stmt = stmt.where(text_column_filter(self.model_class.title, term))
                     elif key == "slug":
-                        query = query.filter(text_column_filter(self.model_class.slug, term))
+                        stmt = stmt.where(text_column_filter(self.model_class.slug, term))
                     elif key == "user":
-                        query = append_user_filter(query, self.model_class, term)
+                        stmt = append_user_filter(stmt, self.model_class, term)
                     elif key == "is":
                         if q == "deleted":
                             show_deleted = True
                         if q == "published":
-                            query = query.filter(self.model_class.published == true())
+                            stmt = stmt.where(self.model_class.published == true())
                         if q == "importable":
-                            query = query.filter(self.model_class.importable == true())
+                            stmt = stmt.where(self.model_class.importable == true())
                         elif q == "shared_with_me":
                             if not show_shared:
                                 message = "Can only use tag is:shared_with_me if show_shared parameter also true."
                                 raise exceptions.RequestParameterInvalidException(message)
-                            query = query.filter(self.user_share_model.user == user)
+                            stmt = stmt.where(self.user_share_model.user == user)
                 elif isinstance(term, RawTextTerm):
                     tf = p_tag_filter(term.text, False)
                     alias = aliased(model.User)
-                    query = query.outerjoin(self.model_class.user.of_type(alias))
-                    query = query.filter(
+                    stmt = stmt.outerjoin(self.model_class.user.of_type(alias))
+                    stmt = stmt.where(
                         raw_text_column_filter(
                             [
                                 self.model_class.title,
@@ -154,21 +154,24 @@ class VisualizationManager(sharable.SharableModelManager):
                         )
                     )
 
-        query = query.filter(self.model_class.deleted == (true() if show_deleted else false()))
+        if (show_published or show_shared) and not is_admin:
+            show_deleted = False
+
+        stmt = stmt.where(self.model_class.deleted == (true() if show_deleted else false())).distinct()
 
         if include_total_count:
-            total_matches = query.count()
+            total_matches = get_count(trans.sa_session, stmt)
         else:
             total_matches = None
         sort_column = getattr(model.Visualization, payload.sort_by)
         if payload.sort_desc:
             sort_column = sort_column.desc()
-        query = query.order_by(sort_column)
+        stmt = stmt.order_by(sort_column)
         if payload.limit is not None:
-            query = query.limit(payload.limit)
+            stmt = stmt.limit(payload.limit)
         if payload.offset is not None:
-            query = query.offset(payload.offset)
-        return query, total_matches
+            stmt = stmt.offset(payload.offset)
+        return trans.sa_session.scalars(stmt), total_matches  # type:ignore[return-value]
 
 
 class VisualizationSerializer(sharable.SharableModelSerializer):
@@ -209,3 +212,8 @@ class VisualizationDeserializer(sharable.SharableModelDeserializer):
         super().add_deserializers()
         self.deserializers.update({})
         self.deserializable_keyset.update(self.deserializers.keys())
+
+
+def get_count(session, statement):
+    stmt = select(func.count()).select_from(statement)
+    return session.scalar(stmt)

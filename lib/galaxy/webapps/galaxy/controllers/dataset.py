@@ -137,8 +137,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
             return data
         if "hdca" in kwd:
             raise RequestParameterInvalidException("Invalid request parameter 'hdca' encountered.")
-        hdca_id = kwd.get("hdca_id", None)
-        if hdca_id:
+        if hdca_id := kwd.get("hdca_id", None):
             hdca = self.app.dataset_collection_manager.get_dataset_collection_instance(trans, "history", hdca_id)
             del kwd["hdca_id"]
             kwd["hdca"] = hdca
@@ -184,7 +183,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
                 (r.name, trans.security.encode_id(r.id))
                 for r in trans.app.security_agent.get_legitimate_roles(trans, data.dataset, "root")
             ]
-            data_metadata = [(name, spec) for name, spec in data.metadata.spec.items()]
+            data_metadata = list(data.metadata.spec.items())
             converters_collection = [(key, value.name) for key, value in data.get_converter_types().items()]
             can_manage_dataset = trans.app.security_agent.can_manage_dataset(
                 trans.get_current_user_roles(), data.dataset
@@ -269,7 +268,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
             ]
             # permissions
             permission_disable = True
-            permission_inputs = list()
+            permission_inputs = []
             if trans.user:
                 if not data.dataset.shareable:
                     permission_message = "The dataset is stored on private storage to you and cannot be shared."
@@ -333,7 +332,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
             }
         else:
             return self.message_exception(
-                trans, "You do not have permission to edit this dataset's ( id: %s ) information." % str(dataset_id)
+                trans, f"You do not have permission to edit this dataset's ( id: {dataset_id} ) information."
             )
 
     @web.expose_api_anonymous

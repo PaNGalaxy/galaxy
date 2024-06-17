@@ -1,6 +1,7 @@
 """
 Galaxy job handler, prepares, runs, tracks, and finishes Galaxy jobs
 """
+
 import datetime
 import os
 import time
@@ -122,7 +123,6 @@ class ItemGrabber:
         self.self_handler_tags = self_handler_tags
         self.max_grab = max_grab
         self.handler_tags = handler_tags
-        self._grab_conn_opts = {"autocommit": False}
         self._grab_query = None
         self._supports_returning = self.app.application_stack.supports_returning()
 
@@ -394,6 +394,8 @@ class JobHandlerQueue(BaseJobHandlerQueue):
             self.__handle_waiting_jobs()
         except StopSignalException:
             pass
+        finally:
+            self.sa_session.remove()
         log.trace(monitor_step_timer.to_str())
 
     def __handle_waiting_jobs(self):
@@ -566,7 +568,8 @@ class JobHandlerQueue(BaseJobHandlerQueue):
                         self.sa_session.add(dataset_assoc.dataset.dataset)
                     self.sa_session.add(job)
                 elif job_state == JOB_ERROR:
-                    log.error("(%d) Error checking job readiness" % job.id)
+                    # A more informative message is shown wherever the job state is set to error
+                    pass
                 else:
                     log.error("(%d) Job in unknown state '%s'" % (job.id, job_state))
                     new_waiting_jobs.append(job.id)
@@ -581,9 +584,6 @@ class JobHandlerQueue(BaseJobHandlerQueue):
         # Commit updated state
         with transaction(self.sa_session):
             self.sa_session.commit()
-
-        # Done with the session
-        self.sa_session.remove()
 
     def __filter_jobs_with_invalid_input_states(self, jobs):
         """
@@ -885,7 +885,7 @@ class JobHandlerQueue(BaseJobHandlerQueue):
                 )
                 .group_by(model.Job.table.c.destination_id)
             )
-            for row in result:
+            for row in result.mappings():
                 # Add the count from the database to the cached count
                 rval[row["destination_id"]] = rval.get(row["destination_id"], 0) + row["job_count"]
         return rval
@@ -903,7 +903,7 @@ class JobHandlerQueue(BaseJobHandlerQueue):
                 .where(and_(model.Job.table.c.state.in_((model.Job.states.QUEUED, model.Job.states.RUNNING))))
                 .group_by(model.Job.table.c.user_id, model.Job.table.c.destination_id)
             )
-            for row in result:
+            for row in result.mappings():
                 if row["user_id"] not in self.user_job_count_per_destination:
                     self.user_job_count_per_destination[row["user_id"]] = {}
                 self.user_job_count_per_destination[row["user_id"]][row["destination_id"]] = row["job_count"]
@@ -999,7 +999,7 @@ class JobHandlerQueue(BaseJobHandlerQueue):
                 .where(and_(model.Job.table.c.state.in_((model.Job.states.QUEUED, model.Job.states.RUNNING))))
                 .group_by(model.Job.table.c.destination_id)
             )
-            for row in result:
+            for row in result.mappings():
                 self.total_job_count_per_destination[row["destination_id"]] = row["job_count"]
 
     def get_total_job_count_per_destination(self):
@@ -1256,8 +1256,7 @@ class DefaultJobDispatcher:
             from galaxy.celery import celery_app
 
             celery_app.control.revoke(job.job_runner_external_id)
-        job_runner_name = job.get_job_runner_name()
-        if job_runner_name is not None:
+        if (job_runner_name := job.get_job_runner_name()) is not None:
             runner_name = job_runner_name.split(":", 1)[0]
             log.debug(f"Stopping job {job_wrapper.get_id_tag()} in {runner_name} runner")
             try:

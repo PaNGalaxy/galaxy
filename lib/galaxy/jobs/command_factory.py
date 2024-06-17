@@ -124,8 +124,7 @@ def build_command(
 
     __handle_remote_command_line_building(commands_builder, job_wrapper, for_pulsar=for_pulsar)
 
-    container_monitor_command = job_wrapper.container_monitor_command(container)
-    if container_monitor_command:
+    if container_monitor_command := job_wrapper.container_monitor_command(container):
         commands_builder.prepend_command(container_monitor_command)
 
     working_directory = remote_job_directory or job_wrapper.working_directory
@@ -186,13 +185,7 @@ def __externalize_commands(
     source_command = ""
     if container:
         source_command = container.source_environment
-    script_contents = "#!{}\n{}{}{}{}".format(
-        shell,
-        integrity_injection,
-        set_e,
-        source_command,
-        tool_commands,
-    )
+    script_contents = f"#!{shell}\n{integrity_injection}{set_e}{source_command}{tool_commands}"
     write_script(
         local_container_script,
         script_contents,
@@ -298,7 +291,11 @@ def __copy_if_exists_command(work_dir_output):
     source_file, destination = work_dir_output
     if "?" in source_file or "*" in source_file:
         source_file = source_file.replace("*", '"*"').replace("?", '"?"')
-    return f'\nif [ -f "{source_file}" ] ; then cp "{source_file}" "{destination}" ; fi'
+    # Check if source and destination exist.
+    # Users can purge outputs before the job completes,
+    # in that case we don't want to copy the output to a purged path.
+    # Static, non work_dir_output files are handled in job_finish code.
+    return f'\nif [ -f "{source_file}" -a -f "{destination}" ] ; then cp "{source_file}" "{destination}" ; fi'
 
 
 class CommandsBuilder:

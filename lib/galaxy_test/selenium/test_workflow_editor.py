@@ -51,14 +51,14 @@ class TestWorkflowEditor(SeleniumTestCase, RunsWorkflows):
 
         self.screenshot("workflow_editor_blank")
 
-        self.components._.left_panel_drag.wait_for_visible()
+        self.hover_over(self.components._.left_panel_drag.wait_for_visible())
         self.components._.left_panel_collapse.wait_for_and_click()
 
         self.sleep_for(self.wait_types.UX_RENDER)
 
         self.screenshot("workflow_editor_left_collapsed")
 
-        self.components._.right_panel_drag.wait_for_visible()
+        self.hover_over(self.components._.right_panel_drag.wait_for_visible())
         self.components._.right_panel_collapse.wait_for_and_click()
 
         self.sleep_for(self.wait_types.UX_RENDER)
@@ -115,7 +115,7 @@ class TestWorkflowEditor(SeleniumTestCase, RunsWorkflows):
         editor = self.components.workflow_editor
         workflow_id = self.workflow_populator.upload_yaml_workflow(WORKFLOW_SELECT_FROM_OPTIONAL_DATASET)
         self.workflow_index_open()
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
         editor = self.components.workflow_editor
         node = editor.node._(label="select_from_dataset_optional")
         node.title.wait_for_and_click()
@@ -224,7 +224,7 @@ steps:
     def test_integer_input(self):
         editor = self.components.workflow_editor
 
-        name = self.workflow_create_new()
+        name = self.workflow_create_new(save_workflow=False)
         self.workflow_editor_add_input(item_name="parameter_input")
         self.screenshot("workflow_editor_parameter_input_new")
         editor.label_input.wait_for_and_send_keys("input1")
@@ -492,7 +492,7 @@ steps:
             exact_tools=True,
         )
         self.workflow_index_open()
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
         editor = self.components.workflow_editor
         editor.node._(label="multiple_versions").wait_for_and_click()
         editor.tool_version_button.wait_for_and_click()
@@ -516,7 +516,7 @@ steps:
         workflow_populator = self.workflow_populator
         workflow_populator.upload_yaml_workflow(WORKFLOW_WITH_OLD_TOOL_VERSION, exact_tools=True)
         self.workflow_index_open()
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
         self.assert_modal_has_text("Using version '0.2' instead of version '0.0.1'")
         self.screenshot("workflow_editor_tool_upgrade")
         self.components.workflow_editor.modal_button_continue.wait_for_and_click()
@@ -543,7 +543,7 @@ steps:
         outer_workflow["steps"]["nested_workflow"]["run"] = embedded_workflow
         workflow_populator.upload_yaml_workflow(json.dumps(outer_workflow), exact_tools=True)
         self.workflow_index_open()
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
         self.sleep_for(self.wait_types.UX_RENDER)
         self.assert_modal_has_text("Using version '0.2' instead of version '0.0.1'")
         self.assert_modal_has_text("parameter 'inttest': an integer or workflow parameter is required")
@@ -681,7 +681,7 @@ steps:
     def test_editor_duplicate_node(self):
         workflow_id = self.workflow_populator.upload_yaml_workflow(WORKFLOW_SIMPLE_CAT_TWICE)
         self.workflow_index_open()
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
         editor = self.components.workflow_editor
         cat_node = editor.node._(label="first_cat")
         cat_node.wait_for_and_click()
@@ -704,6 +704,7 @@ steps:
         editor.remove_tags_input.wait_for_and_send_keys("#oldboringtag" + Keys.ENTER + Keys.ESCAPE)
         self.sleep_for(self.wait_types.UX_RENDER)
         cat_node.clone.wait_for_and_click()
+        editor.label_input.wait_for_and_send_keys(Keys.BACKSPACE * 20)
         editor.label_input.wait_for_and_send_keys("cloned label")
         output_label = editor.label_output(output="out_file1")
         self.set_text_element(output_label, "cloned output label")
@@ -741,7 +742,7 @@ steps:
         """
         )
         self.workflow_index_open()
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
         editor = self.components.workflow_editor
         editor.canvas_body.wait_for_visible()
         editor.tool_menu.wait_for_visible()
@@ -864,7 +865,7 @@ steps:
         workflow_populator = self.workflow_populator
         workflow_populator.upload_yaml_workflow(WORKFLOW_WITH_INVALID_STATE, exact_tools=True)
         self.workflow_index_open()
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
         self.assert_modal_has_text("Using version '0.2' instead of version '0.0.1'")
         self.assert_modal_has_text("Using default: '1'")
         self.screenshot("workflow_editor_invalid_state")
@@ -885,7 +886,7 @@ steps:
 """
         )
         self.workflow_index_open()
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
         self.assert_modal_has_text("Tool is not installed")
         self.screenshot("workflow_editor_missing_tool")
 
@@ -906,14 +907,14 @@ steps:
         self.wait_for_selector_absent_or_hidden(self.modal_body_selector())
         self.components.masthead.workflow.wait_for_and_click()
 
-        self.components.tool_panel.search.wait_for_and_send_keys(new_workflow_name)
         self.sleep_for(self.wait_types.UX_RENDER)
-        self.components.workflows.bookmark_link.wait_for_and_click()
+        self.components.workflows.bookmark_link(action="add").wait_for_and_click()
         self.components.masthead.workflow.wait_for_and_click()
         self.sleep_for(self.wait_types.UX_TRANSITION)
 
         # search for bookmark in tools menu
         self.components.tool_panel.search.wait_for_and_send_keys(new_workflow_name)
+        self.sleep_for(self.wait_types.UX_RENDER)
         assert_workflow_bookmarked_status(True)
 
     def tab_to(self, accessible_name, direction="forward"):
@@ -1089,10 +1090,11 @@ steps:
     @selenium_test
     def test_editor_place_comments(self):
         editor = self.components.workflow_editor
+
         self.workflow_create_new(annotation="simple workflow")
         self.sleep_for(self.wait_types.UX_RENDER)
 
-        tool_bar = editor.tool_bar._.wait_for_visible()
+        canvas = editor.canvas_body.wait_for_visible()
 
         # select text comment tool use all options and set font size to 2
         editor.tool_bar.tool(tool="text_comment").wait_for_and_click()
@@ -1103,15 +1105,17 @@ steps:
         self.action_chains().send_keys(Keys.LEFT * 5).send_keys(Keys.RIGHT).perform()
 
         # place text comment
-        self.mouse_drag(from_element=tool_bar, to_offset=(400, 110))
+        self.mouse_drag(from_element=canvas, from_offset=(-200, -200), to_offset=(400, 110))
 
         self.action_chains().send_keys("Hello World").perform()
 
         # check if all options were applied
         comment_content: WebElement = editor.comment.text_inner.wait_for_visible()
         assert comment_content.text == "Hello World"
-        assert "bold" in comment_content.get_attribute("class")
-        assert "italic" in comment_content.get_attribute("class")
+        comment_content_class = comment_content.get_attribute("class")
+        assert comment_content_class
+        assert "bold" in comment_content_class
+        assert "italic" in comment_content_class
 
         # check for correct size
         width, height = self.get_element_size(editor.comment._.wait_for_visible())
@@ -1126,7 +1130,7 @@ steps:
         # place and test markdown comment
         editor.tool_bar.tool(tool="markdown_comment").wait_for_and_click()
         editor.tool_bar.color(color="lime").wait_for_and_click()
-        self.mouse_drag(from_element=tool_bar, from_offset=(100, 100), to_offset=(200, 220))
+        self.mouse_drag(from_element=canvas, from_offset=(-100, -100), to_offset=(200, 220))
         self.action_chains().send_keys("# Hello World").perform()
 
         editor.tool_bar.tool(tool="pointer").wait_for_and_click()
@@ -1147,7 +1151,7 @@ steps:
         # place and test frame comment
         editor.tool_bar.tool(tool="frame_comment").wait_for_and_click()
         editor.tool_bar.color(color="blue").wait_for_and_click()
-        self.mouse_drag(from_element=tool_bar, from_offset=(10, 10), to_offset=(400, 300))
+        self.mouse_drag(from_element=canvas, from_offset=(-200, -150), to_offset=(400, 300))
         self.action_chains().send_keys("My Frame").perform()
 
         title: WebElement = editor.comment.frame_title.wait_for_visible()
@@ -1171,14 +1175,14 @@ steps:
         editor.tool_bar.smoothing.wait_for_and_click()
         self.action_chains().send_keys(Keys.RIGHT * 10).perform()
 
-        self.mouse_drag(from_element=tool_bar, from_offset=(100, 100), to_offset=(200, 200))
+        self.mouse_drag(from_element=canvas, from_offset=(-100, -100), to_offset=(200, 200))
 
         editor.comment.freehand_comment.wait_for_visible()
 
         editor.tool_bar.color(color="black").wait_for_and_click()
         editor.tool_bar.line_thickness.wait_for_and_click()
         self.action_chains().send_keys(Keys.LEFT * 20).perform()
-        self.mouse_drag(from_element=tool_bar, from_offset=(300, 300), via_offsets=[(100, 200)], to_offset=(-200, 30))
+        self.mouse_drag(from_element=canvas, from_offset=(-100, -100), via_offsets=[(100, 200)], to_offset=(-200, 30))
 
         # test bulk remove freehand
         editor.tool_bar.remove_freehand.wait_for_and_click()
@@ -1189,7 +1193,7 @@ steps:
         self.action_chains().send_keys(Keys.RIGHT * 20).perform()
         editor.tool_bar.color(color="orange").wait_for_and_click()
 
-        self.mouse_drag(from_element=tool_bar, from_offset=(100, 100), to_offset=(200, 200))
+        self.mouse_drag(from_element=canvas, from_offset=(-100, -100), to_offset=(200, 200))
 
         freehand_comment_a: WebElement = editor.comment.freehand_comment.wait_for_visible()
 
@@ -1203,7 +1207,7 @@ steps:
         editor.tool_bar.tool(tool="freehand_pen").wait_for_and_click()
         editor.tool_bar.color(color="yellow").wait_for_and_click()
 
-        self.mouse_drag(from_element=tool_bar, from_offset=(100, 100), to_offset=(200, 200))
+        self.mouse_drag(from_element=canvas, from_offset=(-100, -100), to_offset=(200, 200))
 
         freehand_comment_b: WebElement = editor.comment.freehand_comment.wait_for_visible()
 
@@ -1250,6 +1254,85 @@ steps:
 
         assert top % 200 == 0
         assert left % 200 == 0
+
+    @selenium_test
+    def test_editor_selection(self):
+        editor = self.components.workflow_editor
+        self.workflow_create_new(annotation="simple workflow")
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        canvas = editor.canvas_body.wait_for_visible()
+
+        # place tool in center of canvas
+        self.tool_open("cat")
+        self.sleep_for(self.wait_types.UX_RENDER)
+        editor.label_input.wait_for_and_send_keys("tool_node")
+        tool_node = editor.node._(label="tool_node").wait_for_present()
+        self.mouse_drag(from_element=tool_node, to_element=canvas, to_offset=(0, -100))
+
+        # select the node
+        self.action_chains().move_to_element(tool_node).key_down(Keys.SHIFT).click().key_up(Keys.SHIFT).perform()
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        assert editor.tool_bar.selection_count.wait_for_visible().text.find("1 step") != -1
+
+        # duplicate it
+        editor.tool_bar.duplicate_selection.wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        assert editor.tool_bar.selection_count.wait_for_visible().text.find("1 step") != -1
+
+        # move the node
+        tool_node_new = editor.node._(label="tool_node 2").wait_for_present()
+        self.mouse_drag(from_element=tool_node_new, to_element=canvas, to_offset=(0, 100))
+
+        # clear selection
+        editor.tool_bar.clear_selection.wait_for_and_click()
+        editor.tool_bar.selection_count.wait_for_absent_or_hidden()
+
+        # select both using box
+        tool_node_original = editor.node._(label="tool_node").wait_for_present()
+        editor.tool_bar.tool(tool="box_select").wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        self.mouse_drag(
+            from_element=tool_node_original, from_offset=(150, -100), to_element=tool_node_new, to_offset=(-150, 100)
+        )
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        assert editor.tool_bar.selection_count.wait_for_visible().text.find("2 steps") != -1
+
+        # delete steps
+        editor.tool_bar.delete_selection.wait_for_and_click()
+        editor.tool_bar.selection_count.wait_for_absent_or_hidden()
+        editor.node._(label="tool_node").wait_for_absent()
+        editor.node._(label="tool_node 2").wait_for_absent()
+
+        # place comments
+        editor.tool_bar.tool(tool="text_comment").wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+        self.mouse_drag(from_element=canvas, from_offset=(-100, -200), to_element=canvas, to_offset=(100, 0))
+
+        editor.tool_bar.tool(tool="markdown_comment").wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+        self.mouse_drag(from_element=canvas, from_offset=(-100, 0), to_element=canvas, to_offset=(100, 200))
+
+        # select both using box select
+        editor.tool_bar.tool(tool="box_select").wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        self.mouse_drag(from_element=canvas, from_offset=(-110, -210), to_element=canvas, to_offset=(110, 210))
+
+        assert editor.tool_bar.selection_count.wait_for_visible().text.find("2 comments") != -1
+
+        # deselect one using box select
+        editor.tool_bar.select_mode_remove.wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        self.mouse_drag(from_element=canvas, from_offset=(-110, -210), to_element=canvas, to_offset=(110, 10))
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        assert editor.tool_bar.selection_count.wait_for_visible().text.find("1 comment") != -1
 
     def get_node_position(self, label: str):
         node = self.components.workflow_editor.node._(label=label).wait_for_present()
@@ -1300,8 +1383,10 @@ steps:
 
     def workflow_editor_maximize_center_pane(self, collapse_left=True, collapse_right=True):
         if collapse_left:
+            self.hover_over(self.components._.left_panel_drag.wait_for_visible())
             self.components._.left_panel_collapse.wait_for_and_click()
         if collapse_right:
+            self.hover_over(self.components._.right_panel_drag.wait_for_visible())
             self.components._.right_panel_collapse.wait_for_and_click()
         self.sleep_for(self.wait_types.UX_RENDER)
 
@@ -1398,7 +1483,7 @@ steps:
     def workflow_index_open_with_name(self, name):
         self.workflow_index_open()
         self.workflow_index_search_for(name)
-        self.workflow_index_click_option("Edit")
+        self.components.workflows.edit_button.wait_for_and_click()
 
     def workflow_upload_yaml_with_random_name(self, content):
         workflow_populator = self.workflow_populator

@@ -86,15 +86,15 @@ class InstalledRepositoryMetadataManager(GalaxyMetadataGenerator):
         if order:
             return (
                 self.app.install_model.context.query(self.app.install_model.ToolShedRepository)
-                .filter(self.app.install_model.ToolShedRepository.table.c.uninstalled == false())
+                .filter(self.app.install_model.ToolShedRepository.uninstalled == false())
                 .order_by(
-                    self.app.install_model.ToolShedRepository.table.c.name,
-                    self.app.install_model.ToolShedRepository.table.c.owner,
+                    self.app.install_model.ToolShedRepository.name,
+                    self.app.install_model.ToolShedRepository.owner,
                 )
             )
         else:
             return self.app.install_model.context.query(self.app.install_model.ToolShedRepository).filter(
-                self.app.install_model.ToolShedRepository.table.c.uninstalled == false()
+                self.app.install_model.ToolShedRepository.uninstalled == false()
             )
 
     def get_repository_tools_tups(self):
@@ -131,7 +131,7 @@ class InstalledRepositoryMetadataManager(GalaxyMetadataGenerator):
             original_metadata_dict = self.repository.metadata_
             self.generate_metadata_for_changeset_revision()
             if self.metadata_dict != original_metadata_dict:
-                self.repository.metadata_ = self.metadata_dict
+                self.repository.metadata_ = self.metadata_dict  # type:ignore[assignment]
                 self.update_in_shed_tool_config()
 
                 session = self.app.install_model.context
@@ -152,10 +152,9 @@ class InstalledRepositoryMetadataManager(GalaxyMetadataGenerator):
         Inspect the repository changelog to reset metadata for all appropriate changeset revisions.
         This method is called from both Galaxy and the Tool Shed.
         """
-        repository_ids = util.listify(kwd.get("repository_ids", None))
         message = ""
         status = "done"
-        if repository_ids:
+        if repository_ids := util.listify(kwd.get("repository_ids", None)):
             successful_count = 0
             unsuccessful_count = 0
             for repository_id in repository_ids:

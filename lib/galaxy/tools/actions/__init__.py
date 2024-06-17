@@ -14,9 +14,15 @@ from typing import (
     Union,
 )
 
+from packaging.version import Version
+
 from galaxy import model
-from galaxy.exceptions import ItemAccessibilityException
+from galaxy.exceptions import (
+    ItemAccessibilityException,
+    RequestParameterInvalidException,
+)
 from galaxy.job_execution.actions.post import ActionBox
+from galaxy.managers.context import ProvidesHistoryContext
 from galaxy.model import (
     HistoryDatasetAssociation,
     Job,
@@ -31,8 +37,9 @@ from galaxy.tools.parameters import update_dataset_ids
 from galaxy.tools.parameters.basic import (
     DataCollectionToolParameter,
     DataToolParameter,
-    RuntimeValue,
+    SelectToolParameter,
 )
+from galaxy.tools.parameters.workflow_utils import RuntimeValue
 from galaxy.tools.parameters.wrapped import (
     LegacyUnprefixedDict,
     WrappedParameters,
@@ -95,7 +102,7 @@ class DefaultToolAction(ToolAction):
         self,
         tool,
         param_values,
-        trans,
+        trans: ProvidesHistoryContext,
         history,
         current_user_roles=None,
         dataset_collection_elements=None,
@@ -176,9 +183,9 @@ class DefaultToolAction(ToolAction):
                         for conversion_name, conversion_extensions, conversion_datatypes in input.conversions:
                             new_data = process_dataset(input_datasets[prefixed_name + str(i + 1)], conversion_datatypes)
                             if not new_data or new_data.datatype.matches_any(conversion_datatypes):
-                                input_datasets[
-                                    prefixed_name[: -len(input.name)] + conversion_name + str(i + 1)
-                                ] = new_data
+                                input_datasets[prefixed_name[: -len(input.name)] + conversion_name + str(i + 1)] = (
+                                    new_data
+                                )
                                 input_datasets.set_legacy_alias(
                                     new_key=prefixed_name[: -len(input.name)] + conversion_name + str(i + 1),
                                     old_key=prefix + conversion_name + str(i + 1),
@@ -221,9 +228,9 @@ class DefaultToolAction(ToolAction):
                     target_dict[input.name] = input_datasets[prefixed_name]
                     for conversion_name, conversion_data in conversions:
                         # allow explicit conversion to be stored in job_parameter table
-                        target_dict[
-                            conversion_name
-                        ] = conversion_data.id  # a more robust way to determine JSONable value is desired
+                        target_dict[conversion_name] = (
+                            conversion_data.id
+                        )  # a more robust way to determine JSONable value is desired
             elif isinstance(input, DataCollectionToolParameter):
                 if not value:
                     return
@@ -253,6 +260,10 @@ class DefaultToolAction(ToolAction):
                 for ext in extensions:
                     if ext:
                         datatype = trans.app.datatypes_registry.get_datatype_by_extension(ext)
+                        if not datatype:
+                            raise RequestParameterInvalidException(
+                                f"Extension '{ext}' unknown, cannot use dataset collection as input"
+                            )
                         if not datatype.matches_any(input.formats):
                             conversion_required = True
                             break
@@ -283,6 +294,8 @@ class DefaultToolAction(ToolAction):
                         value.child_collection = new_collection
                     else:
                         value.collection = new_collection
+            elif isinstance(input, SelectToolParameter) and isinstance(value, HistoryDatasetAssociation):
+                input_datasets[prefixed_name] = value
 
         tool.visit_inputs(param_values, visitor)
         return input_datasets, all_permissions
@@ -417,7 +430,7 @@ class DefaultToolAction(ToolAction):
         # format='input" previously would give you a random extension from
         # the input extensions, now it should just give "input" as the output
         # format.
-        input_ext = "data" if tool.profile < 16.04 else "input"
+        input_ext = "data" if Version(str(tool.profile)) < Version("16.04") else "input"
         input_dbkey = incoming.get("dbkey", "?")
         for name, data in reversed(list(inp_data.items())):
             if not data:
@@ -429,7 +442,7 @@ class DefaultToolAction(ToolAction):
                 data = data.to_history_dataset_association(None)
                 inp_data[name] = data
 
-            if tool.profile < 16.04:
+            if Version(str(tool.profile)) < Version("16.04"):
                 input_ext = data.ext
 
             if data.dbkey not in [None, "?"]:
@@ -670,14 +683,7 @@ class DefaultToolAction(ToolAction):
                 hdca.visible = False
             object_store_populator = ObjectStorePopulator(trans.app, trans.user)
             for data in out_data.values():
-                object_store_populator.set_object_store_id(data)
-                data.extension = "expression.json"
-                data.state = "ok"
-                data.blurb = "skipped"
-                data.visible = False
-                with open(data.dataset.get_file_name(), "w") as out:
-                    out.write(json.dumps(None))
-                data.set_total_size()
+                data.set_skipped(object_store_populator)
         job.preferred_object_store_id = preferred_object_store_id
         self._record_inputs(trans, tool, job, incoming, inp_data, inp_dataset_collections)
         self._record_outputs(job, out_data, output_collections)

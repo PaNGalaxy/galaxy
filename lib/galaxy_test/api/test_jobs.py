@@ -44,11 +44,12 @@ class TestJobsApi(ApiTestCase, TestsTools):
         self.__history_with_new_dataset(history_id)
         jobs = self.__jobs_index(admin=False)
         job = jobs[0]
-        self._assert_not_has_keys(job, "external_id")
+        assert job["external_id"] is None
 
         jobs = self.__jobs_index(admin=True)
         job = jobs[0]
-        self._assert_has_keys(job, "command_line", "external_id")
+        assert job["command_line"]
+        assert job["external_id"]
 
     @pytest.mark.require_new_history
     def test_admin_job_list(self, history_id):
@@ -181,14 +182,19 @@ steps:
 
     @pytest.mark.require_new_history
     def test_index_limit_and_offset_filter(self, history_id):
+        # create 2 datasets
+        self.__history_with_new_dataset(history_id)
         self.__history_with_new_dataset(history_id)
         jobs = self.__jobs_index(data={"history_id": history_id})
         assert len(jobs) > 0
         length = len(jobs)
         jobs = self.__jobs_index(data={"history_id": history_id, "offset": 1})
         assert len(jobs) == length - 1
-        jobs = self.__jobs_index(data={"history_id": history_id, "limit": 0})
-        assert len(jobs) == 0
+        jobs = self.__jobs_index(data={"history_id": history_id, "limit": 1})
+        assert len(jobs) == 1
+        response = self._get("jobs", data={"history_id": history_id, "limit": -1})
+        assert response.status_code == 400
+        assert response.json()["err_msg"] == "Input should be greater than or equal to 1 in ('query', 'limit')"
 
     @pytest.mark.require_new_history
     def test_index_search_filter_tool_id(self, history_id):
@@ -353,7 +359,7 @@ steps:
         assert not job_lock_response.json()["active"]
 
         show_jobs_response = self._get(f"jobs/{job_id}", admin=False)
-        self._assert_not_has_keys(show_jobs_response.json(), "external_id")
+        assert show_jobs_response.json()["external_id"] is None
 
         # TODO: Re-activate test case when API accepts privacy settings
         # with self._different_user():
@@ -361,7 +367,8 @@ steps:
         #    self._assert_status_code_is( show_jobs_response, 200 )
 
         show_jobs_response = self._get(f"jobs/{job_id}", admin=True)
-        self._assert_has_keys(show_jobs_response.json(), "command_line", "external_id")
+        assert show_jobs_response.json()["external_id"] is not None
+        assert show_jobs_response.json()["command_line"] is not None
 
     def _run_detect_errors(self, history_id, inputs):
         payload = self.dataset_populator.run_tool_payload(
@@ -752,6 +759,22 @@ steps:
         self._assert_status_code_is(delete_respone, 200)
         search_payload = self._search_payload(history_id=history_id, tool_id="cat1", inputs=inputs)
         self._search(search_payload, expected_search_count=0)
+
+    def test_implicit_collection_jobs(self, history_id):
+        run_response = self._run_map_over_error(history_id)
+        implicit_collection_id = run_response["implicit_collections"][0]["id"]
+        failed_hdca = self.dataset_populator.get_history_collection_details(
+            history_id=history_id,
+            content_id=implicit_collection_id,
+            assert_ok=False,
+        )
+        job_id = run_response["jobs"][0]["id"]
+        icj_id = failed_hdca["implicit_collection_jobs_id"]
+        assert icj_id
+        index = self.__jobs_index(data=dict(implicit_collection_jobs_id=icj_id))
+        assert len(index) == 1
+        assert index[0]["id"] == job_id
+        assert index[0]["state"] == "error", index
 
     @pytest.mark.require_new_history
     def test_search_with_hdca_list_input(self, history_id):

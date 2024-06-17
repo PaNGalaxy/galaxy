@@ -15,6 +15,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.orm import joinedload
+from sqlalchemy.sql import text
 
 import galaxy.model
 from galaxy.model import (
@@ -109,7 +110,7 @@ class GalaxyRBACAgent(RBACAgent):
             # Add all remaining non-private, non-sharing roles
             for role in self._get_npns_roles(trans):
                 roles.add(role)
-        return self.sort_by_attr([role for role in roles], "name")
+        return self.sort_by_attr(list(roles), "name")
 
     def get_roles_for_action(self, item, action):
         """
@@ -217,7 +218,7 @@ class GalaxyRBACAgent(RBACAgent):
         return_roles = set(roles)
         if total_count is None:
             total_count = len(return_roles)
-        return self.sort_by_attr([role for role in return_roles], "name"), total_count
+        return self.sort_by_attr(list(return_roles), "name"), total_count
 
     def get_legitimate_roles(self, trans, item, cntrller):
         """
@@ -268,7 +269,7 @@ class GalaxyRBACAgent(RBACAgent):
                         for ura in user.roles:
                             if admin_controller or self.ok_to_display(trans.user, ura.role):
                                 roles.add(ura.role)
-        return self.sort_by_attr([role for role in roles], "name")
+        return self.sort_by_attr(list(roles), "name")
 
     def ok_to_display(self, user, role):
         """
@@ -634,6 +635,24 @@ class GalaxyRBACAgent(RBACAgent):
     def can_manage_library_item(self, roles, item):
         return self.allow_action(roles, self.permitted_actions.LIBRARY_MANAGE, item)
 
+    def can_change_object_store_id(self, user, dataset):
+        # prevent update if dataset shared with anyone but the current user
+        # private object stores would prevent this but if something has been
+        # kept private in a sharable object store still allow the swap
+        if dataset.library_associations:
+            return False
+        else:
+            query = text(
+                """
+SELECT COUNT(*)
+FROM history
+INNER JOIN
+    history_dataset_association on history_dataset_association.history_id = history.id
+WHERE history.user_id != :user_id and history_dataset_association.dataset_id = :dataset_id
+"""
+            ).bindparams(dataset_id=dataset.id, user_id=user.id if user else None)
+            return self.sa_session.scalars(query).first() == 0
+
     def get_item_actions(self, action, item):
         # item must be one of: Dataset, Library, LibraryFolder, LibraryDataset, LibraryDatasetDatasetAssociation
         # SM: Accessing item.actions emits a query to Library_Dataset_Permissions
@@ -746,12 +765,19 @@ class GalaxyRBACAgent(RBACAgent):
         return self.get_private_user_role(user)
 
     def get_private_user_role(self, user, auto_create=False):
-        stmt = select(Role).where(
-            and_(
-                UserRoleAssociation.user_id == user.id,
-                Role.id == UserRoleAssociation.role_id,
-                Role.type == Role.types.PRIVATE,
+        if auto_create and user.id is None:
+            # New user, directly create private role
+            return self.create_private_user_role(user)
+        stmt = (
+            select(Role)
+            .where(
+                and_(
+                    UserRoleAssociation.user_id == user.id,
+                    Role.id == UserRoleAssociation.role_id,
+                    Role.type == Role.types.PRIVATE,
+                )
             )
+            .distinct()
         )
         role = self.sa_session.execute(stmt).scalar_one_or_none()
         if not role:

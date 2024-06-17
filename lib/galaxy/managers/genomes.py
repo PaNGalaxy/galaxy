@@ -1,6 +1,7 @@
 from typing import (
     Any,
     List,
+    Optional,
     TYPE_CHECKING,
 )
 
@@ -27,10 +28,10 @@ class GenomesManager:
         self._app = app
         self.genomes = app.genomes
 
-    def get_dbkeys(self, user: m.User, chrom_info: bool) -> List[List[str]]:
+    def get_dbkeys(self, user: Optional[m.User], chrom_info: bool) -> List[List[str]]:
         return self.genomes.get_dbkeys(user, chrom_info)
 
-    def is_registered_dbkey(self, dbkey: str, user: m.User) -> bool:
+    def is_registered_dbkey(self, dbkey: str, user: Optional[m.User]) -> bool:
         dbkeys = self.get_dbkeys(user, chrom_info=False)
         for _, key in dbkeys:
             if dbkey == key:
@@ -94,7 +95,7 @@ class GenomeFilterMixin:
             if self.database_connection.startswith("postgres"):
                 column = text("convert_from(metadata, 'UTF8')::json ->> 'dbkey'")
             else:
-                column = func.json_extract(model_class.table.c._metadata, "$.dbkey")
+                column = func.json_extract(model_class.table.c._metadata, "$.dbkey")  # type:ignore[assignment]
             lower_val = val.lower()  # Ignore case
             # dbkey can either be "hg38" or '["hg38"]', so we need to check both
             if op == "eq":

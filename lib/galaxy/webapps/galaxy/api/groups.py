@@ -1,12 +1,14 @@
 """
 API operations on Group objects.
 """
+
 import logging
 
 from fastapi import (
     Body,
     Path,
 )
+from typing_extensions import Annotated
 
 from galaxy.managers.context import ProvidesAppContext
 from galaxy.managers.groups import GroupsManager
@@ -51,8 +53,8 @@ class FastAPIGroups:
     )
     def create(
         self,
+        payload: Annotated[GroupCreatePayload, Body(...)],
         trans: ProvidesAppContext = DependsOnTrans,
-        payload: GroupCreatePayload = Body(...),
     ) -> GroupListResponse:
         return self.manager.create(trans, payload)
 
@@ -64,8 +66,8 @@ class FastAPIGroups:
     )
     def show(
         self,
+        group_id: Annotated[DecodedDatabaseIdField, Path(...)],
         trans: ProvidesAppContext = DependsOnTrans,
-        group_id: DecodedDatabaseIdField = Path(...),
     ) -> GroupResponse:
         return self.manager.show(trans, group_id)
 
@@ -77,8 +79,20 @@ class FastAPIGroups:
     )
     def update(
         self,
+        group_id: Annotated[DecodedDatabaseIdField, Path(...)],
         trans: ProvidesAppContext = DependsOnTrans,
-        group_id: DecodedDatabaseIdField = Path(...),
         payload: GroupCreatePayload = Body(...),
     ) -> GroupResponse:
         return self.manager.update(trans, group_id, payload)
+
+    @router.delete("/api/groups/{group_id}", require_admin=True)
+    def delete(self, group_id: DecodedDatabaseIdField, trans: ProvidesAppContext = DependsOnTrans):
+        self.manager.delete(trans, group_id)
+
+    @router.post("/api/groups/{group_id}/purge", require_admin=True)
+    def purge(self, group_id: DecodedDatabaseIdField, trans: ProvidesAppContext = DependsOnTrans):
+        self.manager.purge(trans, group_id)
+
+    @router.post("/api/groups/{group_id}/undelete", require_admin=True)
+    def undelete(self, group_id: DecodedDatabaseIdField, trans: ProvidesAppContext = DependsOnTrans):
+        self.manager.undelete(trans, group_id)

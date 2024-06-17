@@ -1,6 +1,7 @@
 """ This module define an abstract class for reasoning about Galaxy's
 dataset collection after jobs are finished.
 """
+
 from typing import List
 
 from galaxy.util import asbool
@@ -59,7 +60,7 @@ def _validate_collectors(collectors):
 
 
 def dataset_collector_descriptions_from_list(discover_datasets_dicts):
-    return list(map(lambda kwds: dataset_collection_description(**kwds), discover_datasets_dicts))
+    return [dataset_collection_description(**kwds) for kwds in discover_datasets_dicts]
 
 
 def dataset_collection_description(**kwargs):
