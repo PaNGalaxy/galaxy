@@ -1,9 +1,18 @@
 import copy
 import logging
 import time
+<<<<<<< HEAD
+from abc import ABC
+
+try:
+    from rucio.client.uploadclient import UploadClient
+    from rucio.common.exception import (  # type: ignore
+=======
+
 try:
     from rucio.client.uploadclient import UploadClient
     from rucio.common.exception import (
+>>>>>>> 08d42ea24fcc299b11cb67620f737f3b944bcc62
         InputValidationError,
         NoFilesUploaded,
         NotAllFilesUploaded,
@@ -12,7 +21,11 @@ try:
     from rucio.common.utils import generate_uuid
     from rucio.rse import rsemanager as rsemgr
 except ImportError:
+<<<<<<< HEAD
+    UploadClient = ABC
+=======
     UploadClient = object
+>>>>>>> 08d42ea24fcc299b11cb67620f737f3b944bcc62
 
 
 class DeleteClient(UploadClient):
@@ -34,7 +47,11 @@ class DeleteClient(UploadClient):
             if not self.rses.get(rse):
                 rse_settings = self.rses.setdefault(rse, rsemgr.get_rse_info(rse, vo=self.client.vo))
                 if not ignore_availability and rse_settings["availability_delete"] != 1:
+<<<<<<< HEAD
+                    logger(logging.DEBUG, "%s is not available for deletion. No actions have been taken" % rse)
+=======
                     logger(logging.DEBUG, "%s is not available for deletion. No actions have been taken", rse)
+>>>>>>> 08d42ea24fcc299b11cb67620f737f3b944bcc62
                     continue
 
             # protocol handling and deletion
@@ -51,8 +68,13 @@ class DeleteClient(UploadClient):
                     success = True
                 except Exception as error:
                     logger(logging.WARNING, "Delete attempt failed")
+<<<<<<< HEAD
+                    logger(logging.INFO, "Exception: %s" % str(error), exc_info=True)
+            logger(logging.DEBUG, "Successfully deleted dataset %s" % pfn)
+=======
                     logger(logging.INFO, "Exception: %s", error, exc_info=True)
             logger(logging.DEBUG, "Successfully deleted dataset %s", pfn)
+>>>>>>> 08d42ea24fcc299b11cb67620f737f3b944bcc62
 
 
 class InPlaceIngestClient(UploadClient):
@@ -106,7 +128,11 @@ class InPlaceIngestClient(UploadClient):
             if not self.rses.get(rse):
                 rse_settings = self.rses.setdefault(rse, rsemgr.get_rse_info(rse, vo=self.client.vo))
                 if not ignore_availability and rse_settings["availability_write"] != 1:
+<<<<<<< HEAD
+                    raise RSEWriteBlocked("%s is not available for writing. No actions have been taken" % rse)
+=======
                     raise RSEWriteBlocked(f"{rse} is not available for writing. No actions have been taken")
+>>>>>>> 08d42ea24fcc299b11cb67620f737f3b944bcc62
 
             dataset_scope = file.get("dataset_scope")
             dataset_name = file.get("dataset_name")
@@ -119,7 +145,11 @@ class InPlaceIngestClient(UploadClient):
             registered_file_dids.add(f"{file['did_scope']}:{file['did_name']}")
         wrong_dids = registered_file_dids.intersection(registered_dataset_dids)
         if len(wrong_dids):
+<<<<<<< HEAD
+            raise InputValidationError("DIDs used to address both files and datasets: %s" % str(wrong_dids))
+=======
             raise InputValidationError(f"DIDs used to address both files and datasets: {wrong_dids}")
+>>>>>>> 08d42ea24fcc299b11cb67620f737f3b944bcc62
         logger(logging.DEBUG, "Input validation done.")
 
         # clear this set again to ensure that we only try to register datasets once
@@ -128,7 +158,11 @@ class InPlaceIngestClient(UploadClient):
         summary = []
         for file in files:
             basename = file["basename"]
+<<<<<<< HEAD
+            logger(logging.INFO, "Preparing upload for file %s" % basename)
+=======
             logger(logging.INFO, "Preparing upload for file %s", basename)
+>>>>>>> 08d42ea24fcc299b11cb67620f737f3b944bcc62
 
             pfn = file.get("pfn")
 
@@ -168,7 +202,11 @@ class InPlaceIngestClient(UploadClient):
             trace["transferEnd"] = time.time()
             trace["clientState"] = "DONE"
             file["state"] = "A"
+<<<<<<< HEAD
+            logger(logging.INFO, "Successfully uploaded file %s" % basename)
+=======
             logger(logging.INFO, "Successfully uploaded file %s", basename)
+>>>>>>> 08d42ea24fcc299b11cb67620f737f3b944bcc62
             self._send_trace(trace)
 
             if summary_file_path:
