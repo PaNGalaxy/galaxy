@@ -16,7 +16,7 @@ import { type ItemUrls } from ".";
 import DatasetDownload from "@/components/History/Content/Dataset/DatasetDownload.vue";
 import { stopJob } from "@/components/History/model/queries";
 
-library.add(faBug, faChartBar, faInfoCircle, faLink, faRedo, faSitemap);
+library.add(faBug, faChartBar, faInfoCircle, faLink, faRedo, faSitemap, faStop);
 
 interface Props {
     item: HDADetailed;
@@ -100,7 +100,6 @@ function onStop() {
     if (btn) {
         btn!.classList.add("stopping-job");
     }
-
 }
 
 function onHighlight() {
@@ -177,6 +176,7 @@ function onHighlight() {
                     @click.stop="onHighlight">
                     <FontAwesomeIcon :icon="faSitemap" />
                 </BButton>
+
                 <BButton
                     v-if="showStop"
                     class="stop-btn px-1"
@@ -184,7 +184,7 @@ function onHighlight() {
                     size="sm"
                     variant="link"
                     @click.stop="onStop">
-                    <span class="faStop" />
+                    <FontAwesomeIcon :icon="faStop" />
                 </BButton>
             </div>
         </div>

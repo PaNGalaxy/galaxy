@@ -257,7 +257,7 @@ function getIdpPreference() {
                         <BButton class="d-block mt-3" @click="submitOIDCLogin(idp)">
                             <i :class="oIDCIdps[idp]" />
                             Sign in with
-                            {{ idp_info['alias'] || idp.charAt(0).toUpperCase() + idp.slice(1) }}
+                            {{ iDPInfo['alias'] || idp.charAt(0).toUpperCase() + idp.slice(1) }}
                         </BButton>
                     </span>
                 </div>
