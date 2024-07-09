@@ -14,6 +14,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Sequence,
 )
 
 from markupsafe import escape
@@ -615,7 +616,7 @@ class UserManager(base.ModelManager, deletable.PurgableManagerMixin):
         reset_user = get_user_by_email(trans.sa_session, email, self.app.model.User)
         if not reset_user and email != email.lower():
             reset_user = self._get_user_by_email_case_insensitive(trans.sa_session, email)
-        if reset_user:
+        if reset_user and not reset_user.deleted:
             prt = self.app.model.PasswordResetToken(reset_user)
             trans.sa_session.add(prt)
             with transaction(trans.sa_session):
@@ -864,7 +865,7 @@ class AdminUserFilterParser(base.ModelFilterParser, deletable.PurgableFiltersMix
         self.fn_filter_parsers.update({})
 
 
-def get_users_by_ids(session: galaxy_scoped_session, user_ids):
+def get_users_by_ids(session: galaxy_scoped_session, user_ids: List[int]) -> Sequence[User]:
     stmt = select(User).where(User.id.in_(user_ids))
     return session.scalars(stmt).all()
 
