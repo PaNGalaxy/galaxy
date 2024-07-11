@@ -53,24 +53,24 @@ client-tests:
   except:
       - docker-base
 
-api-tests:
-  stage: test
-  script:
-    - docker run --name postgres -e POSTGRES_PASSWORD=psql -d --network=host postgres:13
-    - sleep 20
-    - docker logs postgres
-    - >
-      docker run
-      --entrypoint=""
-      --network=host
-      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
-      bash -c "GALAXY_TEST_DBURI=postgresql://postgres:psql@127.0.0.1:5432/galaxy_test ./run_tests.sh -api"
-    - docker rm -f postgres
-  tags:
-    - rse-multi-builder
-  except:
-      - docker-base
-  when: never
+#api-tests:
+#  stage: test
+#  script:
+#    - docker run --name postgres -e POSTGRES_PASSWORD=psql -d --network=host postgres:13
+#    - sleep 20
+#    - docker logs postgres
+#    - >
+#      docker run
+#      --entrypoint=""
+#      --network=host
+#      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+#      bash -c "GALAXY_TEST_DBURI=postgresql://postgres:psql@127.0.0.1:5432/galaxy_test ./run_tests.sh -api"
+#    - docker rm -f postgres
+#  tags:
+#    - rse-multi-builder
+#  except:
+#      - docker-base
+
 
 unit-tests:
   stage: test
