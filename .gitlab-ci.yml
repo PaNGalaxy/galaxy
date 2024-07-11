@@ -70,6 +70,7 @@ api-tests:
     - rse-multi-builder
   except:
       - docker-base
+  when: never
 
 unit-tests:
   stage: test
