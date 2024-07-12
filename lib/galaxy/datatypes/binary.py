@@ -89,6 +89,7 @@ from galaxy.util import (
 from galaxy.util.checkers import (
     is_bz2,
     is_gzip,
+    is_xz,
 )
 from . import (
     data,
@@ -107,7 +108,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 # pysam 0.16.0.1 emits logs containing the word 'Error', this can confuse the stdout/stderr checkers.
-# Can be be removed once https://github.com/pysam-developers/pysam/issues/939 is resolved.
+# Can be removed once https://github.com/pysam-developers/pysam/issues/939 is resolved.
 pysam.set_verbosity(0)
 
 # Currently these supported binary data types must be manually set on upload
@@ -1491,11 +1492,9 @@ class Anndata(H5):
                         return tmp["_index"]
                     return None
                 else:
-                    index_var = tmp.attrs.get("index")
-                    if index_var is not None:
+                    if (index_var := tmp.attrs.get("index")) is not None:
                         return tmp[index_var]
-                    index_var = tmp.attrs.get("_index")
-                    if index_var is not None:
+                    if (index_var := tmp.attrs.get("_index")) is not None:
                         return tmp[index_var]
                     return None
 
@@ -2090,7 +2089,7 @@ class H5MLM(H5):
         try:
             return dataset.peek
         except Exception:
-            return "HDF5 Model (%s)" % (nice_size(dataset.get_size()))
+            return f"HDF5 Model ({nice_size(dataset.get_size())})"
 
     def display_data(
         self,
@@ -2212,8 +2211,8 @@ class HexrdMaterials(H5):
         try:
             with h5py.File(dataset.get_file_name(), "r") as mat_file:
                 dataset.metadata.materials = list(mat_file.keys())
-                sgn = dict()
-                lp = dict()
+                sgn = {}
+                lp = {}
                 for m in mat_file.keys():
                     if "SpaceGroupNumber" in mat_file[m] and len(mat_file[m]["SpaceGroupNumber"]) > 0:
                         sgn[m] = mat_file[m]["SpaceGroupNumber"][0].item()
@@ -2403,8 +2402,8 @@ class SQlite(Binary):
     def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
         try:
             tables = []
-            columns = dict()
-            rowcounts = dict()
+            columns = {}
+            rowcounts = {}
             conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             tables_query = "SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name"
@@ -3688,6 +3687,9 @@ class Fast5ArchiveGz(Fast5Archive):
     >>> fname = get_test_fname('test.fast5.tar.gz')
     >>> Fast5ArchiveGz().sniff(fname)
     True
+    >>> fname = get_test_fname('test.fast5.tar.xz')
+    >>> Fast5ArchiveGz().sniff(fname)
+    False
     >>> fname = get_test_fname('test.fast5.tar.bz2')
     >>> Fast5ArchiveGz().sniff(fname)
     False
@@ -3704,6 +3706,33 @@ class Fast5ArchiveGz(Fast5Archive):
         return Fast5Archive.sniff(self, filename)
 
 
+class Fast5ArchiveXz(Fast5Archive):
+    """
+    Class describing a xz-compressed FAST5 archive
+
+    >>> from galaxy.datatypes.sniff import get_test_fname
+    >>> fname = get_test_fname('test.fast5.tar.gz')
+    >>> Fast5ArchiveXz().sniff(fname)
+    False
+    >>> fname = get_test_fname('test.fast5.tar.xz')
+    >>> Fast5ArchiveXz().sniff(fname)
+    True
+    >>> fname = get_test_fname('test.fast5.tar.bz2')
+    >>> Fast5ArchiveXz().sniff(fname)
+    False
+    >>> fname = get_test_fname('test.fast5.tar')
+    >>> Fast5ArchiveXz().sniff(fname)
+    False
+    """
+
+    file_ext = "fast5.tar.xz"
+
+    def sniff(self, filename: str) -> bool:
+        if not is_xz(filename):
+            return False
+        return Fast5Archive.sniff(self, filename)
+
+
 class Fast5ArchiveBz2(Fast5Archive):
     """
     Class describing a bzip2-compressed FAST5 archive
@@ -3712,6 +3741,9 @@ class Fast5ArchiveBz2(Fast5Archive):
     >>> fname = get_test_fname('test.fast5.tar.bz2')
     >>> Fast5ArchiveBz2().sniff(fname)
     True
+    >>> fname = get_test_fname('test.fast5.tar.xz')
+    >>> Fast5ArchiveBz2().sniff(fname)
+    False
     >>> fname = get_test_fname('test.fast5.tar.gz')
     >>> Fast5ArchiveBz2().sniff(fname)
     False
@@ -4227,7 +4259,7 @@ class Pretext(Binary):
         try:
             return dataset.peek
         except Exception:
-            return "Binary pretext file (%s)" % (nice_size(dataset.get_size()))
+            return f"Binary pretext file ({nice_size(dataset.get_size())})"
 
 
 class JP2(Binary):
@@ -4271,7 +4303,7 @@ class JP2(Binary):
         try:
             return dataset.peek
         except Exception:
-            return "Binary JPEG 2000 file (%s)" % (nice_size(dataset.get_size()))
+            return f"Binary JPEG 2000 file ({nice_size(dataset.get_size())})"
 
 
 class Npz(CompressedArchive):
@@ -4298,11 +4330,9 @@ class Npz(CompressedArchive):
 
     def sniff(self, filename: str) -> bool:
         try:
-            npz = np.load(filename)
-            if isinstance(npz, np.lib.npyio.NpzFile):
-                for f in npz.files:
-                    if isinstance(npz[f], np.ndarray):
-                        return True
+            with np.load(filename) as npz:
+                if isinstance(npz, np.lib.npyio.NpzFile) and any(f.filename.endswith(".npy") for f in npz.zip.filelist):
+                    return True
         except Exception:
             return False
         return False
@@ -4327,7 +4357,7 @@ class Npz(CompressedArchive):
         try:
             return dataset.peek
         except Exception:
-            return "Binary Numpy npz file (%s)" % (nice_size(dataset.get_size()))
+            return f"Binary Numpy npz file ({nice_size(dataset.get_size())})"
 
 
 class HexrdImagesNpz(Npz):
@@ -4338,7 +4368,7 @@ class HexrdImagesNpz(Npz):
     >>> fname = get_test_fname('hexrd.images.npz')
     >>> HexrdImagesNpz().sniff(fname)
     True
-    >>> fname = get_test_fname('eta_ome.npz')
+    >>> fname = get_test_fname('hexrd.eta_ome.npz')
     >>> HexrdImagesNpz().sniff(fname)
     False
     """
@@ -4404,7 +4434,7 @@ class HexrdImagesNpz(Npz):
         try:
             return dataset.peek
         except Exception:
-            return "Binary Numpy npz file (%s)" % (nice_size(dataset.get_size()))
+            return f"Binary Numpy npz file ({nice_size(dataset.get_size())})"
 
 
 class HexrdEtaOmeNpz(Npz):
@@ -4466,7 +4496,7 @@ class HexrdEtaOmeNpz(Npz):
         try:
             return dataset.peek
         except Exception:
-            return "Binary Numpy npz file (%s)" % (nice_size(dataset.get_size()))
+            return f"Binary Numpy npz file ({nice_size(dataset.get_size())})"
 
 
 class FITS(Binary):
@@ -4541,3 +4571,58 @@ class FITS(Binary):
             return dataset.peek
         except Exception:
             return f"Binary FITS file size ({nice_size(dataset.get_size())})"
+
+
+@build_sniff_from_prefix
+class Numpy(Binary):
+    """
+    Class defining a numpy data file
+
+    >>> from galaxy.datatypes.sniff import get_test_fname
+    >>> fname = get_test_fname('test.npy')
+    >>> Numpy().sniff(fname)
+    True
+    """
+
+    file_ext = "npy"
+
+    MetadataElement(
+        name="version_str",
+        default="",
+        param=MetadataParameter,
+        desc="Version string for the numpy file format",
+        readonly=True,
+        visible=True,
+        no_value=0,
+        optional=True,
+    )
+
+    def _numpy_version_string(self, filename):
+        magic_string = open(filename, "rb").read(8)
+        version_str = f"{magic_string[6]}.{magic_string[7]}"
+        return version_str
+
+    def set_meta(self, dataset: DatasetProtocol, overwrite: bool = True, **kwd) -> None:
+        try:
+            dataset.metadata.version_str = self._numpy_version_string(dataset.get_file_name())
+        except Exception as e:
+            log.warning("%s, set_meta Exception: %s", self, e)
+
+    def sniff_prefix(self, file_prefix: FilePrefix) -> bool:
+        # The first 6 bytes of any numpy file is '\x93NUMPY', with following bytes for version
+        # number of file formats, and info about header data. The rest of the file contains binary data.
+        return file_prefix.startswith_bytes(b"\x93NUMPY")
+
+    def set_peek(self, dataset: DatasetProtocol, **kwd) -> None:
+        if not dataset.dataset.purged:
+            dataset.peek = f"Binary numpy file version {dataset.metadata.version_str}"
+            dataset.blurb = nice_size(dataset.get_size())
+        else:
+            dataset.peek = "file does not exist"
+            dataset.blurb = "file purged from disk"
+
+    def display_peek(self, dataset: DatasetProtocol) -> str:
+        try:
+            return dataset.peek
+        except Exception:
+            return f"Binary numpy file ({nice_size(dataset.get_size())})"

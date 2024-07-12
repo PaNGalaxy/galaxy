@@ -4,6 +4,7 @@ Utilities for validating inputs related to user objects.
 The validate_* methods in this file return simple messages that do not contain
 user inputs - so these methods do not need to be escaped.
 """
+
 import logging
 import re
 from typing import Optional
@@ -129,8 +130,7 @@ def validate_publicname(trans, publicname, user=None):
     """
     if user and user.username == publicname:
         return ""
-    message = validate_publicname_str(publicname)
-    if message:
+    if message := validate_publicname_str(publicname):
         return message
 
     stmt = select(trans.app.model.User).filter_by(username=publicname).limit(1)
@@ -160,10 +160,7 @@ def validate_password(trans, password, confirm):
     return validate_password_str(password)
 
 
-def validate_preferred_object_store_id(object_store: ObjectStore, preferred_object_store_id: Optional[str]) -> str:
-    if not object_store.object_store_allows_id_selection() and preferred_object_store_id is not None:
-        return "The current configuration doesn't allow selecting preferred object stores."
-    if object_store.object_store_allows_id_selection() and preferred_object_store_id:
-        if preferred_object_store_id not in object_store.object_store_ids_allowing_selection():
-            return "Supplied object store id is not an allowed object store selection"
-    return ""
+def validate_preferred_object_store_id(
+    trans, object_store: ObjectStore, preferred_object_store_id: Optional[str]
+) -> str:
+    return object_store.validate_selected_object_store_id(trans.user, preferred_object_store_id) or ""

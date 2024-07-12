@@ -28,6 +28,7 @@ from galaxy import (
     jobs,
     tools,
 )
+from galaxy.carbon_emissions import get_carbon_intensity_entry
 from galaxy.celery.base_task import (
     GalaxyTaskBeforeStart,
     GalaxyTaskBeforeStartUserRateLimitPostgres,
@@ -35,13 +36,27 @@ from galaxy.celery.base_task import (
 )
 from galaxy.config_watchers import ConfigWatchers
 from galaxy.datatypes.registry import Registry
-from galaxy.files import ConfiguredFileSources
+from galaxy.files import (
+    ConfiguredFileSources,
+    ConfiguredFileSourcesConf,
+    UserDefinedFileSources,
+)
+from galaxy.files.plugins import (
+    FileSourcePluginLoader,
+    FileSourcePluginsConfig,
+)
+from galaxy.files.templates import ConfiguredFileSourceTemplates
 from galaxy.job_metrics import JobMetrics
 from galaxy.jobs.manager import JobManager
 from galaxy.managers.api_keys import ApiKeyManager
 from galaxy.managers.citations import CitationsManager
 from galaxy.managers.collections import DatasetCollectionManager
 from galaxy.managers.dbkeys import GenomeBuilds
+from galaxy.managers.file_source_instances import (
+    FileSourceInstancesManager,
+    UserDefinedFileSourcesConfig,
+    UserDefinedFileSourcesImpl,
+)
 from galaxy.managers.folders import FolderManager
 from galaxy.managers.hdas import HDAManager
 from galaxy.managers.histories import HistoryManager
@@ -50,6 +65,7 @@ from galaxy.managers.jobs import JobSearch
 from galaxy.managers.libraries import LibraryManager
 from galaxy.managers.library_datasets import LibraryDatasetsManager
 from galaxy.managers.notification import NotificationManager
+from galaxy.managers.object_store_instances import UserObjectStoreResolverImpl
 from galaxy.managers.roles import RoleManager
 from galaxy.managers.session import GalaxySessionManager
 from galaxy.managers.tasks import (
@@ -91,7 +107,10 @@ from galaxy.model.tool_shed_install import (
 from galaxy.objectstore import (
     BaseObjectStore,
     build_object_store_from_config,
+    UserObjectStoreResolver,
+    UserObjectStoresAppConfig,
 )
+from galaxy.objectstore.templates import ConfiguredObjectStoreTemplates
 from galaxy.queue_worker import (
     GalaxyQueueWorker,
     reload_toolbox,
@@ -101,11 +120,18 @@ from galaxy.quota import (
     get_quota_agent,
     QuotaAgent,
 )
-from galaxy.schema.fields import BaseDatabaseIdField
+from galaxy.schema.fields import Security
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.security.vault import (
+    is_vault_configured,
     Vault,
     VaultFactory,
+)
+from galaxy.short_term_storage import (
+    ShortTermStorageAllocator,
+    ShortTermStorageConfiguration,
+    ShortTermStorageManager,
+    ShortTermStorageMonitor,
 )
 from galaxy.tool_shed.cache import ToolShedRepositoryCache
 from galaxy.tool_shed.galaxy_install.client import InstallationTarget
@@ -141,12 +167,6 @@ from galaxy.visualization.plugins.registry import VisualizationsRegistry
 from galaxy.web import url_for
 from galaxy.web.framework.base import server_starttime
 from galaxy.web.proxy import ProxyManager
-from galaxy.web.short_term_storage import (
-    ShortTermStorageAllocator,
-    ShortTermStorageConfiguration,
-    ShortTermStorageManager,
-    ShortTermStorageMonitor,
-)
 from galaxy.web_stack import (
     application_stack_instance,
     ApplicationStack,
@@ -246,8 +266,6 @@ class MinimalGalaxyApplication(BasicSharedApp, HaltableContainer, SentryClientMi
         # Read config file and check for errors
         self.config = self._register_singleton(config.GalaxyAppConfiguration, config.GalaxyAppConfiguration(**kwargs))
         self.config.check()
-        self._configure_object_store(fsmon=True)
-        self._register_singleton(BaseObjectStore, self.object_store)
         config_file = kwargs.get("global_conf", {}).get("__file__", None)
         if config_file:
             log.debug('Using "galaxy.ini" config file: %s', config_file)
@@ -259,6 +277,12 @@ class MinimalGalaxyApplication(BasicSharedApp, HaltableContainer, SentryClientMi
         self._register_singleton(GalaxyModelMapping, self.model)
         self._register_singleton(galaxy_scoped_session, self.model.context)
         self._register_singleton(install_model_scoped_session, self.install_model.context)
+        # Load quota management.
+        self.quota_agent = self._register_singleton(QuotaAgent, get_quota_agent(self.config, self.model))
+        self.vault = self._register_singleton(Vault, VaultFactory.from_app(self))  # type: ignore[type-abstract]
+        self._configure_object_store(fsmon=True)
+        self._register_singleton(BaseObjectStore, self.object_store)
+        galaxy.model.setup_global_object_store_for_models(self.object_store)
 
     def configure_fluent_log(self):
         if self.config.fluent_log:
@@ -310,6 +334,7 @@ class MinimalGalaxyApplication(BasicSharedApp, HaltableContainer, SentryClientMi
             galaxy_root_dir=galaxy_root_dir,
             default_file_path=file_path,
             tool_data_path=self.config.tool_data_path,
+            galaxy_data_manager_data_path=self.config.galaxy_data_manager_data_path,
             shed_tool_data_path=self.config.shed_tool_data_path,
             outputs_to_working_directory=self.config.outputs_to_working_directory,
             container_image_cache_path=self.config.container_image_cache_path,
@@ -403,11 +428,28 @@ class MinimalGalaxyApplication(BasicSharedApp, HaltableContainer, SentryClientMi
             )
 
     def _configure_object_store(self, **kwds):
+        app_config = UserObjectStoresAppConfig(
+            jobs_directory=self.config.jobs_directory,
+            new_file_path=self.config.new_file_path,
+            umask=self.config.umask,
+            gid=self.config.gid,
+            object_store_cache_size=self.config.object_store_cache_size,
+            object_store_cache_path=self.config.object_store_cache_path,
+            user_config_templates_use_saved_configuration=self.config.user_config_templates_use_saved_configuration,
+        )
+        self._register_singleton(UserObjectStoresAppConfig, app_config)
+        vault_configured = is_vault_configured(self.vault)
+        templates = ConfiguredObjectStoreTemplates.from_app_config(self.config, vault_configured=vault_configured)
+        self.object_store_templates = self._register_singleton(ConfiguredObjectStoreTemplates, templates)
+        user_object_store_resolver = self._register_abstract_singleton(
+            UserObjectStoreResolver, UserObjectStoreResolverImpl  # type: ignore[type-abstract]
+        )  # Ignored because of https://github.com/python/mypy/issues/4717
+        kwds["user_object_store_resolver"] = user_object_store_resolver
         self.object_store = build_object_store_from_config(self.config, **kwds)
 
     def _configure_security(self):
         self.security = IdEncodingHelper(id_secret=self.config.id_secret)
-        BaseDatabaseIdField.security = self.security
+        Security.security = self.security
 
     def _configure_engines(self, db_url, install_db_url, combined_install_database):
         trace_logger = getattr(self, "trace_logger", None)
@@ -444,7 +486,6 @@ class MinimalGalaxyApplication(BasicSharedApp, HaltableContainer, SentryClientMi
 
         self.model = mapping.configure_model_mapping(
             self.config.file_path,
-            self.object_store,
             self.config.use_pbkdf2,
             engine,
             combined_install_database,
@@ -515,6 +556,10 @@ class GalaxyManagerApplication(MinimalManagerApp, MinimalGalaxyApplication, Inst
         self.application_stack = self._register_singleton(ApplicationStack, application_stack_instance(app=self))
         if configure_logging:
             config.configure_logging(self.config, self.application_stack.facts)
+        # Carbon emissions configuration
+        carbon_intensity_entry = get_carbon_intensity_entry(self.config.geographical_server_location_code)
+        self.carbon_intensity = carbon_intensity_entry["carbon_intensity"]
+        self.geographical_server_location_name = carbon_intensity_entry["location_name"]
         # Initialize job metrics manager, needs to be in place before
         # config so per-destination modifications can be made.
         self.job_metrics = self._register_singleton(
@@ -560,18 +605,35 @@ class GalaxyManagerApplication(MinimalManagerApp, MinimalGalaxyApplication, Inst
         )
 
         # ConfiguredFileSources
-        self.file_sources = self._register_singleton(
-            ConfiguredFileSources, ConfiguredFileSources.from_app_config(self.config)
+        vault_configured = is_vault_configured(self.vault)
+        templates = ConfiguredFileSourceTemplates.from_app_config(self.config, vault_configured=vault_configured)
+        file_sources_config: FileSourcePluginsConfig = FileSourcePluginsConfig.from_app_config(self.config)
+        self._register_singleton(FileSourcePluginsConfig, file_sources_config)
+        file_source_plugin_loader = FileSourcePluginLoader()
+        self._register_singleton(FileSourcePluginLoader, file_source_plugin_loader)
+        self.file_source_templates = self._register_singleton(ConfiguredFileSourceTemplates, templates)
+        self._register_singleton(
+            UserDefinedFileSourcesConfig, UserDefinedFileSourcesConfig.from_app_config(self.config)
         )
+        user_defined_file_sources = self._register_abstract_singleton(
+            UserDefinedFileSources, UserDefinedFileSourcesImpl  # type: ignore[type-abstract]  # https://github.com/python/mypy/issues/4717
+        )
+        configured_file_source_conf: ConfiguredFileSourcesConf = ConfiguredFileSourcesConf.from_app_config(self.config)
+        file_sources = ConfiguredFileSources(
+            file_sources_config,
+            configured_file_source_conf,
+            load_stock_plugins=True,
+            plugin_loader=file_source_plugin_loader,
+            user_defined_file_sources=user_defined_file_sources,
+        )
+        self.file_sources = self._register_singleton(ConfiguredFileSources, file_sources)
+        self._register_singleton(FileSourceInstancesManager)
 
-        self.vault = self._register_singleton(Vault, VaultFactory.from_app(self))  # type: ignore[type-abstract]
         # Load security policy.
         self.security_agent = self.model.security_agent
         self.host_security_agent = galaxy.model.security.HostAgent(
             model=self.security_agent.model, permitted_actions=self.security_agent.permitted_actions
         )
-        # Load quota management.
-        self.quota_agent = self._register_singleton(QuotaAgent, get_quota_agent(self.config, self.model))
 
         # We need the datatype registry for running certain tasks that modify HDAs, and to build the registry we need
         # to setup the installed repositories ... this is not ideal
@@ -687,7 +749,7 @@ class UniverseApplication(StructuredApp, GalaxyManagerApplication):
         self.watchers = self._register_singleton(ConfigWatchers)
         self._configure_toolbox()
         # Load Data Manager
-        self.data_managers = self._register_singleton(DataManagers)  # type: ignore[type-abstract]
+        self.data_managers = self._register_singleton(DataManagers)
         # Load the update repository manager.
         self.update_repository_manager = self._register_singleton(
             UpdateRepositoryManager, UpdateRepositoryManager(self)
@@ -700,9 +762,6 @@ class UniverseApplication(StructuredApp, GalaxyManagerApplication):
         self.datatypes_registry.load_external_metadata_tool(self.toolbox)
         # Load history import/export tools.
         load_lib_tools(self.toolbox)
-        # Load built-in converters
-        if self.config.display_builtin_converters:
-            self.toolbox.load_builtin_converters()
         self.toolbox.persist_cache(register_postfork=True)
         # visualizations registry: associates resources with visualizations, controls how to render
         self.visualizations_registry = self._register_singleton(
@@ -842,8 +901,7 @@ class StatsdStructuredExecutionTimer(StructuredExecutionTimer):
 
 class ExecutionTimerFactory:
     def __init__(self, config):
-        statsd_host = getattr(config, "statsd_host", None)
-        if statsd_host:
+        if statsd_host := getattr(config, "statsd_host", None):
             from galaxy.web.statsd_client import GalaxyStatsdClient
 
             self.galaxy_statsd_client: Optional[GalaxyStatsdClient] = GalaxyStatsdClient(

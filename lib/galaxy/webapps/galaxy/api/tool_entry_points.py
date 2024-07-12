@@ -1,6 +1,7 @@
 """ API for asynchronous job running mechanisms can use to fetch or put files
 related to running and queued jobs.
 """
+
 import logging
 
 from galaxy import (
@@ -53,6 +54,7 @@ class ToolEntryPointsAPIController(BaseGalaxyAPIController):
 
         if job_id is not None:
             job = trans.sa_session.get(Job, self.decode_id(job_id))
+            assert job
             if not self.interactivetool_manager.can_access_job(trans, job):
                 raise exceptions.ItemAccessibilityException()
             entry_points = job.interactivetool_entry_points

@@ -6,23 +6,23 @@
 
 import { reverse } from "lodash";
 import { defineStore } from "pinia";
-import Vue, { computed, ref } from "vue";
+import { computed, ref, set } from "vue";
 
-import type { DatasetSummary, HDCASummary } from "@/api";
+import type { HistoryItemSummary } from "@/api";
 import { HistoryFilters } from "@/components/History/HistoryFilters";
 import { mergeArray } from "@/store/historyStore/model/utilities";
-import { LastQueue } from "@/utils/promise-queue";
+import { ActionSkippedError, LastQueue } from "@/utils/lastQueue";
 import { urlData } from "@/utils/url";
 
-type HistoryItem = DatasetSummary | HDCASummary;
-
 const limit = 100;
-const queue = new LastQueue();
+
+type ExpectedReturn = { stats: { total_matches: number }; contents: HistoryItemSummary[] };
+const queue = new LastQueue<typeof urlData>(1000, true);
 
 export const useHistoryItemsStore = defineStore("historyItemsStore", () => {
-    const items = ref<Record<string, HistoryItem[]>>({});
+    const items = ref<Record<string, HistoryItemSummary[]>>({});
     const itemKey = ref("hid");
-    const totalMatchesCount = ref(undefined);
+    const totalMatchesCount = ref<number | undefined>(undefined);
     const lastCheckedTime = ref(new Date());
     const lastUpdateTime = ref(new Date());
     const relatedItems = ref<Record<string, boolean>>({});
@@ -35,7 +35,7 @@ export const useHistoryItemsStore = defineStore("historyItemsStore", () => {
                 (filter: [string, string]) => !filter[0].includes("related")
             );
             const relatedHid = HistoryFilters.getFilterValue(filterText, "related");
-            const filtered = itemArray.filter((item: HistoryItem) => {
+            const filtered = itemArray.filter((item: HistoryItemSummary) => {
                 if (!item) {
                     return false;
                 }
@@ -57,24 +57,30 @@ export const useHistoryItemsStore = defineStore("historyItemsStore", () => {
         const params = `v=dev&order=hid&offset=${offset}&limit=${limit}`;
         const url = `/api/histories/${historyId}/contents?${params}&${queryString}`;
         const headers = { accept: "application/vnd.galaxy.history.contents.stats+json" };
-        return await queue.enqueue(urlData, { url, headers, errorSimplify: false }, historyId).then((data) => {
-            const stats = data.stats;
+
+        try {
+            const data = await queue.enqueue(urlData, { url, headers, errorSimplify: false }, historyId);
+            const stats = (data as ExpectedReturn).stats;
             totalMatchesCount.value = stats.total_matches;
-            const payload = data.contents;
+            const payload = (data as ExpectedReturn).contents;
             const relatedHid = HistoryFilters.getFilterValue(filterText, "related");
             saveHistoryItems(historyId, payload, relatedHid);
-        });
+        } catch (e) {
+            if (!(e instanceof ActionSkippedError)) {
+                throw e;
+            }
+        }
     }
 
-    function saveHistoryItems(historyId: string, payload: HistoryItem[], relatedHid = null) {
+    function saveHistoryItems(historyId: string, payload: HistoryItemSummary[], relatedHid = null) {
         // merges incoming payload into existing state
         mergeArray(historyId, payload, items.value, itemKey.value);
         // if related filter is included, set keys in state
         if (relatedHid) {
-            payload.forEach((item: HistoryItem) => {
+            payload.forEach((item: HistoryItemSummary) => {
                 // current `item.hid` is related to item with hid = `relatedHid`
                 const relationKey = `${historyId}-${relatedHid}-${item.hid}`;
-                Vue.set(relatedItems.value, relationKey, true);
+                set(relatedItems.value, relationKey, true);
             });
         }
     }

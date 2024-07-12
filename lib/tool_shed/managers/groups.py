@@ -1,6 +1,7 @@
 """
 Manager and Serializer for TS groups.
 """
+
 import logging
 
 from sqlalchemy import (
@@ -8,7 +9,7 @@ from sqlalchemy import (
     select,
     true,
 )
-from sqlalchemy.orm.exc import (
+from sqlalchemy.exc import (
     MultipleResultsFound,
     NoResultFound,
 )

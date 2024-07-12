@@ -5,34 +5,38 @@ from typing import (
 
 from pydantic import (
     Field,
-    Required,
+    RootModel,
 )
 from typing_extensions import Literal
 
+from galaxy.schema import partial_model
 from galaxy.schema.fields import (
     DecodedDatabaseIdField,
     EncodedDatabaseIdField,
     ModelClassField,
 )
-from galaxy.schema.schema import Model
+from galaxy.schema.schema import (
+    Model,
+    WithModelClass,
+)
 
 GROUP_MODEL_CLASS = Literal["Group"]
 
 
-class GroupResponse(Model):
+class GroupResponse(Model, WithModelClass):
     """Response schema for a group."""
 
     model_class: GROUP_MODEL_CLASS = ModelClassField(GROUP_MODEL_CLASS)
     id: EncodedDatabaseIdField = Field(
-        Required,
+        ...,
         title="group ID",
     )
     name: str = Field(
-        Required,
+        ...,
         title="name of the group",
     )
     url: str = Field(
-        Required,
+        ...,
         title="URL for the group",
     )
     roles_url: Optional[str] = Field(
@@ -45,17 +49,17 @@ class GroupResponse(Model):
     )
 
 
-class GroupListResponse(Model):
+class GroupListResponse(RootModel):
     """Response schema for listing groups."""
 
-    __root__: List[GroupResponse]
+    root: List[GroupResponse]
 
 
 class GroupCreatePayload(Model):
     """Payload schema for creating a group."""
 
     name: str = Field(
-        Required,
+        ...,
         title="name of the group",
     )
     user_ids: List[DecodedDatabaseIdField] = Field(
@@ -66,3 +70,8 @@ class GroupCreatePayload(Model):
         [],
         title="role IDs",
     )
+
+
+@partial_model()
+class GroupUpdatePayload(GroupCreatePayload):
+    pass

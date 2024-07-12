@@ -1,25 +1,29 @@
 <script setup lang="ts">
 import { library } from "@fortawesome/fontawesome-svg-core";
 import { faCopy, faFile, faFolder } from "@fortawesome/free-regular-svg-icons";
-import { faExclamation, faLink, faUnlink } from "@fortawesome/free-solid-svg-icons";
+import { faCaretDown, faCaretUp, faExclamation, faLink, faUnlink } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { BButton, BButtonGroup, BFormCheckbox } from "bootstrap-vue";
+import { BAlert, BButton, BButtonGroup, BCollapse, BFormCheckbox, BTooltip } from "bootstrap-vue";
 import { computed, onMounted, type Ref, ref, watch } from "vue";
 
 import { getGalaxyInstance } from "@/app";
+import { useDatatypesMapper } from "@/composables/datatypesMapper";
+import { useUid } from "@/composables/utils/uid";
 import { type EventData, useEventStore } from "@/stores/eventStore";
+import { orList } from "@/utils/strings";
 
 import type { DataOption } from "./types";
 import { BATCH, SOURCE, VARIANTS } from "./variants";
 
+import FormSelection from "../FormSelection.vue";
 import FormSelect from "@/components/Form/Elements/FormSelect.vue";
 
-library.add(faCopy, faExclamation, faFile, faFolder, faLink, faUnlink);
+library.add(faCopy, faFile, faFolder, faCaretDown, faCaretUp, faExclamation, faLink, faUnlink);
 
-interface SelectOption {
+type SelectOption = {
     label: string;
     value: DataOption | null;
-}
+};
 
 const props = withDefaults(
     defineProps<{
@@ -32,6 +36,7 @@ const props = withDefaults(
         };
         extensions?: Array<string>;
         type?: string;
+        collectionTypes?: Array<string>;
         flavor?: string;
         tag?: string;
     }>(),
@@ -39,17 +44,19 @@ const props = withDefaults(
         loading: false,
         multiple: false,
         optional: false,
-        value: null,
+        value: undefined,
         extensions: () => [],
         type: "data",
-        flavor: null,
-        tag: null,
+        collectionTypes: undefined,
+        flavor: undefined,
+        tag: undefined,
     }
 );
 
 const eventStore = useEventStore();
+const { datatypesMapper } = useDatatypesMapper();
 
-const $emit = defineEmits(["input"]);
+const $emit = defineEmits(["input", "alert"]);
 
 // Determines wether values should be processed as linked or unlinked
 const currentLinked = ref(true);
@@ -99,14 +106,14 @@ const currentValue = computed({
                 return value;
             }
         }
-        if (!props.optional && formattedOptions.value.length > 0) {
+        if (!currentVariant.value?.multiple && !props.optional && formattedOptions.value.length > 0) {
             const firstEntry = formattedOptions.value && formattedOptions.value[0];
             if (firstEntry && firstEntry.value) {
                 value.push(firstEntry.value);
                 return value;
             }
         }
-        return null;
+        return undefined;
     },
     set: (val) => {
         if (val && Array.isArray(val) && val.length > 0) {
@@ -230,7 +237,7 @@ function clearHighlighting(timeout = 1000) {
 /**
  * Create final input element value
  */
-function createValue(val: Array<DataOption> | DataOption | null) {
+function createValue(val?: Array<DataOption> | DataOption | null) {
     if (val) {
         const values = Array.isArray(val) ? val : [val];
         if (variant.value && values.length > 0 && values[0]) {
@@ -299,6 +306,10 @@ function getSourceType(val: DataOption) {
 function handleIncoming(incoming: Record<string, unknown>, partial = true) {
     if (incoming) {
         const values = Array.isArray(incoming) ? incoming : [incoming];
+        const extensions = values.map((v) => v.extension || v.elements_datatypes).filter((v) => (v ? true : false));
+        if (!canAcceptDatatype(extensions)) {
+            return false;
+        }
         if (values.length > 0) {
             const incomingValues: Array<DataOption> = [];
             values.forEach((v) => {
@@ -308,14 +319,28 @@ function handleIncoming(incoming: Record<string, unknown>, partial = true) {
                 const newName = v.name ? v.name : newId;
                 const newSrc =
                     v.src || (v.history_content_type === "dataset_collection" ? SOURCE.COLLECTION : SOURCE.DATASET);
-                const newValue = {
+                const newValue: DataOption = {
                     id: newId,
                     src: newSrc,
+                    batch: false,
+                    map_over_type: undefined,
                     hid: newHid,
                     name: newName,
                     keep: true,
                     tags: [],
                 };
+                if (v.collection_type && props.collectionTypes?.length > 0) {
+                    if (!props.collectionTypes.includes(v.collection_type)) {
+                        const mapOverType = props.collectionTypes.find((collectionType) =>
+                            v.collection_type.endsWith(collectionType)
+                        );
+                        if (!mapOverType) {
+                            return false;
+                        }
+                        newValue["batch"] = true;
+                        newValue["map_over_type"] = mapOverType;
+                    }
+                }
                 // Verify that new value has corresponding option
                 const keepKey = `${newId}_${newSrc}`;
                 const existingOptions = props.options && props.options[newSrc];
@@ -346,6 +371,7 @@ function handleIncoming(incoming: Record<string, unknown>, partial = true) {
             }
         }
     }
+    return true;
 }
 
 /**
@@ -369,12 +395,36 @@ function onBrowse() {
     }
 }
 
-/**
- * Drag/Drop event handlers
- */
+function canAcceptDatatype(itemDatatypes: string | Array<string>) {
+    if (!(props.extensions?.length > 0)) {
+        return true;
+    }
+    let datatypes: Array<string>;
+    if (!Array.isArray(itemDatatypes)) {
+        datatypes = [itemDatatypes];
+    } else {
+        datatypes = itemDatatypes;
+    }
+    const incompatibleItem = datatypes.find(
+        (extension) => !datatypesMapper.value?.isSubTypeOfAny(extension, props.extensions)
+    );
+    if (incompatibleItem) {
+        return false;
+    }
+    return true;
+}
+
+// Drag/Drop event handlers
 function onDragEnter(evt: MouseEvent) {
     const eventData = eventStore.getDragData();
     if (eventData) {
+        const extensions = (eventData.extension as string) || (eventData.elements_datatypes as Array<string>);
+        if (!canAcceptDatatype(extensions)) {
+            currentHighlighting.value = "warning";
+            $emit("alert", `${extensions} is not an acceptable format for this parameter.`);
+        } else {
+            currentHighlighting.value = "success";
+        }
         dragTarget.value = evt.target;
         dragData.value = eventData;
     }
@@ -383,19 +433,24 @@ function onDragEnter(evt: MouseEvent) {
 function onDragLeave(evt: MouseEvent) {
     if (dragTarget.value === evt.target) {
         currentHighlighting.value = null;
-    }
-}
-
-function onDragOver() {
-    if (dragData.value !== null) {
-        currentHighlighting.value = "warning";
+        $emit("alert", undefined);
     }
 }
 
 function onDrop() {
     if (dragData.value) {
-        handleIncoming(dragData.value);
-        currentHighlighting.value = "success";
+        let accept = false;
+        if (eventStore.multipleDragData) {
+            accept = handleIncoming(Object.values(dragData.value) as any, false);
+        } else {
+            accept = handleIncoming(dragData.value);
+        }
+        if (accept) {
+            currentHighlighting.value = "success";
+        } else {
+            currentHighlighting.value = "warning";
+        }
+        $emit("alert", undefined);
         dragData.value = null;
         clearHighlighting();
     }
@@ -412,7 +467,10 @@ const matchedValues = computed(() => {
                 const options = props.options[entry.src] || [];
                 const option = options.find((v) => v.id === entry.id && v.src === entry.src);
                 if (option) {
-                    values.push({ ...option, name: option.name || entry.id });
+                    const accepted = !props.tag || option.tags?.includes(props.tag);
+                    if (accepted) {
+                        values.push({ ...option, name: option.name || entry.id });
+                    }
                 }
             }
         });
@@ -421,7 +479,7 @@ const matchedValues = computed(() => {
 });
 
 onMounted(() => {
-    if (props.value) {
+    if (props.value && matchedValues.value.length > 0) {
         $emit("input", createValue(matchedValues.value));
     } else {
         $emit("input", createValue(currentValue.value));
@@ -437,68 +495,143 @@ watch(
         $emit("input", createValue(currentValue.value));
     }
 );
+
+const formatsVisible = ref(false);
+const formatsButtonId = useUid("form-data-formats-");
+
+const warningListAmount = 4;
+const noOptionsWarningMessage = computed(() => {
+    if (!props.extensions || props.extensions.length === 0) {
+        return "No datasets available";
+    } else if (props.extensions.length <= warningListAmount) {
+        return `No ${orList(props.extensions)} datasets available`;
+    } else {
+        return "No compatible datasets available";
+    }
+});
 </script>
 
 <template>
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -->
     <div
+        class="form-data"
         :class="currentHighlighting && `ui-dragover-${currentHighlighting}`"
         @dragenter.prevent="onDragEnter"
         @dragleave.prevent="onDragLeave"
-        @dragover.prevent="onDragOver"
+        @dragover.prevent
         @drop.prevent="onDrop">
-        <div>
-            <div class="d-flex">
-                <BButtonGroup v-if="variant.length > 1" buttons class="align-self-start mr-2">
-                    <BButton
-                        v-for="(v, index) in variant"
-                        :key="index"
-                        v-b-tooltip.hover.bottom
-                        :pressed="currentField === index"
-                        :title="v.tooltip"
-                        @click="currentField = index">
-                        <FontAwesomeIcon :icon="['far', v.icon]" />
-                    </BButton>
-                    <BButton
-                        v-if="canBrowse"
-                        v-b-tooltip.hover.bottom
-                        title="Browse or Upload Datasets"
-                        @click="onBrowse">
-                        <FontAwesomeIcon v-if="loading" icon="fa-spinner" spin />
-                        <span v-else class="font-weight-bold">...</span>
-                    </BButton>
-                </BButtonGroup>
-                <FormSelect
-                    v-if="currentVariant"
-                    v-model="currentValue"
-                    :multiple="currentVariant.multiple"
-                    :optional="optional"
-                    :options="formattedOptions"
-                    :placeholder="`Select a ${placeholder}`" />
-            </div>
-            <div v-if="currentVariant.batch !== BATCH.DISABLED">
-                <BFormCheckbox
-                    v-if="currentVariant.batch === BATCH.ENABLED"
-                    v-model="currentLinked"
-                    class="no-highlight my-2"
-                    switch>
-                    <span v-if="currentLinked">
-                        <FontAwesomeIcon icon="fa-link" />
-                        <b v-localize class="mr-1">Linked:</b>
-                        <span v-localize>Datasets will be run in matched order with other datasets.</span>
-                    </span>
-                    <span v-else>
-                        <FontAwesomeIcon icon="fa-unlink" />
-                        <b v-localize class="mr-1">Unlinked:</b>
-                        <span v-localize>Dataset will be run against *all* other datasets.</span>
-                    </span>
-                </BFormCheckbox>
-                <div class="text-info my-2">
-                    <FontAwesomeIcon icon="fa-exclamation" />
-                    <span v-localize class="ml-1">
-                        This is a batch mode input field. Individual jobs will be triggered for each dataset.
-                    </span>
-                </div>
+        <div class="d-flex flex-column">
+            <BButtonGroup v-if="variant && variant.length > 1" buttons class="align-self-start">
+                <BButton
+                    v-for="(v, index) in variant"
+                    :key="index"
+                    v-b-tooltip.hover.bottom
+                    :pressed="currentField === index"
+                    :title="v.tooltip"
+                    @click="currentField = index">
+                    <FontAwesomeIcon :icon="['far', v.icon]" />
+                </BButton>
+                <BButton v-if="canBrowse" v-b-tooltip.hover.bottom title="Browse or Upload Datasets" @click="onBrowse">
+                    <FontAwesomeIcon v-if="loading" icon="fa-spinner" spin />
+                    <span v-else class="font-weight-bold">...</span>
+                </BButton>
+            </BButtonGroup>
+            <div v-if="extensions && extensions.length > 0">
+                <BButton :id="formatsButtonId" class="ui-link" @click="formatsVisible = !formatsVisible">
+                    accepted formats
+                    <FontAwesomeIcon v-if="formatsVisible" icon="fa-caret-up" />
+                    <FontAwesomeIcon v-else icon="fa-caret-down" />
+                </BButton>
+                <BCollapse v-model="formatsVisible">
+                    <ul class="pl-3 m-0">
+                        <li v-for="extension in extensions" :key="extension">{{ extension }}</li>
+                    </ul>
+                </BCollapse>
+                <BTooltip :target="formatsButtonId" noninteractive placement="bottom" triggers="hover">
+                    <div class="form-data-extensions-tooltip">
+                        <span v-for="extension in extensions" :key="extension">{{ extension }}</span>
+                    </div>
+                </BTooltip>
             </div>
         </div>
+
+        <FormSelect
+            v-if="currentVariant && !currentVariant.multiple"
+            v-model="currentValue"
+            class="align-self-start"
+            :multiple="currentVariant.multiple"
+            :optional="currentVariant.multiple || optional"
+            :options="formattedOptions"
+            :placeholder="`Select a ${placeholder}`">
+            <template v-slot:no-options>
+                <BAlert variant="warning" show>
+                    {{ noOptionsWarningMessage }}
+                </BAlert>
+            </template>
+        </FormSelect>
+        <FormSelection
+            v-else-if="currentVariant?.multiple"
+            v-model="currentValue"
+            :data="formattedOptions"
+            optional
+            multiple />
+
+        <template v-if="currentVariant && currentVariant.batch !== BATCH.DISABLED">
+            <BFormCheckbox
+                v-if="currentVariant.batch === BATCH.ENABLED"
+                v-model="currentLinked"
+                class="checkbox no-highlight"
+                switch>
+                <span v-if="currentLinked">
+                    <FontAwesomeIcon icon="fa-link" />
+                    <b v-localize class="mr-1">Linked:</b>
+                    <span v-localize>Datasets will be run in matched order with other datasets.</span>
+                </span>
+                <span v-else>
+                    <FontAwesomeIcon icon="fa-unlink" />
+                    <b v-localize class="mr-1">Unlinked:</b>
+                    <span v-localize>Dataset will be run against *all* other datasets.</span>
+                </span>
+            </BFormCheckbox>
+            <div class="info text-info">
+                <FontAwesomeIcon icon="fa-exclamation" />
+                <span v-localize class="ml-1">
+                    This is a batch mode input field. Individual jobs will be triggered for each dataset.
+                </span>
+            </div>
+        </template>
     </div>
 </template>
+
+<style scoped lang="scss">
+.form-data {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem;
+
+    .checkbox {
+        grid-column: span 2;
+    }
+
+    .info {
+        grid-column: span 2;
+    }
+}
+</style>
+
+<style lang="scss">
+.form-data-extensions-tooltip {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 0.25rem;
+    font-size: 0.8rem;
+
+    span::after {
+        content: ", ";
+    }
+
+    span:last-child::after {
+        content: none;
+    }
+}
+</style>

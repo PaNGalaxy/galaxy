@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
-import type { components } from "@/api/schema";
+import type { AnonymousUser, User } from "@/api";
 import { useUserLocalStorage } from "@/composables/userLocalStorage";
 import { useHistoryStore } from "@/stores/historyStore";
 import {
@@ -11,26 +11,12 @@ import {
     setCurrentThemeQuery,
 } from "@/stores/users/queries";
 
-type QuotaUsageResponse = components["schemas"]["UserQuotaUsage"];
-
-export interface User extends QuotaUsageResponse {
-    id: string;
-    email: string;
-    tags_used: string[];
-    isAnonymous: false;
-    is_admin?: boolean;
-}
-
-export interface AnonymousUser {
-    isAnonymous: true;
-}
-
-export type GenericUser = User | AnonymousUser;
-
 interface Preferences {
     theme: string;
     favorites: { tools: string[] };
 }
+
+type ListViewMode = "grid" | "list";
 
 export const useUserStore = defineStore("userStore", () => {
     const currentUser = ref<User | AnonymousUser | null>(null);
@@ -38,7 +24,7 @@ export const useUserStore = defineStore("userStore", () => {
 
     // explicitly pass current User, because userStore might not exist yet
     const toggledSideBar = useUserLocalStorage("user-store-toggled-side-bar", "tools", currentUser);
-    const showActivityBar = useUserLocalStorage("user-store-show-activity-bar", false, currentUser);
+    const preferredListViewMode = useUserLocalStorage("user-store-preferred-list-view-mode", "grid", currentUser);
 
     let loadPromise: Promise<void> | null = null;
 
@@ -47,6 +33,10 @@ export const useUserStore = defineStore("userStore", () => {
         currentPreferences.value = null;
         loadPromise = null;
     }
+
+    const isAdmin = computed(() => {
+        return currentUser.value?.is_admin ?? false;
+    });
 
     const isAnonymous = computed(() => {
         return !("email" in (currentUser.value || []));
@@ -80,7 +70,6 @@ export const useUserStore = defineStore("userStore", () => {
                     }
                     if (includeHistories) {
                         const historyStore = useHistoryStore();
-                        await historyStore.loadCurrentHistory();
                         // load first few histories for user to start pagination
                         await historyStore.loadHistories();
                     }
@@ -125,8 +114,8 @@ export const useUserStore = defineStore("userStore", () => {
         }
     }
 
-    function toggleActivityBar() {
-        showActivityBar.value = !showActivityBar.value;
+    function setPreferredListViewMode(view: ListViewMode) {
+        preferredListViewMode.value = view;
     }
 
     function toggleSideBar(currentOpen = "") {
@@ -136,17 +125,18 @@ export const useUserStore = defineStore("userStore", () => {
     return {
         currentUser,
         currentPreferences,
+        isAdmin,
         isAnonymous,
         currentTheme,
         currentFavorites,
-        showActivityBar,
         toggledSideBar,
+        preferredListViewMode,
         loadUser,
         setCurrentUser,
         setCurrentTheme,
+        setPreferredListViewMode,
         addFavoriteTool,
         removeFavoriteTool,
-        toggleActivityBar,
         toggleSideBar,
         $reset,
     };

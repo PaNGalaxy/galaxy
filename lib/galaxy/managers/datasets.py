@@ -1,6 +1,7 @@
 """
 Manager and Serializer for Datasets.
 """
+
 import glob
 import logging
 import os
@@ -60,6 +61,8 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
         self.permissions = DatasetRBACPermissions(app)
         # needed for admin test
         self.user_manager = users.UserManager(app)
+        self.quota_agent = app.quota_agent
+        self.security_agent = app.model.security_agent
 
     def create(self, manage_roles=None, access_roles=None, flush=True, **kwargs):
         """
@@ -109,8 +112,8 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
         self.error_unless_dataset_purge_allowed()
         with self.session().begin():
             for dataset_id in request.dataset_ids:
-                dataset: Dataset = self.session().get(Dataset, dataset_id)
-                if dataset.user_can_purge:
+                dataset: Optional[Dataset] = self.session().get(Dataset, dataset_id)
+                if dataset and dataset.user_can_purge:
                     try:
                         dataset.full_delete(user)
                     except Exception:
@@ -143,6 +146,35 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
         roles = user.all_roles_exploiting_cache() if user else []
         return self.app.security_agent.can_access_dataset(roles, dataset)
 
+    def update_object_store_id(self, trans, dataset, object_store_id: str):
+        device_source_map = self.app.object_store.get_device_source_map()
+        old_object_store_id = dataset.object_store_id
+        new_object_store_id = object_store_id
+        if old_object_store_id == new_object_store_id:
+            return None
+        old_device_id = device_source_map.get_device_id(old_object_store_id)
+        new_device_id = device_source_map.get_device_id(new_object_store_id)
+        if old_device_id != new_device_id:
+            raise exceptions.RequestParameterInvalidException(
+                "Cannot swap object store IDs for object stores that don't share a device ID."
+            )
+
+        if not self.security_agent.can_change_object_store_id(trans.user, dataset):
+            # TODO: probably want separate exceptions for doesn't own the dataset and dataset
+            # has been shared.
+            raise exceptions.InsufficientPermissionsException("Cannot change dataset permissions...")
+
+        if quota_source_map := self.app.object_store.get_quota_source_map():
+            old_label = quota_source_map.get_quota_source_label(old_object_store_id)
+            new_label = quota_source_map.get_quota_source_label(new_object_store_id)
+            if old_label != new_label:
+                self.quota_agent.relabel_quota_for_dataset(dataset, old_label, new_label)
+        sa_session = self.app.model.context
+        with transaction(sa_session):
+            dataset.object_store_id = new_object_store_id
+            sa_session.add(dataset)
+            sa_session.commit()
+
     def compute_hash(self, request: ComputeDatasetHashTaskRequest):
         # For files in extra_files_path
         dataset = self.by_id(request.dataset_id)
@@ -156,7 +188,7 @@ class DatasetManager(base.ModelManager[model.Dataset], secured.AccessibleManager
         calculated_hash_value = memory_bound_hexdigest(hash_func_name=hash_function, path=file_path)
         extra_files_path = request.extra_files_path
         dataset_hash = model.DatasetHash(
-            hash_function=hash_function.value,
+            hash_function=hash_function,
             hash_value=calculated_hash_value,
             extra_files_path=extra_files_path,
         )
@@ -455,6 +487,25 @@ class DatasetAssociationManager(
             rval["modify_item_roles"] = modify_item_role_list
         return rval
 
+    def ensure_dataset_on_disk(self, trans, dataset):
+        # Not a guarantee data is really present, but excludes a lot of expected cases
+        if dataset.purged or dataset.dataset.purged:
+            raise exceptions.ItemDeletionException("The dataset you are attempting to view has been purged.")
+        elif dataset.deleted and not (trans.user_is_admin or self.is_owner(dataset, trans.get_user())):
+            raise exceptions.ItemDeletionException("The dataset you are attempting to view has been deleted.")
+        elif dataset.state == Dataset.states.UPLOAD:
+            raise exceptions.Conflict("Please wait until this dataset finishes uploading before attempting to view it.")
+        elif dataset.state == Dataset.states.DISCARDED:
+            raise exceptions.ItemDeletionException("The dataset you are attempting to view has been discarded.")
+        elif dataset.state == Dataset.states.DEFERRED:
+            raise exceptions.Conflict(
+                "The dataset you are attempting to view has deferred data. You can only use this dataset as input for jobs."
+            )
+        elif dataset.state == Dataset.states.PAUSED:
+            raise exceptions.Conflict(
+                "The dataset you are attempting to view is in paused state. One of the inputs for the job that creates this dataset has failed."
+            )
+
     def ensure_can_change_datatype(self, dataset: model.DatasetInstance, raiseException: bool = True) -> bool:
         if not dataset.datatype.is_datatype_change_allowed():
             if not raiseException:
@@ -607,7 +658,8 @@ class _UnflattenedMetadataDatasetAssociationSerializer(base.ModelSerializer[T], 
             # 'extended_metadata': self.serialize_extended_metadata,
             # 'extended_metadata_id': self.serialize_id,
             # remapped
-            "genome_build": lambda item, key, **context: item.dbkey,
+            # TODO: Replace string cast with https://github.com/pydantic/pydantic/pull/9137 on 24.1
+            "genome_build": lambda item, key, **context: str(item.dbkey) if item.dbkey is not None else None,
             # derived (not mapped) attributes
             "data_type": lambda item, key, **context: f"{item.datatype.__class__.__module__}.{item.datatype.__class__.__name__}",
             "converted": self.serialize_converted_datasets,

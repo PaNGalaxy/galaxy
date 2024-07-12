@@ -39,12 +39,12 @@ from galaxy.schema.tasks import (
     WriteHistoryTo,
     WriteInvocationTo,
 )
-from galaxy.structured_app import MinimalManagerApp
-from galaxy.version import VERSION
-from galaxy.web.short_term_storage import (
+from galaxy.short_term_storage import (
     ShortTermStorageMonitor,
     storage_context,
 )
+from galaxy.structured_app import MinimalManagerApp
+from galaxy.version import VERSION
 
 
 class ModelStoreUserContext(ProvidesUserContext):
@@ -96,10 +96,12 @@ class ModelStoreManager:
         store_directory = request.store_directory
 
         history = self._sa_session.get(model.History, history_id)
+        assert history
         # symlink files on export, on worker files will tarred up in a dereferenced manner.
         with DirectoryModelExportStore(store_directory, app=self._app, export_files="symlink") as export_store:
             export_store.export_history(history, include_hidden=include_hidden, include_deleted=include_deleted)
         job = self._sa_session.get(model.Job, job_id)
+        assert job
         job.state = model.Job.states.NEW
         with transaction(self._sa_session):
             self._sa_session.commit()
@@ -233,7 +235,7 @@ class ModelStoreManager:
     ) -> Optional[ExportObjectMetadata]:
         if request.export_association_id is None:
             return None
-        request_dict = request.dict()
+        request_dict = request.model_dump()
         request_payload = (
             WriteStoreToPayload(**request_dict)
             if isinstance(request, WriteHistoryTo)
@@ -265,8 +267,7 @@ class ModelStoreManager:
         import_options = ImportOptions(
             allow_library_creation=request.for_library,
         )
-        history_id = request.history_id
-        if history_id:
+        if history_id := request.history_id:
             history = self._sa_session.get(model.History, history_id)
         else:
             history = None

@@ -338,10 +338,10 @@ class Data(metaclass=DataMeta):
 
     def display_peek(self, dataset: DatasetProtocol) -> str:
         """Create HTML table, used for displaying peek"""
+        if not dataset.peek:
+            return "Peek not available"
         out = ['<table cellspacing="0" cellpadding="3">']
         try:
-            if not dataset.peek:
-                dataset.set_peek()
             data = dataset.peek
             lines = data.splitlines()
             for line in lines:
@@ -427,9 +427,9 @@ class Data(metaclass=DataMeta):
         self, dataset: DatasetHasHidProtocol, to_ext: Optional[str], headers: Headers, **kwd
     ) -> Tuple[IO, Headers]:
         headers["Content-Length"] = str(os.stat(dataset.get_file_name()).st_size)
-        headers[
-            "content-type"
-        ] = "application/octet-stream"  # force octet-stream so Safari doesn't append mime extensions to filename
+        headers["content-type"] = (
+            "application/octet-stream"  # force octet-stream so Safari doesn't append mime extensions to filename
+        )
         filename = self._download_filename(
             dataset,
             to_ext,
@@ -479,9 +479,9 @@ class Data(metaclass=DataMeta):
                 element_identifier=kwd.get("element_identifier"),
                 filename_pattern=kwd.get("filename_pattern"),
             )
-            headers[
-                "content-type"
-            ] = "application/octet-stream"  # force octet-stream so Safari doesn't append mime extensions to filename
+            headers["content-type"] = (
+                "application/octet-stream"  # force octet-stream so Safari doesn't append mime extensions to filename
+            )
             headers["Content-Disposition"] = f'attachment; filename="{filename}"'
             return open(data.get_file_name(user=trans.user), "rb"), headers
 
@@ -848,7 +848,11 @@ class Data(metaclass=DataMeta):
         # Make the target datatype available to the converter
         params["__target_datatype__"] = target_type
         # Run converter, job is dispatched through Queue
-        job, converted_datasets, *_ = converter.execute(trans, incoming=params, set_output_hid=visible, history=history)
+        job, converted_datasets, *_ = converter.execute(
+            trans, incoming=params, set_output_hid=visible, history=history, flush_job=False
+        )
+        for converted_dataset in converted_datasets.values():
+            original_dataset.attach_implicitly_converted_dataset(trans.sa_session, converted_dataset, target_type)
         trans.app.job_manager.enqueue(job, tool=converter)
         if len(params) > 0:
             trans.log_event(f"Converter params: {str(params)}", tool_id=converter.id)
@@ -1051,7 +1055,7 @@ class Text(Data):
             sample_lines = dataset_read.count("\n")
             return int(sample_lines * (float(dataset.get_size()) / float(sample_size)))
         except UnicodeDecodeError:
-            log.error(f"Unable to estimate lines in file {dataset.get_file_name()}")
+            log.warning(f"Unable to estimate lines in file {dataset.get_file_name()}, likely not a text file.")
             return None
 
     def count_data_lines(self, dataset: HasFileName) -> Optional[int]:
@@ -1071,7 +1075,7 @@ class Text(Data):
                     if line and not line.startswith("#"):
                         data_lines += 1
             except UnicodeDecodeError:
-                log.error(f"Unable to count lines in file {dataset.get_file_name()}")
+                log.warning(f"Unable to count lines in file {dataset.get_file_name()}, likely not a text file.")
                 return None
         return data_lines
 
@@ -1106,7 +1110,7 @@ class Text(Data):
                     else:
                         est_lines = self.estimate_file_lines(dataset)
                         if est_lines is not None:
-                            dataset.blurb = f"~{util.commaify(util.roundify(str(est_lines)))} {inflector.cond_plural(est_lines, self.line_class)}"
+                            dataset.blurb = f"~{util.shorten_with_metric_prefix(est_lines)} {inflector.cond_plural(est_lines, self.line_class)}"
                         else:
                             dataset.blurb = "Error: Cannot estimate lines in dataset"
             else:
@@ -1116,7 +1120,7 @@ class Text(Data):
             dataset.blurb = "file purged from disk"
 
     @classmethod
-    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Dict) -> None:
+    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Optional[Dict]) -> None:
         """
         Split the input files by line.
         """

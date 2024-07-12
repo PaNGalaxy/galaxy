@@ -70,7 +70,7 @@ describe("watchHistory", () => {
             .replyOnce(200, historyData)
             .onGet(/api\/histories\/history-id\/contents?.*/)
             .replyOnce(200, historyItems);
-        await watchHistoryOnce(wrapper.vm.$store);
+        await watchHistoryOnce();
         expect(wrapper.vm.getHistoryItems("history-id", "").length).toBe(2);
         expect(wrapper.vm.getHistoryItems("history-id", "second")[0].hid).toBe(2);
         expect(wrapper.vm.getHistoryItems("history-id", "state:ok")[0].hid).toBe(1);
@@ -86,14 +86,14 @@ describe("watchHistory", () => {
             .onGet(`/history/current_history_json`)
             .replyOnce(500);
 
-        await watchHistoryOnce(wrapper.vm.$store);
+        await watchHistoryOnce();
         expect(wrapper.vm.currentHistoryId).toBe("history-id");
         expect(wrapper.vm.getHistoryItems("history-id", "").length).toBe(2);
         try {
-            await watchHistoryOnce(wrapper.vm.$store);
+            await watchHistoryOnce();
         } catch (error) {
             console.log(error);
-            expect(error.response.status).toBe(500);
+            expect(error.message).toContain("500");
         }
         // Need to reset axios mock here. Smells like a bug,
         // maybe in axios-mock-adapter, maybe on our side
@@ -113,7 +113,7 @@ describe("watchHistory", () => {
                     history_id: "history-id",
                 },
             ]);
-        await watchHistoryOnce(wrapper.vm.$store);
+        await watchHistoryOnce();
         // We should have received the update and have 3 items in the history
         expect(wrapper.vm.getHistoryItems("history-id", "").length).toBe(3);
     });

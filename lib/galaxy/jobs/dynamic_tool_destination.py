@@ -1647,14 +1647,14 @@ def get_destination_list_from_job_config(job_config_location) -> set:
 
         # Add all destination IDs from the job configuration xml file
         for destination in job_conf.getroot().iter("destination"):
-            if isinstance(destination.get("id"), str):
-                destination_list.add(destination.get("id"))
-
+            destination_id = destination.get("id")
+            if destination_id:
+                destination_list.add(destination_id)
             else:
                 error = f"Destination ID '{str(destination)}"
                 error += "' in job configuration file cannot be"
                 error += " parsed. Things may not work as expected!"
-                log.debug(error)
+                log.warning(error)
 
     return destination_list
 
@@ -1773,11 +1773,13 @@ if __name__ == "__main__":
         "--check-config",
         dest="check_config",
         nargs="?",
-        help="Use this option to validate tool_destinations.yml."
-        + " Optionally, provide the path to the tool_destinations.yml"
-        + " that you would like to check, and/or the path to the related"
-        + " job_conf.xml. Default: galaxy/config/tool_destinations.yml"
-        + "and galaxy/config/job_conf.xml",
+        help=(
+            "Use this option to validate tool_destinations.yml."
+            " Optionally, provide the path to the tool_destinations.yml"
+            " that you would like to check, and/or the path to the related"
+            " job_conf.xml. Default: galaxy/config/tool_destinations.yml"
+            "and galaxy/config/job_conf.xml"
+        ),
     )
 
     parser.add_argument("-j", "--job-config", dest="job_config")

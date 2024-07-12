@@ -6,17 +6,19 @@ import { type EventData } from "@/stores/eventStore";
 
 export const Activities = [
     {
+        anonymous: false,
         description: "Displays currently active interactive tools (ITs), if these are enabled by the administrator.",
         icon: "fa-laptop",
         id: "interactivetools",
         mutable: false,
-        optional: true,
+        optional: false,
         title: "Interactive Tools",
         tooltip: "Show active interactive tools",
         to: "/interactivetool_entry_points/list",
         visible: true,
     },
     {
+        anonymous: true,
         description: "Opens a data dialog, allowing uploads from URL, pasted content or disk.",
         icon: "upload",
         id: "upload",
@@ -28,6 +30,7 @@ export const Activities = [
         visible: true,
     },
     {
+        anonymous: true,
         description: "Displays the tool panel to search and access all available tools.",
         icon: "wrench",
         id: "tools",
@@ -39,6 +42,7 @@ export const Activities = [
         visible: true,
     },
     {
+        anonymous: false,
         description: "Displays a panel to search and access workflows.",
         icon: "sitemap",
         id: "workflows",
@@ -50,6 +54,7 @@ export const Activities = [
         visible: true,
     },
     {
+        anonymous: false,
         description: "Displays all workflow runs.",
         icon: "fa-list",
         id: "invocation",
@@ -57,21 +62,23 @@ export const Activities = [
         optional: true,
         title: "Workflow Invocations",
         tooltip: "Show all workflow runs",
-        to: "/workflows/invocations",
+        to: null,
         visible: true,
     },
     {
+        anonymous: false,
         description: "Displays the list of available visualizations.",
         icon: "chart-bar",
         id: "visualizations",
         mutable: false,
         optional: true,
-        title: "Visualize",
-        to: "/visualizations",
+        title: "Visualization",
+        to: null,
         tooltip: "Visualize datasets",
         visible: true,
     },
     {
+        anonymous: false,
         description: "Displays the list of all histories.",
         icon: "fa-hdd",
         id: "histories",
@@ -83,6 +90,19 @@ export const Activities = [
         visible: true,
     },
     {
+        anonymous: false,
+        description: "Displays the history selector panel and opens History Multiview in the center panel.",
+        icon: "fa-columns",
+        id: "multiview",
+        mutable: false,
+        optional: true,
+        title: "History Multiview",
+        tooltip: "Select histories to show in History Multiview",
+        to: "/histories/view_multiple",
+        visible: true,
+    },
+    {
+        anonymous: false,
         description: "Displays all of your datasets across all histories.",
         icon: "fa-folder",
         id: "datasets",
@@ -91,13 +111,26 @@ export const Activities = [
         title: "Datasets",
         tooltip: "Show all datasets",
         to: "/datasets/list",
-        visible: false,
+        visible: true,
+    },
+    {
+        anonymous: false,
+        description: "Display and create new Pages.",
+        icon: "fa-file-contract",
+        id: "pages",
+        mutable: false,
+        optional: true,
+        title: "Pages",
+        tooltip: "Show all pages",
+        to: "/pages/list",
+        visible: true,
     },
 ];
 
 export function convertDropData(data: EventData): Activity | null {
     if (data.history_content_type === "dataset") {
         return {
+            anonymous: true,
             description: "Displays this dataset.",
             icon: "fa-file",
             id: `dataset-${data.id}`,
@@ -111,6 +144,7 @@ export function convertDropData(data: EventData): Activity | null {
     }
     if (data.model_class === "StoredWorkflow") {
         return {
+            anonymous: false,
             description: data.description as string,
             icon: "fa-play",
             id: `workflow-${data.id}`,

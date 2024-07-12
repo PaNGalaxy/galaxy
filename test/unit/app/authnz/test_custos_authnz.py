@@ -6,6 +6,7 @@ from datetime import (
     datetime,
     timedelta,
 )
+from typing import Optional
 from unittest import SkipTest
 from urllib.parse import (
     parse_qs,
@@ -14,7 +15,6 @@ from urllib.parse import (
 )
 
 import jwt
-import requests
 
 from galaxy.app_unittest_utils.galaxy_mock import MockTrans
 from galaxy.authnz import custos_authnz
@@ -22,7 +22,10 @@ from galaxy.model import (
     CustosAuthnzToken,
     User,
 )
-from galaxy.util import unicodify
+from galaxy.util import (
+    requests,
+    unicodify,
+)
 from galaxy.util.unittest import TestCase
 
 
@@ -189,7 +192,7 @@ class TestCustosAuthnz(TestCase):
         class Query:
             external_user_id = None
             provider = None
-            custos_authnz_token = None
+            custos_authnz_token: Optional[CustosAuthnzToken] = None
 
             def filter_by(self, email=None, external_user_id=None, provider=None, username=None):
                 self.external_user_id = external_user_id

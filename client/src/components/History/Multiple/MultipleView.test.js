@@ -1,7 +1,6 @@
 import { mount } from "@vue/test-utils";
 import axios from "axios";
 import MockAdapter from "axios-mock-adapter";
-import MockUserHistories from "components/providers/MockUserHistories";
 import flushPromises from "flush-promises";
 import { createPinia } from "pinia";
 import { useHistoryStore } from "stores/historyStore";
@@ -10,55 +9,83 @@ import { getLocalVue } from "tests/jest/helpers";
 
 import MultipleView from "./MultipleView";
 
-const COUNT = 8;
 const USER_ID = "test-user-id";
-const CURRENT_HISTORY_ID = "test-history-id-0";
-
-const pinia = createPinia();
+const FIRST_HISTORY_ID = "test-history-id-0";
 
 const getFakeHistorySummaries = (num, selectedIndex) => {
     return Array.from({ length: num }, (_, index) => ({
-        id: selectedIndex === index ? CURRENT_HISTORY_ID : `test-history-id-${index}`,
+        id: `test-history-id-${index}`,
         name: `History-${index}`,
         tags: [],
         update_time: new Date().toISOString(),
     }));
 };
 const currentUser = { id: USER_ID };
-const UserHistoriesMock = MockUserHistories({ id: CURRENT_HISTORY_ID }, getFakeHistorySummaries(COUNT, 0), false);
-
-const localVue = getLocalVue();
 
 describe("MultipleView", () => {
-    let wrapper;
     let axiosMock;
 
-    beforeEach(async () => {
+    beforeEach(() => {
         axiosMock = new MockAdapter(axios);
-        wrapper = mount(MultipleView, {
-            pinia,
-            stubs: {
-                UserHistories: UserHistoriesMock,
-                HistoryPanel: true,
-            },
-            localVue,
-        });
-
-        const userStore = useUserStore();
-        userStore.currentUser = currentUser;
-
-        const historyStore = useHistoryStore();
-        historyStore.setHistories(getFakeHistorySummaries(COUNT, 0));
-        historyStore.setCurrentHistoryId(CURRENT_HISTORY_ID);
-
-        await flushPromises();
     });
 
     afterEach(() => {
         axiosMock.reset();
     });
 
-    it("should show the current history", async () => {
+    async function setUpWrapper(count, currentHistoryId) {
+        const fakeSummaries = getFakeHistorySummaries(count, 0);
+        for (const summary of fakeSummaries) {
+            axiosMock.onGet(`api/histories/${summary.id}`).reply(200, summary);
+        }
+        const wrapper = mount(MultipleView, {
+            pinia: createPinia(),
+            stubs: {
+                HistoryPanel: true,
+                icon: { template: "<div></div>" },
+            },
+            localVue: getLocalVue(),
+        });
+
+        const userStore = useUserStore();
+        userStore.currentUser = currentUser;
+
+        const historyStore = useHistoryStore();
+        historyStore.setHistories(fakeSummaries);
+        historyStore.setCurrentHistoryId(currentHistoryId);
+
+        await flushPromises();
+
+        return wrapper;
+    }
+
+    it("more than 4 histories should not show the current history", async () => {
+        const count = 8;
+        const currentHistoryId = FIRST_HISTORY_ID;
+
+        // Set up UserHistories and wrapper
+        const wrapper = await setUpWrapper(count, currentHistoryId);
+
+        console.log(wrapper.html());
+
+        // Test: current (first) history should not be shown because only 4 latest are shown by default
+        expect(wrapper.find("button[title='Current History']").exists()).toBeFalsy();
+
+        expect(wrapper.find("button[title='Switch to this history']").exists()).toBeTruthy();
+
+        expect(wrapper.find("div[title='Currently showing 4 most recently updated histories']").exists()).toBeTruthy();
+
+        expect(wrapper.find("[data-description='open select histories modal']").exists()).toBeTruthy();
+    });
+
+    it("less than 4 histories should show the current history", async () => {
+        const count = 3;
+        const currentHistoryId = FIRST_HISTORY_ID;
+
+        // Set up UserHistories and wrapper
+        const wrapper = await setUpWrapper(count, currentHistoryId);
+
+        // Test: current (first) history should be shown because only 4 latest are shown by default, and count = 3
         expect(wrapper.find("button[title='Current History']").exists()).toBeTruthy();
     });
 });

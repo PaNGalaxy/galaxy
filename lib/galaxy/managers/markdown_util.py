@@ -10,6 +10,7 @@ potential history flavor would allow objects to be referenced by HID. This
 second idea is unimplemented, it is just an example of the general concept of
 context specific processing.
 """
+
 import abc
 import base64
 import codecs
@@ -46,17 +47,18 @@ from galaxy.managers.jobs import (
     summarize_job_parameters,
 )
 from galaxy.managers.licenses import LicensesManager
+from galaxy.model import Job
 from galaxy.model.item_attrs import get_item_annotation_str
 from galaxy.model.orm.now import now
 from galaxy.schema import PdfDocumentType
 from galaxy.schema.tasks import GeneratePdfDownload
-from galaxy.util.markdown import literal_via_fence
-from galaxy.util.resources import resource_string
-from galaxy.util.sanitize_html import sanitize_html
-from galaxy.web.short_term_storage import (
+from galaxy.short_term_storage import (
     ShortTermStorageMonitor,
     storage_context,
 )
+from galaxy.util.markdown import literal_via_fence
+from galaxy.util.resources import resource_string
+from galaxy.util.sanitize_html import sanitize_html
 from .markdown_parse import (
     GALAXY_MARKDOWN_FUNCTION_CALL_LINE,
     validate_galaxy_markdown,
@@ -65,17 +67,17 @@ from .markdown_parse import (
 log = logging.getLogger(__name__)
 
 ARG_VAL_CAPTURED_REGEX = r"""(?:([\w_\-\|]+)|\"([^\"]+)\"|\'([^\']+)\')"""
-OUTPUT_LABEL_PATTERN = re.compile(r"output=\s*%s\s*" % ARG_VAL_CAPTURED_REGEX)
-INPUT_LABEL_PATTERN = re.compile(r"input=\s*%s\s*" % ARG_VAL_CAPTURED_REGEX)
-STEP_LABEL_PATTERN = re.compile(r"step=\s*%s\s*" % ARG_VAL_CAPTURED_REGEX)
-PATH_LABEL_PATTERN = re.compile(r"path=\s*%s\s*" % ARG_VAL_CAPTURED_REGEX)
-SIZE_PATTERN = re.compile(r"size=\s*%s\s*" % ARG_VAL_CAPTURED_REGEX)
+OUTPUT_LABEL_PATTERN = re.compile(rf"output=\s*{ARG_VAL_CAPTURED_REGEX}\s*")
+INPUT_LABEL_PATTERN = re.compile(rf"input=\s*{ARG_VAL_CAPTURED_REGEX}\s*")
+STEP_LABEL_PATTERN = re.compile(rf"step=\s*{ARG_VAL_CAPTURED_REGEX}\s*")
+PATH_LABEL_PATTERN = re.compile(rf"path=\s*{ARG_VAL_CAPTURED_REGEX}\s*")
+SIZE_PATTERN = re.compile(rf"size=\s*{ARG_VAL_CAPTURED_REGEX}\s*")
 # STEP_OUTPUT_LABEL_PATTERN = re.compile(r'step_output=([\w_\-]+)/([\w_\-]+)')
 UNENCODED_ID_PATTERN = re.compile(
-    r"(history_id|workflow_id|history_dataset_id|history_dataset_collection_id|job_id|invocation_id)=([\d]+)"
+    r"(history_id|workflow_id|history_dataset_id|history_dataset_collection_id|job_id|implicit_collection_jobs_id|invocation_id)=([\d]+)"
 )
 ENCODED_ID_PATTERN = re.compile(
-    r"(history_id|workflow_id|history_dataset_id|history_dataset_collection_id|job_id|invocation_id)=([a-z0-9]+)"
+    r"(history_id|workflow_id|history_dataset_id|history_dataset_collection_id|job_id|implicit_collection_jobs_id|invocation_id)=([a-z0-9]+)"
 )
 INVOCATION_SECTION_MARKDOWN_CONTAINER_LINE_PATTERN = re.compile(r"```\s*galaxy\s*")
 GALAXY_FENCED_BLOCK = re.compile(r"^```\s*galaxy\s*(.*?)^```", re.MULTILINE ^ re.DOTALL)
@@ -88,9 +90,8 @@ def ready_galaxy_markdown_for_import(trans, external_galaxy_markdown):
     _validate(external_galaxy_markdown, internal=False)
 
     def _remap(container, line):
-        id_match = re.search(ENCODED_ID_PATTERN, line)
         object_id = None
-        if id_match:
+        if id_match := re.search(ENCODED_ID_PATTERN, line):
             object_id = id_match.group(2)
             decoded_id = trans.security.decode_id(object_id)
             line = line.replace(id_match.group(), "%s=%d" % (id_match.group(1), decoded_id))
@@ -138,6 +139,10 @@ class GalaxyInternalMarkdownDirectiveHandler(metaclass=abc.ABCMeta):
                 _check_object(object_id, line)
                 hda = hda_manager.get_accessible(object_id, trans.user)
                 rval = self.handle_dataset_as_image(line, hda)
+            elif container == "history_dataset_as_table":
+                _check_object(object_id, line)
+                hda = hda_manager.get_accessible(object_id, trans.user)
+                rval = self.handle_dataset_as_table(line, hda)
             elif container == "history_dataset_peek":
                 _check_object(object_id, line)
                 hda = hda_manager.get_accessible(object_id, trans.user)
@@ -232,10 +237,9 @@ class GalaxyInternalMarkdownDirectiveHandler(metaclass=abc.ABCMeta):
         return export_markdown
 
     def _encode_line(self, trans, line):
-        id_match = re.search(UNENCODED_ID_PATTERN, line)
         object_id = None
         encoded_id = None
-        if id_match:
+        if id_match := re.search(UNENCODED_ID_PATTERN, line):
             object_id = int(id_match.group(2))
             encoded_id = trans.security.encode_id(object_id)
             line = line.replace(id_match.group(), f"{id_match.group(1)}={encoded_id}")
@@ -251,6 +255,10 @@ class GalaxyInternalMarkdownDirectiveHandler(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def handle_dataset_as_image(self, line, hda):
+        pass
+
+    @abc.abstractmethod
+    def handle_dataset_as_table(self, line, hda):
         pass
 
     @abc.abstractmethod
@@ -413,6 +421,9 @@ class ReadyForExportMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHand
     def handle_dataset_as_image(self, line, hda):
         pass
 
+    def handle_dataset_as_table(self, line, hda):
+        pass
+
     def handle_job_metrics(self, line, job):
         pass
 
@@ -524,9 +535,8 @@ class ToBasicMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHandler):
     def handle_dataset_as_image(self, line, hda):
         dataset = hda.dataset
         name = hda.name or ""
-        path_match = re.search(PATH_LABEL_PATTERN, line)
 
-        if path_match:
+        if path_match := re.search(PATH_LABEL_PATTERN, line):
             filepath = path_match.group(2)
             file = os.path.join(hda.extra_files_path, filepath)
         else:
@@ -540,6 +550,14 @@ class ToBasicMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHandler):
     def _embed_image(self, name: str, image_type: str, image_data: bytes):
         base64_image_data = base64.b64encode(image_data).decode("utf-8")
         return f"![{name}](data:image/{image_type};base64,{base64_image_data})"
+
+    def handle_dataset_as_table(self, line, hda):
+        # TODO: this form of the rendering doesn't do anything special with advanced
+        # options yet but could easily be modified in the future. show_column_headers,
+        # compact, title, and footer should be handled in here to bring the PDF and the
+        # web rendering closer.
+        rval = self.handle_dataset_embedded(line, hda)
+        return rval
 
     def handle_history_link(self, line, history):
         if history:
@@ -581,9 +599,8 @@ class ToBasicMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHandler):
     def handle_workflow_license(self, line, stored_workflow):
         # workflow_manager = self.trans.app.workflow_manager
         license_manager = LicensesManager()
-        license_id = stored_workflow.latest_workflow.license
         markdown = "*No license specified.*"
-        if license_id:
+        if license_id := stored_workflow.latest_workflow.license:
             try:
                 license_metadata = license_manager.get_license_by_id(license_id)
                 markdown = f"[{license_metadata.name}]({license_metadata.url})"
@@ -640,7 +657,7 @@ class ToBasicMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHandler):
                 markdown += f"| {title} | {value} |\n"
         return (markdown, True)
 
-    def handle_job_parameters(self, line, job):
+    def handle_job_parameters(self, line, job: Job):
         markdown = """
 | Input Parameter | Value |
 |-----------------|-------|
@@ -832,42 +849,34 @@ def resolve_invocation_markdown(trans, invocation, workflow_markdown):
                     continue
 
                 if output_assoc.history_content_type == "dataset":
-                    section_markdown += """#### Output Dataset: {}
+                    section_markdown += f"""#### Output Dataset: {output_assoc.workflow_output.label}
 ```galaxy
-history_dataset_display(output="{}")
+history_dataset_display(output="{output_assoc.workflow_output.label}")
 ```
-""".format(
-                        output_assoc.workflow_output.label, output_assoc.workflow_output.label
-                    )
+"""
                 else:
-                    section_markdown += """#### Output Dataset Collection: {}
+                    section_markdown += f"""#### Output Dataset Collection: {output_assoc.workflow_output.label}
 ```galaxy
-history_dataset_collection_display(output="{}")
+history_dataset_collection_display(output="{output_assoc.workflow_output.label}")
 ```
-""".format(
-                        output_assoc.workflow_output.label, output_assoc.workflow_output.label
-                    )
+"""
         elif container == "invocation_inputs":
             for input_assoc in invocation.input_associations:
                 if not input_assoc.workflow_step.label:
                     continue
 
                 if input_assoc.history_content_type == "dataset":
-                    section_markdown += """#### Input Dataset: {}
+                    section_markdown += f"""#### Input Dataset: {input_assoc.workflow_step.label}
 ```galaxy
-history_dataset_display(input="{}")
+history_dataset_display(input="{input_assoc.workflow_step.label}")
 ```
-""".format(
-                        input_assoc.workflow_step.label, input_assoc.workflow_step.label
-                    )
+"""
                 else:
-                    section_markdown += """#### Input Dataset Collection: {}
+                    section_markdown += f"""#### Input Dataset Collection: {input_assoc.workflow_step.label}
 ```galaxy
-history_dataset_collection_display(input={})
+history_dataset_collection_display(input={input_assoc.workflow_step.label})
 ```
-""".format(
-                        input_assoc.workflow_step.label, input_assoc.workflow_step.label
-                    )
+"""
         else:
             return line, False
         return section_markdown, True
@@ -914,9 +923,13 @@ history_dataset_collection_display(input={})
         elif step_match:
             target_match = step_match
             name = find_non_empty_group(target_match)
-            ref_object_type = "job"
             invocation_step = invocation.step_invocation_for_label(name)
-            ref_object = invocation_step and invocation_step.job
+            if invocation_step and invocation_step.job:
+                ref_object_type = "job"
+                ref_object = invocation_step.job
+            elif invocation_step and invocation_step.implicit_collection_jobs:
+                ref_object_type = "implicit_collection_jobs"
+                ref_object = invocation_step.implicit_collection_jobs
         else:
             target_match = None
             ref_object = None

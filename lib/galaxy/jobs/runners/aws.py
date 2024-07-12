@@ -1,5 +1,6 @@
 """ Galaxy job runners to use Amazon AWS native compute resources, such as AWS Batch.
 """
+
 import bisect
 import hashlib
 import json
@@ -36,9 +37,8 @@ BOTO3_IMPORT_MSG = (
 
 try:
     import boto3
-
 except ImportError as e:
-    boto3 = None
+    boto3 = None  # type: ignore[assignment]
     BOTO3_IMPORT_MSG.format(msg=unicodify(e))
 
 
@@ -78,8 +78,7 @@ def _add_resource_requirements(destination_params):
         {"type": "VCPU", "value": str(destination_params.get("vcpu"))},
         {"type": "MEMORY", "value": str(destination_params.get("memory"))},
     ]
-    n_gpu = destination_params.get("gpu")
-    if n_gpu:
+    if n_gpu := destination_params.get("gpu"):
         rval.append({"type": "GPU", "value": str(n_gpu)})
     return rval
 
@@ -279,8 +278,7 @@ class AWSBatchJobRunner(AsynchronousJobRunner):
         if destination_params.get("platform") == 'Fargate':   # Fargate doesn't support host volumes
             return volumes, mount_points
 
-        ec2_host_volumes = destination_params.get("ec2_host_volumes")
-        if ec2_host_volumes:
+        if (ec2_host_volumes := destination_params.get("ec2_host_volumes")):
             for ix, vol in enumerate(ec2_host_volumes.split(",")):
                 vol = vol.strip()
                 vol_name = "host_vol_" + str(ix)
@@ -356,8 +354,7 @@ class AWSBatchJobRunner(AsynchronousJobRunner):
                 }
             )
         other_kwargs = {}
-        retry_strategy = self._get_retry_strategy(destination_params)
-        if retry_strategy:
+        if (retry_strategy := self._get_retry_strategy(destination_params)):
             other_kwargs["retryStrategy"] = retry_strategy
 
         res = self._batch_client.register_job_definition(
@@ -401,7 +398,7 @@ class AWSBatchJobRunner(AsynchronousJobRunner):
         log.debug(msg.format(name=job_name))
 
     def recover(self, job, job_wrapper):
-        msg = "(name!r/runner!r) is still in {state!s} state, adding to" " the runner monitor queue"
+        msg = "(name!r/runner!r) is still in {state!s} state, adding to the runner monitor queue"
         job_id = job.get_job_runner_external_id()
         job_name = self.JOB_NAME_PREFIX + job_wrapper.get_id_tag()
         ajs = AsynchronousJobState(files_dir=job_wrapper.working_directory, job_wrapper=job_wrapper)
@@ -523,14 +520,14 @@ class AWSBatchJobRunner(AsynchronousJobRunner):
         check_required = []
         parsed_params = {}
         for k, spec in self.DESTINATION_PARAMS_SPEC.items():
-            value = params.get(k, spec.get("default"))  # type: ignore[attr-defined]
-            if spec.get("required") and not value:  # type: ignore[attr-defined]
+            value = params.get(k, spec.get("default"))
+            if spec.get("required") and not value:
                 check_required.append(k)
-            mapper = spec.get("map")    # type: ignore[attr-defined]
+            mapper = spec.get("map")
             parsed_params[k] = mapper(value)  # type: ignore[operator]
         if check_required:
             raise AWSBatchRunnerException(
-                "AWSBatchJobRunner requires the following params to be provided: %s." % (", ".join(check_required))
+                "AWSBatchJobRunner requires the following params to be provided: {}.".format(", ".join(check_required))
             )
 
         # parse Platform

@@ -145,7 +145,7 @@ class TestToolForm(SeleniumTestCase, UsesHistoryItemAssertions):
         self.tool_form_execute()
         self.history_panel_wait_for_hid_ok(1)
 
-        details = list(map(lambda d: d.text, self._get_dataset_tool_parameters(1)))
+        details = [d.text for d in self._get_dataset_tool_parameters(1)]
 
         assert details == ["texttest", "Text C", "texttest", "Text B", "texttest", "Text A"]
 
@@ -242,8 +242,6 @@ class TestToolForm(SeleniumTestCase, UsesHistoryItemAssertions):
         self.sleep_for(self.wait_types.UX_RENDER)
         self.hda_click_primary_action_button(1, "rerun")
         self.sleep_for(self.wait_types.UX_RENDER)
-        select_field = self.components.tool_form.parameter_data_select(parameter="input1")
-        self.select_set_value(select_field, "test0 (as dataset collection)")
         self.tool_form_execute()
         self.components.history_panel.collection_view.back_to_history.wait_for_and_click()
         self.history_panel_wait_for_hid_ok(9)
@@ -285,8 +283,7 @@ class TestToolForm(SeleniumTestCase, UsesHistoryItemAssertions):
         @retry_assertion_during_transitions
         def assert_citations_visible():
             references = self.components.tool_form.reference.all()
-            references_rendered = len(references)
-            if references_rendered != citation_count:
+            if (references_rendered := len(references)) != citation_count:
                 citations_api = self.api_get("tools/bibtex/citations")
                 current_citation_count = len(citations_api)
                 message = f"Expected {citation_count} references to be rendered, {references_rendered} actually rendered. Currently the API yields {current_citation_count} references"
