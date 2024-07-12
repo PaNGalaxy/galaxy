@@ -5,6 +5,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    Optional,
 )
 
 from galaxy.datatypes import metadata
@@ -391,7 +392,7 @@ class SDF(GenericMolFile):
         dataset.metadata.number_of_molecules = count_special_lines(r"^\$\$\$\$$", dataset.get_file_name())
 
     @classmethod
-    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Dict) -> None:
+    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Optional[Dict]) -> None:
         """
         Split the input files by molecule records.
         """
@@ -474,7 +475,7 @@ class MOL2(GenericMolFile):
         dataset.metadata.number_of_molecules = count_special_lines("@<TRIPOS>MOLECULE", dataset.get_file_name())
 
     @classmethod
-    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Dict) -> None:
+    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Optional[Dict]) -> None:
         """
         Split the input files by molecule records.
         """
@@ -560,7 +561,7 @@ class FPS(GenericMolFile):
         dataset.metadata.number_of_molecules = count_special_lines("^#", dataset.get_file_name(), invert=True)
 
     @classmethod
-    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Dict) -> None:
+    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Optional[Dict]) -> None:
         """
         Split the input files by fingerprint records.
         """
@@ -684,7 +685,7 @@ class OBFS(Binary):
         raise NotImplementedError("Merging Fastsearch indices is not supported.")
 
     @classmethod
-    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Dict) -> None:
+    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Optional[Dict]) -> None:
         """Splitting Fastsearch indices is not supported."""
         if split_params is None:
             return None
@@ -876,15 +877,15 @@ class PQR(GenericMolFile):
         """
         pat = (
             r"(ATOM|HETATM)\s+"
-            + r"(\d+)\s+"
-            + r"([A-Z0-9]+)\s+"
-            + r"([A-Z0-9]+)\s+"
-            + r"(([A-Z]?)\s+)?"
-            + r"([-+]?\d*\.\d+|\d+)\s+"
-            + r"([-+]?\d*\.\d+|\d+)\s+"
-            + r"([-+]?\d*\.\d+|\d+)\s+"
-            + r"([-+]?\d*\.\d+|\d+)\s+"
-            + r"([-+]?\d*\.\d+|\d+)\s+"
+            r"(\d+)\s+"
+            r"([A-Z0-9]+)\s+"
+            r"([A-Z0-9]+)\s+"
+            r"(([A-Z]?)\s+)?"
+            r"([-+]?\d*\.\d+|\d+)\s+"
+            r"([-+]?\d*\.\d+|\d+)\s+"
+            r"([-+]?\d*\.\d+|\d+)\s+"
+            r"([-+]?\d*\.\d+|\d+)\s+"
+            r"([-+]?\d*\.\d+|\d+)\s+"
         )
         return re.compile(pat)
 
@@ -1414,7 +1415,7 @@ class CML(GenericXml):
         return True
 
     @classmethod
-    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Dict) -> None:
+    def split(cls, input_datasets: List, subdir_generator_function: Callable, split_params: Optional[Dict]) -> None:
         """
         Split the input files by molecule records.
         """
@@ -1545,8 +1546,12 @@ class GRO(GenericMolFile):
     def set_peek(self, dataset: DatasetProtocol, **kwd) -> None:
         if not dataset.dataset.purged:
             dataset.peek = get_file_peek(dataset.get_file_name())
-            atom_number = int(dataset.peek.split("\n")[1])
-            dataset.blurb = f"{atom_number} atoms"
+            peek_lines = dataset.peek.split("\n")
+            try:
+                atom_number = int(peek_lines[1])
+                dataset.blurb = f"{atom_number} atoms"
+            except (ValueError, IndexError):
+                dataset.blurb = "file does not look like valid GRO file."
         else:
             dataset.peek = "file does not exist"
             dataset.blurb = "file purged from disk"

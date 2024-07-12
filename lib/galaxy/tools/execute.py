@@ -3,6 +3,7 @@ Once state information has been calculated, handle actually executing tools
 from various states, tracking results, and building implicit dataset
 collections from matched collections.
 """
+
 import collections
 import logging
 import typing
@@ -17,6 +18,7 @@ from typing import (
 )
 
 from boltons.iterutils import remap
+from packaging.version import Version
 
 from galaxy import model
 from galaxy.exceptions import ToolInputsNotOKException
@@ -32,7 +34,7 @@ from galaxy.tools.actions import (
     on_text_for_names,
     ToolExecutionCache,
 )
-from galaxy.tools.parameters.basic import is_runtime_value
+from galaxy.tools.parameters.workflow_utils import is_runtime_value
 
 if typing.TYPE_CHECKING:
     from galaxy.tools import Tool
@@ -140,8 +142,7 @@ def execute(
             execution_tracker.record_error(result)
 
     tool_action = tool.tool_action
-    check_inputs_ready = getattr(tool_action, "check_inputs_ready", None)
-    if check_inputs_ready:
+    if check_inputs_ready := getattr(tool_action, "check_inputs_ready", None):
         for params in execution_tracker.param_combinations:
             # This will throw an exception if the tool is not ready.
             try:
@@ -173,11 +174,6 @@ def execute(
             execute_single_job(execution_slice, completed_jobs[i], skip=skip)
             history = execution_slice.history or history
             jobs_executed += 1
-
-    if job_datasets:
-        for job, datasets in job_datasets.items():
-            for dataset_instance in datasets:
-                dataset_instance.dataset.job = job
 
     if execution_slice:
         history.add_pending_items()
@@ -310,7 +306,7 @@ class ExecutionTracker:
         return output_collection_name
 
     def sliced_input_collection_structure(self, input_name):
-        unqualified_recurse = self.tool.profile < 18.09 and "|" not in input_name
+        unqualified_recurse = Version(str(self.tool.profile)) < Version("18.09") and "|" not in input_name
 
         def find_collection(input_dict, input_name):
             for key, value in input_dict.items():

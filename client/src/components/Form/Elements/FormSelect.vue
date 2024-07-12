@@ -1,9 +1,14 @@
 <script setup lang="ts">
+import { library } from "@fortawesome/fontawesome-svg-core";
+import { faCheckSquare, faSquare } from "@fortawesome/free-regular-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { computed, type ComputedRef, onMounted, type PropType, watch } from "vue";
 import Multiselect from "vue-multiselect";
 
 import { useMultiselect } from "@/composables/useMultiselect";
 import { uid } from "@/utils/utils";
+
+library.add(faCheckSquare, faSquare);
 
 const { ariaExpanded, onOpen, onClose } = useMultiselect();
 
@@ -37,7 +42,7 @@ const props = defineProps({
         default: "Select Value",
     },
     value: {
-        type: String as PropType<SelectValue | SelectValue[]>,
+        type: [String, Array] as PropType<SelectValue | SelectValue[]>,
         default: null,
     },
 });
@@ -68,13 +73,6 @@ const reorderedOptions = computed(() => {
 
         return [...unselectedOptions, ...selectedOptions];
     }
-});
-
-/**
- * Configure deselect label
- */
-const deselectLabel: ComputedRef<string> = computed(() => {
-    return props.multiple ? "Click to remove" : "";
 });
 
 /**
@@ -154,23 +152,35 @@ onMounted(() => {
 </script>
 
 <template>
-    <Multiselect
-        v-if="hasOptions"
-        :id="id"
-        v-model="currentValue"
-        :allow-empty="optional"
-        :aria-expanded="ariaExpanded"
-        :close-on-select="!multiple"
-        :disabled="disabled"
-        :deselect-label="deselectLabel"
-        label="label"
-        :multiple="multiple"
-        :options="reorderedOptions"
-        :placeholder="placeholder"
-        :selected-label="selectedLabel"
-        select-label="Click to select"
-        track-by="value"
-        @open="onOpen"
-        @close="onClose" />
-    <b-alert v-else v-localize class="w-100" variant="warning" show> No options available. </b-alert>
+    <div>
+        <Multiselect
+            v-if="hasOptions"
+            :id="id"
+            v-model="currentValue"
+            :allow-empty="optional"
+            :aria-expanded="ariaExpanded"
+            :close-on-select="!multiple"
+            :disabled="disabled"
+            :deselect-label="null"
+            label="label"
+            :multiple="multiple"
+            :options="reorderedOptions"
+            :placeholder="placeholder"
+            :selected-label="selectedLabel"
+            :select-label="null"
+            track-by="value"
+            @open="onOpen"
+            @close="onClose">
+            <template v-slot:option="{ option }">
+                <div class="d-flex align-items-center justify-content-between">
+                    <span>{{ option.label }}</span>
+                    <FontAwesomeIcon v-if="selectedValues.includes(option.value)" :icon="faCheckSquare" />
+                    <FontAwesomeIcon v-else :icon="faSquare" />
+                </div>
+            </template>
+        </Multiselect>
+        <slot v-else name="no-options">
+            <b-alert v-localize class="w-100" variant="warning" show> No options available. </b-alert>
+        </slot>
+    </div>
 </template>

@@ -7,8 +7,15 @@ const inputFilePath = process.argv[2];
 const localPath = new URL(inputFilePath, import.meta.url);
 openapiTS(localPath, {
     transform(schemaObject, metadata) {
-        if ("const" in schemaObject && schemaObject.type === "string") {
-            return `"${schemaObject.const}"`;
+        if ("const" in schemaObject) {
+            const constType = typeof schemaObject.const;
+            switch (constType) {
+                case "number":
+                case "boolean":
+                    return `${schemaObject.const}`;
+                default:
+                    return `"${schemaObject.const}"`;
+            }
         }
     },
 }).then((output) => console.log(output));

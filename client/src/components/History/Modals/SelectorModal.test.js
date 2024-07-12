@@ -7,6 +7,8 @@ import { createPinia } from "pinia";
 import { useHistoryStore } from "stores/historyStore";
 import { getLocalVue } from "tests/jest/helpers";
 
+import { useUserStore } from "@/stores/userStore";
+
 import SelectorModal from "./SelectorModal";
 
 const localVue = getLocalVue();
@@ -35,6 +37,14 @@ const PROPS_FOR_MODAL_MULTIPLE_SELECT = {
 
 const CURRENT_HISTORY_INDICATION_TEXT = "(Current)";
 
+const CURRENT_USER = {
+    email: "email",
+    id: "user_id",
+    tags_used: [],
+    isAnonymous: false,
+    total_disk_usage: 0,
+};
+
 describe("History SelectorModal.vue", () => {
     let wrapper;
     let axiosMock;
@@ -56,7 +66,14 @@ describe("History SelectorModal.vue", () => {
             propsData: props,
             localVue,
             pinia,
+            stubs: {
+                icon: { template: "<div></div>" },
+            },
         });
+
+        const userStore = useUserStore();
+        userStore.setCurrentUser(CURRENT_USER);
+
         historyStore = useHistoryStore();
         axiosMock = new MockAdapter(axios);
         getUpdatedAxiosMock();
@@ -82,7 +99,7 @@ describe("History SelectorModal.vue", () => {
 
         let displayedRows = wrapper.findAllComponents(BListGroupItem).wrappers;
         expect(displayedRows.length).toBe(10);
-        expect(wrapper.find(".load-more-hist-button").exists()).toBe(true);
+        expect(wrapper.find("[data-description='load more histories button']").exists()).toBe(true);
 
         getUpdatedAxiosMock();
         await historyStore.loadHistories();
@@ -92,7 +109,7 @@ describe("History SelectorModal.vue", () => {
 
         displayedRows = wrapper.findAllComponents(BListGroupItem).wrappers;
         expect(displayedRows.length).toBe(15);
-        expect(wrapper.find(".load-more-hist-button").exists()).toBe(false);
+        expect(wrapper.find("[data-description='load more histories button']").exists()).toBe(false);
         axiosMock.restore();
     });
 
@@ -127,7 +144,7 @@ describe("History SelectorModal.vue", () => {
             const selectedHistories = wrapper.findAll(".list-group-item.active").wrappers;
             expect(selectedHistories.length).toBe(2);
 
-            const button = wrapper.find("footer > .btn-primary");
+            const button = wrapper.find("[data-description='change selected histories button']");
 
             await button.trigger("click");
 

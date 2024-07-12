@@ -1,4 +1,5 @@
 """The module describes the ``sentry`` error plugin."""
+
 import logging
 from typing import Dict
 
@@ -37,7 +38,7 @@ class SentryPlugin(ErrorPlugin):
         )  # strip the tool's version from its long id
 
         # Add contexts to the report.
-        contexts: Dict[str, dict] = dict()
+        contexts: Dict[str, dict] = {}
 
         # - "job" context
         contexts["job"] = {

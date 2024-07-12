@@ -1,6 +1,7 @@
 """ This module define an abstract class for reasoning about Galaxy's
 dataset collection after jobs are finished.
 """
+
 from typing import List
 
 from galaxy.util import asbool
@@ -33,7 +34,13 @@ def dataset_collector_descriptions_from_elem(elem, legacy=True):
     if num_discover_dataset_blocks == 0 and legacy:
         collectors = [DEFAULT_DATASET_COLLECTOR_DESCRIPTION]
     else:
-        collectors = [dataset_collection_description(**e.attrib) for e in primary_dataset_elems]
+        default_format = elem.attrib.get("format")
+        collectors = []
+        for e in primary_dataset_elems:
+            description_attributes = e.attrib
+            if default_format and "format" not in description_attributes and "ext" not in description_attributes:
+                description_attributes["format"] = default_format
+            collectors.append(dataset_collection_description(**description_attributes))
 
     return _validate_collectors(collectors)
 
@@ -59,7 +66,7 @@ def _validate_collectors(collectors):
 
 
 def dataset_collector_descriptions_from_list(discover_datasets_dicts):
-    return list(map(lambda kwds: dataset_collection_description(**kwds), discover_datasets_dicts))
+    return [dataset_collection_description(**kwds) for kwds in discover_datasets_dicts]
 
 
 def dataset_collection_description(**kwargs):

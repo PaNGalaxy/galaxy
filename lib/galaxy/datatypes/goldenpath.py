@@ -84,7 +84,7 @@ class GoldenPath(Tabular):
                         assert line[8] in ["+", "-", "?", "0", "na"]
                     if line[4] == "U":
                         assert int(line[5]) == 100
-                    assert all(map(lambda x: str(x).isnumeric() and int(x) > 0, ostensible_numbers))
+                    assert all(str(x).isnumeric() and int(x) > 0 for x in ostensible_numbers)
                     found_non_comment_lines = True
         except Exception:
             return False
@@ -365,7 +365,6 @@ class AGPLine(metaclass=abc.ABCMeta):
 
 
 class AGPSeqLine(AGPLine):
-
     """
     A subclass of AGPLine specifically for AGP lines that represent sequences.
     """
@@ -462,7 +461,6 @@ class AGPSeqLine(AGPLine):
 
 
 class AGPGapLine(AGPLine):
-
     """
     A subclass of AGPLine specifically for AGP lines that represent sequence gaps.
     """

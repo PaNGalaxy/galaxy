@@ -1,6 +1,7 @@
 """
 A simple WSGI application/framework.
 """
+
 import io
 import json
 import logging
@@ -93,8 +94,8 @@ class WebApplication:
         `finalize_config` when all controllers and routes have been added
         and `__call__` to handle a request (WSGI style).
         """
-        self.controllers = dict()
-        self.api_controllers = dict()
+        self.controllers = {}
+        self.api_controllers = {}
         self.mapper = routes.Mapper()
         self.clientside_routes = routes.Mapper(controller_scan=None, register=False)
         # FIXME: The following two options are deprecated and should be
@@ -250,9 +251,9 @@ class WebApplication:
                 raise
         trans.controller = controller_name
         trans.action = action
-        environ[
-            "controller_action_key"
-        ] = f"{'api' if environ['is_api_request'] else 'web'}.{controller_name}.{action or 'default'}"
+        environ["controller_action_key"] = (
+            f"{'api' if environ['is_api_request'] else 'web'}.{controller_name}.{action or 'default'}"
+        )
         # Combine mapper args and query string / form args and call
         kwargs = trans.request.params.mixed()
         kwargs.update(map_match)
@@ -263,6 +264,7 @@ class WebApplication:
         except Exception as e:
             body = self.handle_controller_exception(e, trans, method, **kwargs)
             if not body:
+                trans.response.headers.pop("content-length", None)
                 raise
         body_renderer = body_renderer or self._render_body
         return body_renderer(trans, body, environ, start_response)
@@ -426,8 +428,7 @@ class Request(webob.Request):
     @lazy_property
     def cookies(self):
         cookies = SimpleCookie()
-        cookie_header = self.environ.get("HTTP_COOKIE")
-        if cookie_header:
+        if cookie_header := self.environ.get("HTTP_COOKIE"):
             all_cookies = webob.cookies.parse_cookie(cookie_header)
             galaxy_cookies = {k.decode(): v.decode() for k, v in all_cookies if k.startswith(b"galaxy")}
             if galaxy_cookies:

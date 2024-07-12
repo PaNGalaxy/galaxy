@@ -6,7 +6,6 @@ import os
 import random
 import string
 
-import requests
 from cloudauthz import CloudAuthz
 from cloudauthz.exceptions import CloudAuthzBaseException
 
@@ -19,8 +18,13 @@ from galaxy.util import (
     etree,
     listify,
     parse_xml,
+    requests,
     string_as_bool,
     unicodify,
+)
+from galaxy.util.resources import (
+    as_file,
+    resource_path,
 )
 from .custos_authnz import (
     CustosAuthFactory,
@@ -33,6 +37,8 @@ from .psa_authnz import (
     Storage,
     Strategy,
 )
+
+OIDC_BACKEND_SCHEMA = resource_path(__package__, "xsd/oidc_backends_config.xsd")
 
 log = logging.getLogger(__name__)
 
@@ -72,8 +78,8 @@ class AuthnzManager:
             for child in root:
                 if child.tag != "Setter":
                     log.error(
-                        "Expect a node with `Setter` tag, found a node with `{}` tag instead; "
-                        "skipping this node.".format(child.tag)
+                        "Expect a node with `Setter` tag, found a node with `%s` tag instead; skipping this node.",
+                        child.tag,
                     )
                     continue
                 if "Property" not in child.attrib or "Value" not in child.attrib or "Type" not in child.attrib:
@@ -89,8 +95,9 @@ class AuthnzManager:
                         func = getattr(builtins, child.get("Type"))
                 except AttributeError:
                     log.error(
-                        "The value of attribute `Type`, `{}`, is not a valid built-in type;" " skipping this node"
-                    ).format(child.get("Type"))
+                        "The value of attribute `Type`, `%s`, is not a valid built-in type; skipping this node",
+                        child.get("Type"),
+                    )
                     continue
                 self.oidc_config[child.get("Property")] = func(child.get("Value"))
         except ImportError:
@@ -108,7 +115,8 @@ class AuthnzManager:
         self.oidc_backends_config = {}
         self.oidc_backends_implementation = {}
         try:
-            tree = parse_xml(config_file)
+            with as_file(OIDC_BACKEND_SCHEMA) as oidc_backend_schema_path:
+                tree = parse_xml(config_file, schemafname=oidc_backend_schema_path)
             root = tree.getroot()
             if root.tag != "OIDC":
                 raise etree.ParseError(
@@ -118,8 +126,8 @@ class AuthnzManager:
             for child in root:
                 if child.tag != "provider":
                     log.error(
-                        "Expect a node with `provider` tag, found a node with `{}` tag instead; "
-                        "skipping the node.".format(child.tag)
+                        "Expect a node with `provider` tag, found a node with `%s` tag instead; skipping the node.",
+                        child.tag,
                     )
                     continue
                 if "name" not in child.attrib:
@@ -168,6 +176,8 @@ class AuthnzManager:
             rtv["tenant_id"] = config_xml.find("tenant_id").text
         if config_xml.find("pkce_support") is not None:
             rtv["pkce_support"] = asbool(config_xml.find("pkce_support").text)
+        if config_xml.find("accepted_audiences") is not None:
+            rtv["accepted_audiences"] = config_xml.find("accepted_audiences").text
         # this is a EGI Check-in specific config
         if config_xml.find("checkin_env") is not None:
             rtv["checkin_env"] = config_xml.find("checkin_env").text
@@ -193,7 +203,7 @@ class AuthnzManager:
         if config_xml.find("well_known_oidc_config_uri") is not None:
             rtv["well_known_oidc_config_uri"] = config_xml.find("well_known_oidc_config_uri").text
         if config_xml.findall("allowed_idp") is not None:
-            self.allowed_idps = list(map(lambda idp: idp.text, config_xml.findall("allowed_idp")))
+            self.allowed_idps = [idp.text for idp in config_xml.findall("allowed_idp")]
         if config_xml.find("ca_bundle") is not None:
             rtv["ca_bundle"] = config_xml.find("ca_bundle").text
         if config_xml.find("icon") is not None:
@@ -204,7 +214,8 @@ class AuthnzManager:
             rtv["alias"] = config_xml.find("alias").text
         if config_xml.find("user_extra_authorization_script") is not None:
             rtv["user_extra_authorization_script"] = config_xml.find("user_extra_authorization_script").text
-
+        if config_xml.find("accepted_audiences") is not None:
+            rtv["accepted_audiences"] = config_xml.find("accepted_audiences").text
         return rtv
 
     def get_allowed_idps(self):
@@ -271,18 +282,22 @@ class AuthnzManager:
                 config["id_token"] = cloudauthz.authn.get_id_token(strategy)
             except requests.exceptions.HTTPError as e:
                 msg = (
-                    "Sign-out from Galaxy and remove its access from `{}`, then log back in using `{}` "
-                    "account.".format(self._unify_provider_name(cloudauthz.authn.provider), cloudauthz.authn.uid)
+                    f"Sign-out from Galaxy and remove its access from `{self._unify_provider_name(cloudauthz.authn.provider)}`, "
+                    "then log back in using `{cloudauthz.authn.uid}` account."
                 )
                 log.debug(
-                    "Failed to get/refresh ID token for user with ID `{}` for assuming authz_id `{}`. "
+                    "Failed to get/refresh ID token for user with ID `%s` for assuming authz_id `%s`. "
                     "User may not have a refresh token. If the problem persists, set the `prompt` key to "
-                    "`consent` in `oidc_backends_config.xml`, then restart Galaxy and ask user to: {}"
-                    "Error Message: `{}`".format(user_id, cloudauthz.id, msg, e.response.text)
+                    "`consent` in `oidc_backends_config.xml`, then restart Galaxy and ask user to: %s"
+                    "Error Message: `%s`",
+                    user_id,
+                    cloudauthz.id,
+                    msg,
+                    e.response.text,
                 )
                 raise exceptions.AuthenticationFailed(
-                    err_msg="An error occurred getting your ID token. {}. If the problem persists, please "
-                    "contact Galaxy admin.".format(msg)
+                    err_msg=f"An error occurred getting your ID token. {msg}. If the problem persists, please "
+                    "contact Galaxy admin."
                 )
         return config
 
@@ -290,14 +305,13 @@ class AuthnzManager:
     def can_user_assume_authn(trans, authn_id):
         qres = trans.sa_session.query(model.UserAuthnzToken).get(authn_id)
         if qres is None:
-            msg = "Authentication record with the given `authn_id` (`{}`) not found.".format(
-                trans.security.encode_id(authn_id)
-            )
+            msg = f"Authentication record with the given `authn_id` (`{trans.security.encode_id(authn_id)}`) not found."
             log.debug(msg)
             raise exceptions.ObjectNotFound(msg)
         if qres.user_id != trans.user.id:
-            msg = "The request authentication with ID `{}` is not accessible to user with ID " "`{}`.".format(
-                trans.security.encode_id(authn_id), trans.security.encode_id(trans.user.id)
+            msg = (
+                f"The request authentication with ID `{trans.security.encode_id(authn_id)}` is not accessible to user with ID "
+                f"`{trans.security.encode_id(trans.user.id)}`."
             )
             log.warning(msg)
             raise exceptions.ItemAccessibilityException(msg)
@@ -325,8 +339,8 @@ class AuthnzManager:
             raise exceptions.ObjectNotFound("An authorization configuration with given ID not found.")
         if user_id != qres.user_id:
             msg = (
-                "The request authorization configuration (with ID:`{}`) is not accessible for user with "
-                "ID:`{}`.".format(qres.id, user_id)
+                f"The request authorization configuration (with ID:`{qres.id}`) is not accessible for user with "
+                f"ID:`{user_id}`."
             )
             log.warning(msg)
             raise exceptions.ItemAccessibilityException(msg)
@@ -343,9 +357,8 @@ class AuthnzManager:
             if refreshed:
                 log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
             return True
-        except Exception as e:
-            msg = f"An error occurred when refreshing user token: {e}"
-            log.error(msg)
+        except Exception:
+            log.exception("An error occurred when refreshing user token")
             return False
 
     def refresh_expiring_oidc_tokens(self, trans, user=None):
@@ -417,6 +430,54 @@ class AuthnzManager:
             log.exception(msg)
             return False, msg, (None, None)
 
+    def _assert_jwt_contains_scopes(self, user, jwt, required_scopes):
+        if not jwt:
+            raise exceptions.AuthenticationFailed(
+                err_msg=f"User: {user.username} does not have the required scopes: [{required_scopes}]"
+            )
+        scopes = jwt.get("scope") or ""
+        if not set(required_scopes).issubset(scopes.split(" ")):
+            raise exceptions.AuthenticationFailed(
+                err_msg=f"User: {user.username} has JWT with scopes: [{scopes}] but not required scopes: [{required_scopes}]"
+            )
+
+    def _validate_permissions(self, user, jwt):
+        required_scopes = [f"{self.app.config.oidc_scope_prefix}:*"]
+        self._assert_jwt_contains_scopes(user, jwt, required_scopes)
+
+    def _match_access_token_to_user_in_provider(self, sa_session, provider, access_token):
+        try:
+            success, message, backend = self._get_authnz_backend(provider)
+            if success is False:
+                msg = f"An error occurred when obtaining user by token with provider `{provider}`: {message}"
+                log.error(msg)
+                return None
+            user, jwt = None, None
+            try:
+                user, jwt = backend.decode_user_access_token(sa_session, access_token)
+            except Exception:
+                log.exception("Could not decode access token")
+                raise exceptions.AuthenticationFailed(err_msg="Invalid access token or an unexpected error occurred.")
+            if user and jwt:
+                self._validate_permissions(user, jwt)
+                return user
+            elif not user and jwt:
+                # jwt was decoded, but no user could be matched
+                raise exceptions.AuthenticationFailed(
+                    err_msg="Cannot locate user by access token. The user should log into Galaxy at least once with this OIDC provider."
+                )
+            # Both jwt and user are empty, which means that this provider can't process this access token
+            return None
+        except NotImplementedError:
+            return None
+
+    def match_access_token_to_user(self, sa_session, access_token):
+        for provider in self.oidc_backends_config:
+            user = self._match_access_token_to_user_in_provider(sa_session, provider, access_token)
+            if user:
+                return user
+        return None
+
     def logout(self, provider, trans, post_user_logout_href=None):
         """
         Log the user out of the identity provider.
@@ -454,11 +515,7 @@ class AuthnzManager:
                 return backend.disconnect(provider, trans, email, disconnect_redirect_url)
             return backend.disconnect(provider, trans, disconnect_redirect_url)
         except Exception:
-            msg = (
-                "An error occurred when disconnecting authentication with `{}` identity provider for user `{}`".format(
-                    provider, trans.user.username
-                )
-            )
+            msg = f"An error occurred when disconnecting authentication with `{provider}` identity provider for user `{trans.user.username}`"
             log.exception(msg)
             return False, msg, None
 
@@ -498,9 +555,9 @@ class AuthnzManager:
         try:
             ca = CloudAuthz()
             log.info(
-                "Requesting credentials using CloudAuthz with config id `{}` on be half of user `{}`.".format(
-                    cloudauthz.id, user_id
-                )
+                "Requesting credentials using CloudAuthz with config id `%s` on be half of user `%s`.",
+                cloudauthz.id,
+                user_id,
             )
             credentials = ca.authorize(cloudauthz.provider, config)
             return credentials
@@ -549,8 +606,9 @@ class AuthnzManager:
         )
         credentials = self.get_cloud_access_credentials(cloudauthz, sa_session, user_id, request)
         log.info(
-            "Writing credentials generated using CloudAuthz with config id `{}` to the following file: `{}`"
-            "".format(cloudauthz.id, filename)
+            "Writing credentials generated using CloudAuthz with config id `%s` to the following file: `%s`",
+            cloudauthz.id,
+            filename,
         )
         with open(filename, "w") as f:
             f.write(json.dumps(credentials))

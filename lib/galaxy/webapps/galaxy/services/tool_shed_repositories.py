@@ -12,7 +12,10 @@ from sqlalchemy import (
 
 from galaxy.model.scoped_session import install_model_scoped_session
 from galaxy.model.tool_shed_install import ToolShedRepository
-from galaxy.schema.fields import DecodedDatabaseIdField
+from galaxy.schema.fields import (
+    DecodedDatabaseIdField,
+    Security,
+)
 from galaxy.schema.schema import (
     CheckForUpdatesResponse,
     InstalledToolShedRepository,
@@ -54,6 +57,7 @@ class ToolShedRepositoriesService:
 
     def show(self, repository_id: DecodedDatabaseIdField) -> InstalledToolShedRepository:
         tool_shed_repository = self._install_model_context.get(ToolShedRepository, repository_id)
+        assert tool_shed_repository
         return self._show(tool_shed_repository)
 
     def check_for_updates(self, repository_id: Optional[int]) -> CheckForUpdatesResponse:
@@ -62,8 +66,7 @@ class ToolShedRepositoriesService:
 
     def _show(self, tool_shed_repository: ToolShedRepository) -> InstalledToolShedRepository:
         tool_shed_repository_dict = tool_shed_repository.as_dict()
-        encoded_id = DecodedDatabaseIdField.encode(tool_shed_repository.id)
-        tool_shed_repository_dict["id"] = encoded_id
+        encoded_id = Security.security.encode_id(tool_shed_repository.id)
         tool_shed_repository_dict["error_message"] = tool_shed_repository.error_message or ""
         tool_shed_repository_dict["url"] = url_for("tool_shed_repositories", id=encoded_id)
         return InstalledToolShedRepository(**tool_shed_repository_dict)
@@ -72,7 +75,7 @@ class ToolShedRepositoriesService:
         stmt = select(ToolShedRepository)
         for key, value in kwd.items():
             if value is not None:
-                column = ToolShedRepository.table.c[key]
+                column = ToolShedRepository.__table__.c[key]  # type:ignore[attr-defined]
                 stmt = stmt.filter(column == value)
         stmt = stmt.order_by(ToolShedRepository.name).order_by(cast(ToolShedRepository.ctx_rev, Integer).desc())
         session = self._install_model_context

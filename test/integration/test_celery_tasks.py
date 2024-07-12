@@ -13,7 +13,7 @@ from galaxy.model.scoped_session import galaxy_scoped_session
 from galaxy.schema import PdfDocumentType
 from galaxy.schema.schema import CreatePagePayload
 from galaxy.schema.tasks import GeneratePdfDownload
-from galaxy.web.short_term_storage import ShortTermStorageAllocator
+from galaxy.short_term_storage import ShortTermStorageAllocator
 from galaxy_test.base.populators import (
     DatasetPopulator,
     wait_on,

@@ -21,7 +21,10 @@ from galaxy.model import (
     WorkflowRequestInputParameter,
     WorkflowRequestStepState,
 )
-from galaxy.model.base import transaction
+from galaxy.model.base import (
+    ensure_object_added_to_session,
+    transaction,
+)
 from galaxy.tools.parameters.meta import expand_workflow_inputs
 from galaxy.workflow.resources import get_resource_mapper_function
 
@@ -110,7 +113,7 @@ def _normalize_inputs(
             elif inputs_by_el == "step_uuid":
                 possible_input_keys.append(str(step.uuid))
             elif inputs_by_el == "name":
-                possible_input_keys.append(step.label or step.tool_inputs.get("name"))
+                possible_input_keys.append(step.label or step.tool_inputs.get("name"))  # type:ignore[union-attr]
             else:
                 raise exceptions.MessageException(
                     "Workflow cannot be run because unexpected inputs_by value specified."
@@ -202,8 +205,7 @@ def _step_parameters(step: "WorkflowStep", param_map: Dict, legacy: bool = False
         param_dict.update(param_map.get(str(step.id), {}))
     else:
         param_dict.update(param_map.get(str(step.order_index), {}))
-    step_uuid = step.uuid
-    if step_uuid:
+    if step_uuid := step.uuid:
         uuid_params = param_map.get(str(step_uuid), {})
         param_dict.update(uuid_params)
     if param_dict:
@@ -377,14 +379,16 @@ def build_workflow_run_configs(
             try:
                 if input_source == "ldda":
                     ldda = trans.sa_session.get(LibraryDatasetDatasetAssociation, trans.security.decode_id(input_id))
+                    assert ldda
                     assert trans.user_is_admin or trans.app.security_agent.can_access_dataset(
                         trans.get_current_user_roles(), ldda.dataset
                     )
                     content = ldda.to_history_dataset_association(history, add_to_history=add_to_history)
                 elif input_source == "ld":
-                    ldda = trans.sa_session.get(
-                        LibraryDataset, trans.security.decode_id(input_id)
-                    ).library_dataset_dataset_association
+                    library_dataset = trans.sa_session.get(LibraryDataset, trans.security.decode_id(input_id))
+                    assert library_dataset
+                    ldda = library_dataset.library_dataset_dataset_association
+                    assert ldda
                     assert trans.user_is_admin or trans.app.security_agent.can_access_dataset(
                         trans.get_current_user_roles(), ldda.dataset
                     )
@@ -487,6 +491,7 @@ def workflow_run_config_to_request(
     workflow_invocation = WorkflowInvocation()
     workflow_invocation.uuid = uuid.uuid1()
     workflow_invocation.history = run_config.target_history
+    ensure_object_added_to_session(workflow_invocation, object_in_session=run_config.target_history)
 
     def add_parameter(name: str, value: str, type: WorkflowRequestInputParameter.types) -> None:
         parameter = WorkflowRequestInputParameter(

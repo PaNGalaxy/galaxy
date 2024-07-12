@@ -84,7 +84,6 @@ def parse_outputs(args):
 
 def add_file(dataset, registry, output_path: str) -> Dict[str, str]:
     ext = None
-    compression_type = None
     line_count = None
     link_data_only_str = dataset.get("link_data_only", "copy_files")
     if link_data_only_str not in ["link_to_files", "copy_files"]:
@@ -150,21 +149,13 @@ def add_file(dataset, registry, output_path: str) -> Dict[str, str]:
         convert_spaces_to_tabs=dataset.space_to_tab,
     )
 
-    # Strip compression extension from name
-    if (
-        compression_type
-        and not getattr(datatype, "compressed", False)
-        and dataset.name.endswith("." + compression_type)
-    ):
-        dataset.name = dataset.name[: -len("." + compression_type)]
-
     # Move dataset
     if link_data_only:
         # Never alter a file that will not be copied to Galaxy's local file store.
         if datatype.dataset_content_needs_grooming(dataset.path):
             err_msg = (
                 "The uploaded files need grooming, so change your <b>Copy data into Galaxy?</b> selection to be "
-                + "<b>Copy files into Galaxy</b> instead of <b>Link to files without copying into Galaxy</b> so grooming can be performed."
+                "<b>Copy files into Galaxy</b> instead of <b>Link to files without copying into Galaxy</b> so grooming can be performed."
             )
             raise UploadProblemException(err_msg)
     if not link_data_only:

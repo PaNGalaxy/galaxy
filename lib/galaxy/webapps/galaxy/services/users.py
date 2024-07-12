@@ -35,6 +35,7 @@ from galaxy.schema.schema import (
     DetailedUserModel,
     FlexibleUserIdType,
     LimitedUserModel,
+    MaybeLimitedUserModel,
     UserModel,
 )
 from galaxy.security.idencoding import IdEncodingHelper
@@ -70,20 +71,21 @@ class UsersService(ServiceBase):
     def recalculate_disk_usage(
         self,
         trans: ProvidesUserContext,
+        user_id: int,
     ):
         if trans.anonymous:
             raise glx_exceptions.AuthenticationRequired("Only registered users can recalculate disk usage.")
         if trans.app.config.enable_celery_tasks:
             from galaxy.celery.tasks import recalculate_user_disk_usage
 
-            result = recalculate_user_disk_usage.delay(task_user_id=getattr(trans.user, "id", None))
+            result = recalculate_user_disk_usage.delay(task_user_id=user_id)
             return async_task_summary(result)
         else:
             send_local_control_task(
                 trans.app,
                 "recalculate_user_disk_usage",
                 kwargs={
-                    "user_id": trans.user.id,
+                    "user_id": user_id,
                 },
             )
             return None
@@ -92,7 +94,7 @@ class UsersService(ServiceBase):
         """Returns the current API key or None if the user doesn't have any valid API key."""
         user = self.get_user(trans, user_id)
         api_key = self.api_key_manager.get_api_key(user)
-        return APIKeyModel.construct(key=api_key.key, create_time=api_key.create_time) if api_key else None
+        return APIKeyModel.model_construct(key=api_key.key, create_time=api_key.create_time) if api_key else None
 
     def get_or_create_api_key(self, trans: ProvidesUserContext, user_id: int) -> str:
         """Returns the current API key (as plain string) or creates a new one."""
@@ -103,7 +105,7 @@ class UsersService(ServiceBase):
         """Creates a new API key for the given user"""
         user = self.get_user(trans, user_id)
         api_key = self.api_key_manager.create_api_key(user)
-        result = APIKeyModel.construct(key=api_key.key, create_time=api_key.create_time)
+        result = APIKeyModel.model_construct(key=api_key.key, create_time=api_key.create_time)
         return result
 
     def delete_api_key(self, trans: ProvidesUserContext, user_id: int) -> None:
@@ -121,11 +123,11 @@ class UsersService(ServiceBase):
     def _anon_user_api_value(self, trans: ProvidesHistoryContext):
         """Return data for an anonymous user, truncated to only usage and quota_percent"""
         if not trans.user and not trans.history:
-            # Can't return info about this user, may not have a history yet.
-            # return {}
-            raise glx_exceptions.MessageException(err_msg="The user has no history, which should always be the case.")
-        usage = self.quota_agent.get_usage(trans, history=trans.history)
-        percent = self.quota_agent.get_percent(trans=trans, usage=usage)
+            usage: Optional[float] = 0.0
+            percent: Optional[int] = 0
+        else:
+            usage = self.quota_agent.get_usage(trans, history=trans.history)
+            percent = self.quota_agent.get_percent(trans=trans, usage=usage)
         usage = usage or 0
         return {
             "total_disk_usage": int(usage),
@@ -193,7 +195,7 @@ class UsersService(ServiceBase):
         self,
         user: User,
     ) -> DetailedUserModel:
-        user_response = self.user_serializer.serialize_to_view(user, view="detailed")
+        user_response = self.user_serializer.serialize_to_view(user, view="detailed", encode_id=False)
         return DetailedUserModel(**user_response)
 
     def get_index(
@@ -203,8 +205,8 @@ class UsersService(ServiceBase):
         f_email: Optional[str],
         f_name: Optional[str],
         f_any: Optional[str],
-    ) -> List[Union[UserModel, LimitedUserModel]]:
-        rval = []
+    ) -> List[MaybeLimitedUserModel]:
+        rval: List[MaybeLimitedUserModel] = []
         stmt = select(User)
 
         if f_email and (trans.user_is_admin or trans.app.config.expose_user_email):
@@ -238,11 +240,13 @@ class UsersService(ServiceBase):
                 and not trans.app.config.expose_user_name
                 and not trans.app.config.expose_user_email
             ):
-                item = trans.user.to_dict(value_mapper={"id": trans.security.encode_id})
-                return [item]
+                if trans.user:
+                    return [UserModel(**trans.user.to_dict())]
+                else:
+                    return []
             stmt = stmt.filter(User.deleted == false())
         for user in trans.sa_session.scalars(stmt).all():
-            item = user.to_dict(value_mapper={"id": trans.security.encode_id})
+            user_dict = user.to_dict()
             # If NOT configured to expose_email, do not expose email UNLESS the user is self, or
             # the user is an admin
             if user is not trans.user and not trans.user_is_admin:
@@ -251,12 +255,11 @@ class UsersService(ServiceBase):
                     expose_keys.append("username")
                 if trans.app.config.expose_user_email:
                     expose_keys.append("email")
-                new_item = {}
-                for key, value in item.items():
+                limited_user = {}
+                for key, value in user_dict.items():
                     if key in expose_keys:
-                        new_item[key] = value
-                item = new_item
-
-            # TODO: move into api_values
-            rval.append(item)
+                        limited_user[key] = value
+                rval.append(LimitedUserModel(**limited_user))
+            else:
+                rval.append(UserModel(**user_dict))
         return rval

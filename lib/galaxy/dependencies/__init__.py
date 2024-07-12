@@ -67,18 +67,15 @@ class ConditionalDependencies:
                 job_conf_path = join(dirname(self.config_file), job_conf_path)
             if ".xml" in job_conf_path:
                 try:
-                    try:
-                        for plugin in parse_xml(job_conf_path).find("plugins").findall("plugin"):
+                    job_conf_tree = parse_xml(job_conf_path)
+                    plugins_elem = job_conf_tree.find("plugins")
+                    if plugins_elem:
+                        for plugin in plugins_elem.findall("plugin"):
                             if "load" in plugin.attrib:
                                 self.job_runners.append(plugin.attrib["load"])
-                    except OSError:
-                        pass
-                    try:
-                        for plugin in parse_xml(job_conf_path).findall('.//destination/param[@id="rules_module"]'):
-                            self.job_rule_modules.append(plugin.text)
-                    except OSError:
-                        pass
-                except etree.ParseError:
+                    for plugin in job_conf_tree.findall('.//destination/param[@id="rules_module"]'):
+                        self.job_rule_modules.append(plugin.text)
+                except (OSError, etree.ParseError):
                     pass
             else:
                 try:
@@ -207,7 +204,7 @@ class ConditionalDependencies:
     def check_pbs_python(self):
         return "galaxy.jobs.runners.pbs:PBSJobRunner" in self.job_runners
 
-    def check_pykube(self):
+    def check_pykube_ng(self):
         return "galaxy.jobs.runners.kubernetes:KubernetesJobRunner" in self.job_runners or which("kubectl")
 
     def check_chronos_python(self):
@@ -240,6 +237,9 @@ class ConditionalDependencies:
     def check_rucio_clients(self):
         return "rucio" in self.object_stores
 
+    def check_boto3(self):
+        return "boto3" in self.object_stores
+
     def check_kamaki(self):
         return "pithos" in self.object_stores
 
@@ -267,6 +267,9 @@ class ConditionalDependencies:
 
     def check_google_cloud_storage(self):
         return "googlecloudstorage" in self.file_sources
+
+    def check_onedatafilerestclient(self):
+        return "onedata" in self.object_stores
 
     def check_fs_onedatarestfs(self):
         return "onedata" in self.file_sources
@@ -302,6 +305,9 @@ class ConditionalDependencies:
 
     def check_pkce(self):
         return self.pkce_support
+
+    def check_rucio_clients(self):
+        return "rucio" in self.object_stores and sys.version_info >= (3, 9)
 
 
 def optional(config_file=None):

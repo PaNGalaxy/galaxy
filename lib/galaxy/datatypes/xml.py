@@ -1,6 +1,7 @@
 """
 XML format classes
 """
+
 import logging
 import re
 from typing import List
@@ -48,7 +49,7 @@ class GenericXml(data.Text):
             if not line.startswith("<?"):
                 break
         # pattern match <root or <ns:root for any ns string
-        pattern = r"^<(\w*:)?%s" % root
+        pattern = rf"^<(\w*:)?{root}"
         return re.match(pattern, line) is not None
 
     def sniff_prefix(self, file_prefix: FilePrefix) -> bool:

@@ -4,11 +4,9 @@ import { faSquare } from "@fortawesome/free-regular-svg-icons";
 import { faCheckSquare, faThumbtack, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { storeToRefs } from "pinia";
-import { computed, type ComputedRef, type Ref, ref } from "vue";
+import { computed, type ComputedRef } from "vue";
 
 import { type Activity, useActivityStore } from "@/stores/activityStore";
-
-import DelayedInput from "@/components/Common/DelayedInput.vue";
 
 library.add({
     faCheckSquare,
@@ -17,13 +15,16 @@ library.add({
     faThumbtack,
 });
 
+const props = defineProps<{
+    query: string;
+}>();
+
 const activityStore = useActivityStore();
 const { activities } = storeToRefs(activityStore);
-const query: Ref<string> = ref("");
 
 const filteredActivities = computed(() => {
-    if (query.value.length > 0) {
-        const queryLower = query.value.toLowerCase();
+    if (props.query?.length > 0) {
+        const queryLower = props.query.toLowerCase();
         const results = activities.value.filter((a: Activity) => {
             const attributeValues = [a.title, a.description];
             for (const value of attributeValues) {
@@ -52,18 +53,13 @@ function onClick(activity: Activity) {
 function onRemove(activity: Activity) {
     activityStore.remove(activity.id);
 }
-
-function onQuery(newQuery: string) {
-    query.value = newQuery;
-}
 </script>
 
 <template>
-    <div class="activity-settings rounded p-3 no-highlight">
-        <DelayedInput class="mb-3" :delay="100" placeholder="Search activities" @change="onQuery" />
-        <div v-if="foundActivities" class="activity-settings-content overflow-auto">
+    <div class="activity-settings rounded no-highlight">
+        <div v-if="foundActivities" class="activity-settings-content">
             <div v-for="activity in filteredActivities" :key="activity.id">
-                <div class="activity-settings-item p-2 cursor-pointer" @click="onClick(activity)">
+                <button class="activity-settings-item p-2 cursor-pointer" @click="onClick(activity)">
                     <div class="d-flex justify-content-between align-items-start">
                         <span class="w-100">
                             <FontAwesomeIcon
@@ -77,12 +73,12 @@ function onQuery(newQuery: string) {
                                 icon="fas fa-check-square"
                                 fa-fw />
                             <FontAwesomeIcon v-else class="mr-1" icon="far fa-square" fa-fw />
-                            <small>
+                            <span>
                                 <icon class="mr-1" :icon="activity.icon" />
                                 <span v-localize class="font-weight-bold">{{
                                     activity.title || "No title available"
                                 }}</span>
-                            </small>
+                            </span>
                         </span>
                         <b-button
                             v-if="activity.mutable"
@@ -94,10 +90,10 @@ function onQuery(newQuery: string) {
                             <FontAwesomeIcon icon="fa-trash" fa-fw />
                         </b-button>
                     </div>
-                    <small v-localize>
+                    <div v-localize class="text-muted">
                         {{ activity.description || "No description available" }}
-                    </small>
-                </div>
+                    </div>
+                </button>
             </div>
         </div>
         <div v-else class="activity-settings-content">
@@ -110,14 +106,22 @@ function onQuery(newQuery: string) {
 @import "theme/blue.scss";
 
 .activity-settings {
-    width: 20rem;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 .activity-settings-content {
-    height: 20rem;
+    overflow-y: auto;
 }
 
 .activity-settings-item {
+    background: none;
+    border: none;
+    text-align: left;
+    transition: none;
+    width: 100%;
+
     .icon-check {
         color: darken($brand-success, 15%);
     }
@@ -126,14 +130,6 @@ function onQuery(newQuery: string) {
     }
 }
 .activity-settings-item:hover {
-    background: $brand-primary;
-    color: $brand-light;
-    border-radius: $border-radius-large;
-    .icon-check {
-        color: $brand-light;
-    }
-    .button-delete {
-        color: $brand-light;
-    }
+    background: $gray-200;
 }
 </style>

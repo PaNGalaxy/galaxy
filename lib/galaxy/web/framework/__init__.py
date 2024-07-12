@@ -1,6 +1,7 @@
 """
 Galaxy web application framework
 """
+
 from . import base
 
 DEPRECATED_URL_ATTRIBUTE_MESSAGE = "*deprecated attribute, URL not filled in by server*"

@@ -1,4 +1,5 @@
 """Typed description of Galaxy's app object."""
+
 import abc
 from typing import (
     Any,
@@ -95,12 +96,15 @@ class MinimalApp(BasicSharedApp):
     install_model: ModelMapping
     security_agent: GalaxyRBACAgent
     host_security_agent: HostAgent
+    server_starttime: int
 
 
 class MinimalManagerApp(MinimalApp):
     # Minimal App that is sufficient to run Celery tasks
+    carbon_intensity: float
     file_sources: ConfiguredFileSources
     genome_builds: GenomeBuilds
+    geographical_server_location_name: str
     dataset_collection_manager: "DatasetCollectionManager"
     tool_data_tables: "ToolDataTableManager"
     history_manager: "HistoryManager"
@@ -124,11 +128,9 @@ class MinimalManagerApp(MinimalApp):
 
     @property
     @abc.abstractmethod
-    def is_job_handler(self) -> bool:
-        ...
+    def is_job_handler(self) -> bool: ...
 
-    def wait_for_toolbox_reload(self, old_toolbox: "ToolBox") -> None:
-        ...
+    def wait_for_toolbox_reload(self, old_toolbox: "ToolBox") -> None: ...
 
 
 class StructuredApp(MinimalManagerApp):

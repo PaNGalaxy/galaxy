@@ -1,19 +1,40 @@
 <script setup lang="ts">
+import { library } from "@fortawesome/fontawesome-svg-core";
+import { faQuestion } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import {
+    BButton,
+    BFormDatalist,
+    BFormDatepicker,
+    BFormInput,
+    BInputGroup,
+    BInputGroupAppend,
+    BModal,
+} from "bootstrap-vue";
 import { capitalize } from "lodash";
-import { computed, type PropType, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
-import { ValidFilter } from "@/utils/filtering";
+import { type ValidFilter } from "@/utils/filtering";
 
-const props = defineProps({
-    name: { type: String, required: true },
-    filter: { type: Object as PropType<ValidFilter<any>>, required: true },
-    filters: { type: Object, required: true },
-    error: { type: Object, default: null },
-    identifier: { type: String, required: true },
-});
+library.add(faQuestion);
+
+type FilterType = string | boolean | undefined;
+
+interface Props {
+    name: string;
+    identifier: any;
+    error?: string;
+    filter: ValidFilter<any>;
+    filters: {
+        [k: string]: FilterType;
+    };
+    disabled?: boolean;
+}
+
+const props = defineProps<Props>();
 
 const emit = defineEmits<{
-    (e: "change", name: string, value: string): void;
+    (e: "change", name: string, value: FilterType): void;
     (e: "on-enter"): void;
     (e: "on-esc"): void;
 }>();
@@ -25,67 +46,73 @@ const localValue = ref(propValue.value);
 const helpToggle = ref(false);
 const modalTitle = `${capitalize(props.filter.placeholder)} Help`;
 
+function onHelp(_: string, value: string) {
+    helpToggle.value = false;
+
+    if (!props.disabled) {
+        localValue.value = value;
+    }
+}
+
 watch(
     () => localValue.value,
-    (newFilter: string) => {
+    (newFilter) => {
         emit("change", props.name, newFilter);
-    }
+    },
+    { immediate: true }
 );
+
 watch(
     () => propValue.value,
-    (newFilter: string) => {
+    (newFilter) => {
         localValue.value = newFilter;
     }
 );
-
-function hasError(field: string) {
-    if (props.error && props.error.index == field) {
-        return props.error.typeError || props.error.msg;
-    }
-    return "";
-}
-
-function onHelp(_: string, value: string) {
-    helpToggle.value = false;
-    localValue.value = value;
-}
 </script>
 
 <template>
     <div>
         <small>Filter by {{ props.filter.placeholder }}:</small>
-        <b-input-group>
-            <b-form-input
+
+        <BInputGroup>
+            <BFormInput
                 :id="`${identifier}-advanced-filter-${props.name}`"
                 ref="filterMenuInput"
                 v-model="localValue"
-                v-b-tooltip.focus.v-danger="hasError(props.name)"
+                v-b-tooltip.focus.v-danger="props.error"
+                class="mw-100"
                 size="sm"
-                :state="hasError(props.name) ? false : null"
+                :state="props.error ? false : null"
                 :placeholder="`any ${props.filter.placeholder}`"
+                :disabled="props.disabled"
                 :list="props.filter.datalist ? `${identifier}-${props.name}-selectList` : null"
                 @keyup.enter="emit('on-enter')"
                 @keyup.esc="emit('on-esc')" />
-            <b-form-datalist
+
+            <BFormDatalist
                 v-if="props.filter.datalist"
                 :id="`${identifier}-${props.name}-selectList`"
-                :options="props.filter.datalist"></b-form-datalist>
+                :options="props.filter.datalist" />
+
             <!-- append Help Modal for filter if included or/and datepciker if type: Date -->
-            <b-input-group-append>
-                <b-button v-if="props.filter.helpInfo" :title="modalTitle" size="sm" @click="helpToggle = true">
-                    <icon icon="question" />
-                </b-button>
-                <b-form-datepicker
+            <BInputGroupAppend>
+                <BButton v-if="props.filter.helpInfo" :title="modalTitle" size="sm" @click="helpToggle = true">
+                    <FontAwesomeIcon :icon="faQuestion" />
+                </BButton>
+
+                <BFormDatepicker
                     v-if="props.filter.type == Date"
                     v-model="localValue"
                     reset-button
                     button-only
+                    :disabled="props.disabled"
                     size="sm" />
-            </b-input-group-append>
-        </b-input-group>
+            </BInputGroupAppend>
+        </BInputGroup>
+
         <!-- if a filter has help component, place it within a modal -->
         <span v-if="props.filter.helpInfo">
-            <b-modal v-model="helpToggle" :title="modalTitle" ok-only>
+            <BModal v-model="helpToggle" :title="modalTitle" ok-only>
                 <component
                     :is="props.filter.helpInfo"
                     v-if="typeof props.filter.helpInfo == 'object'"
@@ -93,7 +120,7 @@ function onHelp(_: string, value: string) {
                 <div v-else-if="typeof props.filter.helpInfo == 'string'">
                     <p>{{ props.filter.helpInfo }}</p>
                 </div>
-            </b-modal>
+            </BModal>
         </span>
     </div>
 </template>

@@ -24,7 +24,6 @@ from typing import (
     Union,
 )
 
-import requests
 from packaging.version import Version
 from requests import Response
 from requests.cookies import RequestsCookieJar
@@ -41,6 +40,7 @@ from galaxy.tool_util.parser.interface import (
     TestCollectionDef,
     TestCollectionOutputDef,
 )
+from galaxy.util import requests
 from galaxy.util.bunch import Bunch
 from galaxy.util.hash_util import (
     memory_bound_hexdigest,
@@ -385,24 +385,23 @@ class GalaxyInteractorApi:
                 except KeyError:
                     raise Exception(f"Failed to verify dataset metadata, metadata key [{key}] was not found.")
 
-    def wait_for_job(self, job_id, history_id=None, maxseconds=DEFAULT_TOOL_TEST_WAIT):
+    def wait_for_job(self, job_id: str, history_id: Optional[str] = None, maxseconds=DEFAULT_TOOL_TEST_WAIT) -> None:
         self.wait_for(lambda: self.__job_ready(job_id, history_id), maxseconds=maxseconds)
 
-    def wait_for(self, func, what="tool test run", **kwd):
+    def wait_for(self, func: Callable, what: str = "tool test run", **kwd) -> None:
         walltime_exceeded = int(kwd.get("maxseconds", DEFAULT_TOOL_TEST_WAIT))
         wait_on(func, what, walltime_exceeded)
 
-    def get_job_stdio(self, job_id):
-        job_stdio = self.__get_job_stdio(job_id).json()
-        return job_stdio
+    def get_job_stdio(self, job_id: str) -> Dict[str, Any]:
+        return self.__get_job_stdio(job_id).json()
 
-    def __get_job(self, job_id):
+    def __get_job(self, job_id: str) -> Response:
         return self._get(f"jobs/{job_id}")
 
-    def __get_job_stdio(self, job_id):
+    def __get_job_stdio(self, job_id: str) -> Response:
         return self._get(f"jobs/{job_id}?full=true")
 
-    def get_history(self, history_name="test_history"):
+    def get_history(self, history_name: str = "test_history") -> Optional[Dict[str, Any]]:
         # Return the most recent non-deleted history matching the provided name
         filters = urllib.parse.urlencode({"q": "name", "qv": history_name, "order": "update_time"})
         response = self._get(f"histories?{filters}")
@@ -430,7 +429,7 @@ class GalaxyInteractorApi:
             if cleanup and cleanup_callback is not None:
                 cleanup_callback(history_id)
 
-    def new_history(self, history_name="test_history", publish_history=False):
+    def new_history(self, history_name: str = "test_history", publish_history: bool = False) -> str:
         create_response = self._post("histories", {"name": history_name})
         try:
             create_response.raise_for_status()
@@ -441,7 +440,7 @@ class GalaxyInteractorApi:
             self.publish_history(history_id)
         return history_id
 
-    def publish_history(self, history_id):
+    def publish_history(self, history_id: str) -> None:
         response = self._put(f"histories/{history_id}", json.dumps({"published": True}))
         response.raise_for_status()
 
@@ -710,10 +709,10 @@ class GalaxyInteractorApi:
     def output_hid(self, output_data):
         return output_data["id"]
 
-    def delete_history(self, history):
+    def delete_history(self, history: str) -> None:
         self._delete(f"histories/{history}")
 
-    def __job_ready(self, job_id, history_id=None):
+    def __job_ready(self, job_id: str, history_id: Optional[str] = None):
         if job_id is None:
             raise ValueError("__job_ready passed empty job_id")
         try:
@@ -803,7 +802,7 @@ class GalaxyInteractorApi:
         history_contents_response.raise_for_status()
         return history_contents_response.json()
 
-    def _state_ready(self, job_id, error_msg):
+    def _state_ready(self, job_id: str, error_msg: str):
         state_str = self.__get_job(job_id).json()["state"]
         if state_str == "ok":
             return True
@@ -938,10 +937,10 @@ class GalaxyInteractorApi:
         kwd["timeout"] = kwd.pop("timeout", util.DEFAULT_SOCKET_TIMEOUT)
         return requests.post(url, **kwd)
 
-    def _delete(self, path, data=None, key=None, headers=None, admin=False, anon=False, json=False):
+    def _delete(self, path, data=None, key=None, headers=None, admin=False, anon=False, json=False, params=None):
         headers = self.api_key_header(key=key, admin=admin, anon=anon, headers=headers)
         url = self.get_api_url(path)
-        kwd = self._prepare_request_params(data=data, as_json=json, headers=headers)
+        kwd = self._prepare_request_params(data=data, as_json=json, params=params, headers=headers)
         kwd["timeout"] = kwd.pop("timeout", util.DEFAULT_SOCKET_TIMEOUT)
         return requests.delete(url, **kwd)
 
@@ -1278,8 +1277,7 @@ def _verify_extra_files_content(
 
 
 class TestConfig(Protocol):
-    def get_test_config(self, job_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        ...
+    def get_test_config(self, job_data: Dict[str, Any]) -> Optional[Dict[str, Any]]: ...
 
 
 class NullClientTestConfig(TestConfig):
@@ -1431,8 +1429,6 @@ def verify_tool(
             raise e
 
         if not expected_failure_occurred:
-            assert data_list or data_collection_list
-
             try:
                 job_stdio = _verify_outputs(
                     testdef, test_history, jobs, data_list, data_collection_list, galaxy_interactor, quiet=quiet
@@ -1490,7 +1486,6 @@ def _handle_def_errors(testdef):
 def _verify_outputs(testdef, history, jobs, data_list, data_collection_list, galaxy_interactor, quiet=False):
     assert len(jobs) == 1, "Test framework logic error, somehow tool test resulted in more than one job."
     job = jobs[0]
-
     found_exceptions: List[Exception] = []
 
     def register_exception(e: Exception):
@@ -1543,29 +1538,36 @@ def _verify_outputs(testdef, history, jobs, data_list, data_collection_list, gal
         outfile = output_dict["value"]
         attributes = output_dict["attributes"]
         output_testdef = Bunch(name=name, outfile=outfile, attributes=attributes)
+        output_data = None
         try:
             output_data = data_list[name]
         except (TypeError, KeyError):
             # Legacy - fall back on ordered data list access if data_list is
             # just a list (case with twill variant or if output changes its
             # name).
-            if hasattr(data_list, "values"):
-                output_data = list(data_list.values())[output_index]
-            else:
-                output_data = data_list[len(data_list) - len(testdef.outputs) + output_index]
-        assert output_data is not None
-        try:
-            galaxy_interactor.verify_output(
-                history,
-                jobs,
-                output_data,
-                output_testdef=output_testdef,
-                tool_id=job["tool_id"],
-                maxseconds=maxseconds,
-                tool_version=testdef.tool_version,
-            )
-        except Exception as e:
-            register_exception(e)
+            try:
+                if hasattr(data_list, "values"):
+                    output_data = list(data_list.values())[output_index]
+                else:
+                    output_data = data_list[len(data_list) - len(testdef.outputs) + output_index]
+            except IndexError:
+                error = AssertionError(
+                    f"Tool did not produce an output with name '{name}' (or at index {output_index})"
+                )
+                register_exception(error)
+        if output_data:
+            try:
+                galaxy_interactor.verify_output(
+                    history,
+                    jobs,
+                    output_data,
+                    output_testdef=output_testdef,
+                    tool_id=job["tool_id"],
+                    maxseconds=maxseconds,
+                    tool_version=testdef.tool_version,
+                )
+            except Exception as e:
+                register_exception(e)
 
     other_checks = {
         "command_line": "Command produced by the job",
@@ -1655,6 +1657,29 @@ class JobOutputsError(AssertionError):
         self.output_exceptions = output_exceptions
 
 
+class ToolTestDescriptionDict(TypedDict):
+    name: str
+    inputs: Any
+    outputs: Any
+    output_collections: List[Dict[str, Any]]
+    stdout: Optional[AssertionList]
+    stderr: Optional[AssertionList]
+    expect_exit_code: Optional[int]
+    expect_failure: bool
+    expect_test_failure: bool
+    num_outputs: Optional[int]
+    command_line: Optional[AssertionList]
+    command_version: Optional[AssertionList]
+    required_files: List[Any]
+    required_data_tables: List[Any]
+    required_loc_files: List[str]
+    error: bool
+    tool_id: str
+    tool_version: Optional[str]
+    test_index: int
+    exception: Optional[str]
+
+
 class ToolTestDescription:
     """
     Encapsulates information about a tool test, and allows creation of a
@@ -1662,12 +1687,26 @@ class ToolTestDescription:
     doing dynamic tests in this way allows better integration)
     """
 
+    name: str
+    num_outputs: Optional[int]
+    stdout: Optional[AssertionList]
+    stderr: Optional[AssertionList]
+    command_line: Optional[AssertionList]
+    command_version: Optional[AssertionList]
+    required_files: List[Any]
+    required_data_tables: List[Any]
+    required_loc_files: List[str]
+    expect_exit_code: Optional[int]
+    expect_failure: bool
+    expect_test_failure: bool
+    exception: Optional[str]
+
     def __init__(self, processed_test_dict: ToolTestDict):
         assert (
             "test_index" in processed_test_dict
         ), "Invalid processed test description, must have a 'test_index' for naming, etc.."
         test_index = processed_test_dict["test_index"]
-        name = processed_test_dict.get("name", f"Test-{test_index + 1}")
+        name = cast(str, processed_test_dict.get("name", f"Test-{test_index + 1}"))
         error_in_test_definition = processed_test_dict["error"]
         if not error_in_test_definition:
             processed_test_dict = cast(ValidToolTestDict, processed_test_dict)
@@ -1686,9 +1725,9 @@ class ToolTestDescription:
         self.tool_version = processed_test_dict.get("tool_version")
         self.name = name
         self.maxseconds = maxseconds
-        self.required_files = processed_test_dict.get("required_files", [])
-        self.required_data_tables = processed_test_dict.get("required_data_tables", [])
-        self.required_loc_files = processed_test_dict.get("required_loc_files", [])
+        self.required_files = cast(List[Any], processed_test_dict.get("required_files", []))
+        self.required_data_tables = cast(List[Any], processed_test_dict.get("required_data_tables", []))
+        self.required_loc_files = cast(List[str], processed_test_dict.get("required_loc_files", []))
 
         inputs = processed_test_dict.get("inputs", {})
         loaded_inputs = {}
@@ -1700,19 +1739,19 @@ class ToolTestDescription:
 
         self.inputs = loaded_inputs
         self.outputs = processed_test_dict.get("outputs", [])
-        self.num_outputs = processed_test_dict.get("num_outputs", None)
+        self.num_outputs = cast(Optional[int], processed_test_dict.get("num_outputs", None))
 
         self.error = processed_test_dict.get("error", False)
-        self.exception = processed_test_dict.get("exception", None)
+        self.exception = cast(Optional[str], processed_test_dict.get("exception", None))
 
         self.output_collections = [TestCollectionOutputDef.from_dict(d) for d in output_collections]
-        self.command_line = processed_test_dict.get("command_line", None)
-        self.command_version = processed_test_dict.get("command_version", None)
-        self.stdout = processed_test_dict.get("stdout", None)
-        self.stderr = processed_test_dict.get("stderr", None)
-        self.expect_exit_code = processed_test_dict.get("expect_exit_code", None)
-        self.expect_failure = processed_test_dict.get("expect_failure", False)
-        self.expect_test_failure = processed_test_dict.get("expect_test_failure", False)
+        self.command_line = cast(Optional[AssertionList], processed_test_dict.get("command_line", None))
+        self.command_version = cast(Optional[AssertionList], processed_test_dict.get("command_version", None))
+        self.stdout = cast(Optional[AssertionList], processed_test_dict.get("stdout", None))
+        self.stderr = cast(Optional[AssertionList], processed_test_dict.get("stderr", None))
+        self.expect_exit_code = cast(Optional[int], processed_test_dict.get("expect_exit_code", None))
+        self.expect_failure = cast(bool, processed_test_dict.get("expect_failure", False))
+        self.expect_test_failure = cast(bool, processed_test_dict.get("expect_test_failure", False))
 
     def test_data(self):
         """
@@ -1720,7 +1759,7 @@ class ToolTestDescription:
         """
         return test_data_iter(self.required_files)
 
-    def to_dict(self):
+    def to_dict(self) -> ToolTestDescriptionDict:
         inputs_dict = {}
         for key, value in self.inputs.items():
             if hasattr(value, "to_dict"):

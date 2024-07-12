@@ -1,6 +1,7 @@
 """
 API operations on User objects.
 """
+
 import copy
 import json
 import logging
@@ -21,7 +22,7 @@ from fastapi import (
     status,
 )
 from markupsafe import escape
-from pydantic import Required
+from typing_extensions import Annotated
 
 from galaxy import (
     exceptions,
@@ -38,11 +39,11 @@ from galaxy.model import (
     HistoryDatasetAssociation,
     Role,
     UserAddress,
+    UserObjectstoreUsage,
     UserQuotaUsage,
 )
 from galaxy.model.base import transaction
 from galaxy.schema import APIKeyModel
-from galaxy.schema.fields import DecodedDatabaseIdField
 from galaxy.schema.schema import (
     AnonUserModel,
     AsyncTaskResultSummary,
@@ -55,12 +56,11 @@ from galaxy.schema.schema import (
     FavoriteObjectsSummary,
     FavoriteObjectType,
     FlexibleUserIdType,
-    LimitedUserModel,
+    MaybeLimitedUserModel,
     RemoteUserCreationPayload,
     UserBeaconSetting,
     UserCreationPayload,
     UserDeletionPayload,
-    UserModel,
 )
 from galaxy.security.validate_user_input import (
     validate_email,
@@ -86,13 +86,14 @@ from galaxy.webapps.galaxy.api import (
     DependsOnTrans,
     Router,
 )
+from galaxy.webapps.galaxy.api.common import UserIdPathParam
 from galaxy.webapps.galaxy.services.users import UsersService
 
 log = logging.getLogger(__name__)
 
 router = Router(tags=["users"])
 
-ThemePathParam: str = Path(default=Required, title="Theme", description="The theme of the GUI")
+ThemePathParam: str = Path(default=..., title="Theme", description="The theme of the GUI")
 UserDeletedQueryParam: bool = Query(default=None, title="Deleted user", description="Indicates if the user is deleted")
 UsersDeletedQueryParam: bool = Query(
     default=False, title="Deleted users", description="Indicates if the collection will be about deleted users"
@@ -100,8 +101,6 @@ UsersDeletedQueryParam: bool = Query(
 FilterEmailQueryParam: str = Query(default=None, title="Email filter", description="An email address to filter on")
 FilterNameQueryParam: str = Query(default=None, title="Name filter", description="An username address to filter on")
 FilterAnyQueryParam: str = Query(default=None, title="Any filter", description="Filter on username OR email")
-UserIdPathParamQueryParam: DecodedDatabaseIdField = Path(..., title="User ID", description="The ID of the user to get.")
-APIKeyPathParamQueryParam: str = Path(..., title="API Key", description="The API key of the user.")
 FlexibleUserIdPathParam: FlexibleUserIdType = Path(
     ..., title="User ID", description="The ID of the user to get or 'current'."
 )
@@ -111,15 +110,15 @@ QuotaSourceLabelPathParam: str = Path(
     description="The label corresponding to the quota source to fetch usage information about.",
 )
 ObjectTypePathParam: FavoriteObjectType = Path(
-    default=Required, title="Object type", description="The object type the user wants to favorite"
+    default=..., title="Object type", description="The object type the user wants to favorite"
 )
 ObjectIDPathParam: str = Path(
-    default=Required,
+    default=...,
     title="Object ID",
     description="The ID of an object the user wants to remove from favorites",
 )
 CustomBuildKeyPathParam: str = Path(
-    default=Required,
+    default=...,
     title="Custom build key",
     description="The key of the custom build to be deleted.",
 )
@@ -135,16 +134,15 @@ RecalculateDiskUsageResponseDescriptions = {
     },
 }
 
-UserDeletionBody = Body(default=None, title="Purge user", description="Purge the user.")
-UserUpdateBody = Body(default=Required, title="Update user", description="The user values to update.")
+UserUpdateBody = Body(default=..., title="Update user", description="The user values to update.")
 FavoriteObjectBody = Body(
-    default=Required, title="Set favorite", description="The id of an object the user wants to favorite."
+    default=..., title="Set favorite", description="The id of an object the user wants to favorite."
 )
 
 CustomBuildCreationBody = Body(
-    default=Required, title="Add custom build", description="The values to add a new custom build."
+    default=..., title="Add custom build", description="The values to add a new custom build."
 )
-UserCreationBody = Body(default=Required, title="Create User", description="The values to add create a user.")
+UserCreationBody = Body(default=..., title="Create User", description="The values to add create a user.")
 AnyUserModel = Union[DetailedUserModel, AnonUserModel]
 
 
@@ -172,7 +170,25 @@ class FastAPIUsers:
 
         Please use `/api/users/current/recalculate_disk_usage` instead.
         """
-        result = self.service.recalculate_disk_usage(trans)
+        user_id = getattr(trans.user, "id", None)
+        if not user_id:
+            raise exceptions.AuthenticationRequired("Only registered users can recalculate disk usage.")
+        else:
+            result = self.service.recalculate_disk_usage(trans, user_id)
+            return Response(status_code=status.HTTP_204_NO_CONTENT) if result is None else result
+
+    @router.put(
+        "/api/users/{user_id}/recalculate_disk_usage",
+        summary=RecalculateDiskUsageSummary,
+        responses=RecalculateDiskUsageResponseDescriptions,
+        require_admin=True,
+    )
+    def recalculate_disk_usage_by_user_id(
+        self,
+        user_id: UserIdPathParam,
+        trans: ProvidesUserContext = DependsOnTrans,
+    ):
+        result = self.service.recalculate_disk_usage(trans, user_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT) if result is None else result
 
     @router.get(
@@ -186,7 +202,7 @@ class FastAPIUsers:
         f_email: Optional[str] = FilterEmailQueryParam,
         f_name: Optional[str] = FilterNameQueryParam,
         f_any: Optional[str] = FilterAnyQueryParam,
-    ) -> List[Union[UserModel, LimitedUserModel]]:
+    ) -> List[MaybeLimitedUserModel]:
         return self.service.get_index(trans=trans, deleted=True, f_email=f_email, f_name=f_name, f_any=f_any)
 
     @router.post(
@@ -197,8 +213,8 @@ class FastAPIUsers:
     )
     def undelete(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesHistoryContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
     ) -> DetailedUserModel:
         user = self.service.get_user(trans=trans, user_id=user_id)
         self.service.user_manager.undelete(user)
@@ -211,8 +227,8 @@ class FastAPIUsers:
     )
     def show_deleted(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesHistoryContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
     ) -> AnyUserModel:
         return self.service.show_user(trans=trans, user_id=user_id, deleted=True)
 
@@ -222,7 +238,9 @@ class FastAPIUsers:
         summary="Return the user's API key",
     )
     def get_or_create_api_key(
-        self, trans: ProvidesUserContext = DependsOnTrans, user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam
+        self,
+        user_id: UserIdPathParam,
+        trans: ProvidesUserContext = DependsOnTrans,
     ) -> str:
         return self.service.get_or_create_api_key(trans, user_id)
 
@@ -241,14 +259,18 @@ class FastAPIUsers:
         },
     )
     def get_api_key(
-        self, trans: ProvidesUserContext = DependsOnTrans, user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam
+        self,
+        user_id: UserIdPathParam,
+        trans: ProvidesUserContext = DependsOnTrans,
     ):
         api_key = self.service.get_api_key(trans, user_id)
         return api_key if api_key else Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.post("/api/users/{user_id}/api_key", name="create_api_key", summary="Create a new API key for the user")
     def create_api_key(
-        self, trans: ProvidesUserContext = DependsOnTrans, user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam
+        self,
+        user_id: UserIdPathParam,
+        trans: ProvidesUserContext = DependsOnTrans,
     ) -> str:
         return self.service.create_api_key(trans, user_id).key
 
@@ -260,8 +282,8 @@ class FastAPIUsers:
     )
     def delete_api_key(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
     ):
         self.service.delete_api_key(trans, user_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -276,10 +298,24 @@ class FastAPIUsers:
         trans: ProvidesUserContext = DependsOnTrans,
         user_id: FlexibleUserIdType = FlexibleUserIdPathParam,
     ) -> List[UserQuotaUsage]:
-        user = self.service.get_user_full(trans, user_id, False)
-        if user:
+        if user := self.service.get_user_full(trans, user_id, False):
             rval = self.user_serializer.serialize_disk_usage(user)
             return rval
+        else:
+            return []
+
+    @router.get(
+        "/api/users/{user_id}/objectstore_usage",
+        name="get_user_objectstore_usage",
+        summary="Return the user's object store usage summary broken down by object store ID",
+    )
+    def objectstore_usage(
+        self,
+        trans: ProvidesUserContext = DependsOnTrans,
+        user_id: FlexibleUserIdType = FlexibleUserIdPathParam,
+    ) -> List[UserObjectstoreUsage]:
+        if user := self.service.get_user_full(trans, user_id, False):
+            return user.dictify_objectstore_usage()
         else:
             return []
 
@@ -294,11 +330,10 @@ class FastAPIUsers:
         user_id: FlexibleUserIdType = FlexibleUserIdPathParam,
         label: str = QuotaSourceLabelPathParam,
     ) -> Optional[UserQuotaUsage]:
-        user = self.service.get_user_full(trans, user_id, False)
         effective_label: Optional[str] = label
         if label == "__null__":
             effective_label = None
-        if user:
+        if user := self.service.get_user_full(trans, user_id, False):
             rval = self.user_serializer.serialize_disk_usage_for(user, effective_label)
             return rval
         else:
@@ -311,8 +346,8 @@ class FastAPIUsers:
     )
     def get_beacon(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
     ) -> UserBeaconSetting:
         """
         **Warning**: This endpoint is experimental and might change or disappear in future versions.
@@ -330,8 +365,8 @@ class FastAPIUsers:
     )
     def set_beacon(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
         payload: UserBeaconSetting = Body(...),
     ) -> UserBeaconSetting:
         """
@@ -346,14 +381,14 @@ class FastAPIUsers:
         return payload
 
     @router.delete(
-        "/api/users/{user_id}/favorites/{object_type}/{object_id}",
+        "/api/users/{user_id}/favorites/{object_type}/{object_id:path}",
         name="remove_favorite",
         summary="Remove the object from user's favorites",
     )
     def remove_favorite(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
         object_type: FavoriteObjectType = ObjectTypePathParam,
         object_id: str = ObjectIDPathParam,
     ) -> FavoriteObjectsSummary:
@@ -379,8 +414,8 @@ class FastAPIUsers:
     )
     def set_favorite(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
         object_type: FavoriteObjectType = ObjectTypePathParam,
         payload: FavoriteObject = FavoriteObjectBody,
     ) -> FavoriteObjectsSummary:
@@ -412,8 +447,8 @@ class FastAPIUsers:
     )
     def set_theme(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
         theme: str = ThemePathParam,
     ) -> str:
         user = self.service.get_user(trans, user_id)
@@ -429,9 +464,9 @@ class FastAPIUsers:
     )
     def add_custom_builds(
         self,
+        user_id: UserIdPathParam,
         key: str = CustomBuildKeyPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
         payload: CustomBuildCreationPayload = CustomBuildCreationBody,
     ) -> Any:
         user = self.service.get_user(trans, user_id)
@@ -495,6 +530,7 @@ class FastAPIUsers:
             else:
                 build_dict["fasta"] = trans.security.decode_id(len_value)
                 dataset = trans.sa_session.get(HistoryDatasetAssociation, int(build_dict["fasta"]))
+                assert dataset
                 try:
                     new_len = dataset.get_converted_dataset(trans, "len")
                     new_linecount = new_len.get_converted_dataset(trans, "linecount")
@@ -513,8 +549,8 @@ class FastAPIUsers:
     )
     def get_custom_builds(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesHistoryContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
     ) -> CustomBuildsCollection:
         user = self.service.get_user(trans, user_id)
         dbkeys = json.loads(user.preferences["dbkeys"]) if "dbkeys" in user.preferences else {}
@@ -540,16 +576,16 @@ class FastAPIUsers:
         for key, attributes in valid_dbkeys.items():
             attributes["id"] = key
             dbkey_collection.append(attributes)
-        return CustomBuildsCollection.construct(__root__=dbkey_collection)
+        return CustomBuildsCollection.model_construct(root=dbkey_collection)
 
     @router.delete(
         "/api/users/{user_id}/custom_builds/{key}", name="delete_custom_build", summary="Delete a custom build"
     )
     def delete_custom_builds(
         self,
+        user_id: UserIdPathParam,
         key: str = CustomBuildKeyPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
     ) -> DeletedCustomBuild:
         user = self.service.get_user(trans, user_id)
         dbkeys = json.loads(user.preferences["dbkeys"]) if "dbkeys" in user.preferences else {}
@@ -598,7 +634,7 @@ class FastAPIUsers:
                 user = self.service.user_manager.create(email=email, username=username, password=password)
         else:
             raise exceptions.NotImplemented()
-        item = user.to_dict(view="element", value_mapper={"id": trans.security.encode_id, "total_disk_usage": float})
+        item = user.to_dict(view="element", value_mapper={"total_disk_usage": float})
         return item
 
     @router.get(
@@ -614,7 +650,7 @@ class FastAPIUsers:
         f_email: Optional[str] = FilterEmailQueryParam,
         f_name: Optional[str] = FilterNameQueryParam,
         f_any: Optional[str] = FilterAnyQueryParam,
-    ) -> List[Union[UserModel, LimitedUserModel]]:
+    ) -> List[MaybeLimitedUserModel]:
         return self.service.get_index(trans=trans, deleted=deleted, f_email=f_email, f_name=f_name, f_any=f_any)
 
     @router.get(
@@ -654,15 +690,19 @@ class FastAPIUsers:
     )
     def delete(
         self,
+        user_id: UserIdPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
-        user_id: DecodedDatabaseIdField = UserIdPathParamQueryParam,
-        payload: Optional[UserDeletionPayload] = UserDeletionBody,
+        purge: Annotated[
+            bool,
+            Query(
+                title="Purge user",
+                description="Whether to definitely remove this user. Only deleted users can be purged.",
+            ),
+        ] = False,
+        payload: Optional[UserDeletionPayload] = None,
     ) -> DetailedUserModel:
         user_to_update = self.service.user_manager.by_id(user_id)
-        if payload:
-            purge = payload.purge
-        else:
-            purge = False
+        purge = payload and payload.purge or purge
         if trans.user_is_admin:
             if purge:
                 log.debug("Purging user %s", user_to_update)
@@ -675,6 +715,23 @@ class FastAPIUsers:
             else:
                 raise exceptions.InsufficientPermissionsException("You may only delete your own account.")
         return self.service.user_to_detailed_model(user_to_update)
+
+    @router.post(
+        "/api/users/{user_id}/send_activation_email",
+        name="send_activation_email",
+        summary="Sends activation email to user.",
+        require_admin=True,
+    )
+    def send_activation_email(
+        self,
+        user_id: UserIdPathParam,
+        trans: ProvidesUserContext = DependsOnTrans,
+    ):
+        user = trans.sa_session.query(trans.model.User).get(user_id)
+        if not user:
+            raise exceptions.ObjectNotFound("User not found for given id.")
+        if not self.service.user_manager.send_activation_email(trans, user.email, user.username):
+            raise exceptions.MessageException("Unable to send activation email.")
 
 
 class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController, UsesFormDefinitionsMixin):
@@ -701,7 +758,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
         """
         if not preferences:
             return []
-        extra_pref_inputs = list()
+        extra_pref_inputs = []
         # Build sections for different categories of inputs
         user_vault = UserVaultWrapper(trans.app.vault, user)
         for item, value in preferences.items():
@@ -750,7 +807,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
         user = self._get_user(trans, id)
         email = user.email
         username = user.username
-        inputs = list()
+        inputs = []
         user_info = {
             "email": email,
             "username": username,
@@ -907,8 +964,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             if user.username != username:
                 user.username = username
         # Update user custom form
-        user_info_form_id = payload.get("info|form_id")
-        if user_info_form_id:
+        if user_info_form_id := payload.get("info|form_id"):
             prefix = "info|"
             user_info_form = trans.sa_session.get(FormDefinition, trans.security.decode_id(user_info_form_id))
             user_info_values = {}
@@ -920,7 +976,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             user.values = form_values
 
         # Update values for extra user preference items
-        extra_user_pref_data = dict()
+        extra_user_pref_data = {}
         extra_pref_keys = self._get_extra_user_preferences(trans)
         user_vault = UserVaultWrapper(trans.app.vault, user)
         if extra_pref_keys is not None:
@@ -1098,7 +1154,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
         return {"message": "Toolbox filters have been saved."}
 
     def _add_filter_inputs(self, factory, filter_types, inputs, errors, filter_type, saved_values):
-        filter_inputs = list()
+        filter_inputs = []
         filter_values = saved_values.get(filter_type, [])
         filter_config = filter_types[filter_type]["config"]
         filter_title = filter_types[filter_type]["title"]
