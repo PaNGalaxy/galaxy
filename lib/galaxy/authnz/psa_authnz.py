@@ -56,6 +56,8 @@ BACKENDS_NAME = {
     "egi_checkin": "egi-checkin",
 }
 
+AZURE_USERINFO_ENDPOINT = "https://graph.microsoft.com/oidc/userinfo"
+
 AUTH_PIPELINE = (
     # Get the information we can about the user and return it in a simple
     # format to create the user instance later. On some cases the details are
@@ -272,9 +274,11 @@ class PSAAuthnz(IdentityProvider):
             accepted_aud = self.config.get("accepted_audiences", None)
             headers = jwt.get_unverified_header(access_token)
             verify_signature = True
-            if headers.get("nonce", None):
+            if headers.get("nonce", None) and self.config["provider"] == "azure":
                 # Tokens with Nonce in header are not supposed to be verified
                 verify_signature = False
+                r = requests.get(AZURE_USERINFO_ENDPOINT, headers={"Authorization": f"Bearer {access_token}"})
+                r.raise_for_status()
 
             decoded_jwt = jwt.decode(
                 access_token,
