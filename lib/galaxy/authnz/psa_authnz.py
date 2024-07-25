@@ -141,6 +141,8 @@ class PSAAuthnz(IdentityProvider):
             self.config[setting_name("API_URL")] = oidc_backend_config.get("api_url")
         if oidc_backend_config.get("url") is not None:
             self.config[setting_name("URL")] = oidc_backend_config.get("url")
+        if oidc_backend_config.get("well_known_oidc_config_uri") is not None:
+            self.config["well_known_oidc_config_uri"] = oidc_backend_config.get("well_known_oidc_config_uri")
 
     def _get_helper(self, name, do_import=False):
         this_config = self.config.get(setting_name(name), DEFAULTS.get(name, None))
@@ -235,6 +237,84 @@ class PSAAuthnz(IdentityProvider):
         if isinstance(response, str):
             return True, "", response
         return response.get("success", False), response.get("message", ""), ""
+
+    def decode_user_access_token(self, sa_session, access_token):
+        """Verifies and decodes an access token against this provider, returning the user and
+        a dict containing the decoded token data.
+
+        :type  sa_session:      sqlalchemy.orm.scoping.scoped_session
+        :param sa_session:      SQLAlchemy database handle.
+
+        :type  access_token: string
+        :param access_token: An OIDC access token
+
+        :return: A tuple containing the user and decoded jwt data or [None, None]
+                 if the access token does not belong to this provider.
+        :rtype: Tuple[User, dict]
+        """
+        well_known_oidc_config_uri = self.config["well_known_oidc_config_uri"] if self.config.get(
+            "well_known_oidc_config_uri", None) else self._get_well_known_uri_from_url(self.config["provider"])
+        well_known_oidc_config = None
+        try:
+            well_known_oidc_config = requests.get(
+                well_known_oidc_config_uri,
+                headers={},
+                verify=True,
+                params={},
+            ).json()
+        except Exception:
+            log.error(f"Failed to load well-known OIDC config URI: {well_known_oidc_config_uri}")
+            raise
+        jwks_client = jwt.PyJWKClient(well_known_oidc_config["jwks_uri"])
+
+        try:
+            signing_key = jwks_client.get_signing_key_from_jwt(access_token)
+            accepted_aud = self.config.get("accepted_audiences", None)
+            headers = jwt.get_unverified_header(access_token)
+            verify_signature = True
+            if headers.get("nonce", None):
+                # Tokens with Nonce in header are not supposed to be verified
+                verify_signature = False
+
+            decoded_jwt = jwt.decode(
+                access_token,
+                signing_key.key,
+                algorithms=["RS256"],
+                issuer=well_known_oidc_config["issuer"],
+                audience=accepted_aud,
+                options={
+                    "verify_signature": verify_signature,
+                    "verify_exp": True,
+                    "verify_nbf": True,
+                    "verify_iat": True,
+                    "verify_aud": bool(accepted_aud),
+                    "verify_iss": True,
+                },
+            )
+        except jwt.exceptions.PyJWKClientError:
+            log.debug(
+                f"Could not get signing keys for access token with provider: {self.config['provider']}. Ignoring...")
+            return None, None
+        except jwt.exceptions.InvalidIssuerError:
+            # An Invalid issuer means that the access token is not relevant to this provider.
+            # All other exceptions are bubbled up
+            return None, None
+        # jwt verified, we can now fetch the user
+        user_id = decoded_jwt["unique_name"]
+        authnz_token = self._get_authnz_token(sa_session, user_id, self.config["provider"])
+        user = authnz_token.user if authnz_token else None
+        return user, decoded_jwt
+
+    @staticmethod
+    def _get_authnz_token(sa_session, user_id, provider):
+        return sa_session.query(UserAuthnzToken).filter_by(uid=user_id).one_or_none()
+
+    def _get_well_known_uri_from_url(self, provider):
+        # TODO: Look up this URL from a Python library
+        base_url = self.config["SOCIAL_AUTH_URL"]
+        # Remove potential trailing slash to avoid "//realms"
+        base_url = base_url if base_url[-1] != "/" else base_url[:-1]
+        return f"{base_url}/.well-known/openid-configuration"
 
 
 class Strategy(BaseStrategy):
@@ -436,7 +516,7 @@ def verify(strategy=None, response=None, details=None, **kwargs):
 
 
 def allowed_to_disconnect(
-    name=None, user=None, user_storage=None, strategy=None, backend=None, request=None, details=None, **kwargs
+        name=None, user=None, user_storage=None, strategy=None, backend=None, request=None, details=None, **kwargs
 ):
     """
     Disconnect is the process of disassociating a Galaxy user and a third-party authnz.
@@ -459,7 +539,7 @@ def allowed_to_disconnect(
 
 
 def disconnect(
-    name=None, user=None, user_storage=None, strategy=None, backend=None, request=None, details=None, **kwargs
+        name=None, user=None, user_storage=None, strategy=None, backend=None, request=None, details=None, **kwargs
 ):
     """
     Disconnect is the process of disassociating a Galaxy user and a third-party authnz.
