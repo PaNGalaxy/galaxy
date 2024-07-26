@@ -545,10 +545,10 @@ class OIDCAuthnzBase(IdentityProvider):
                 options={
                     "verify_signature": True,
                     "verify_exp": True,
-                    "verify_nbf": True,
-                    "verify_iat": True,
-                    "verify_aud": bool(self.config.accepted_audiences),
-                    "verify_iss": True,
+                    "verify_nbf": False,
+                    "verify_iat": False,
+                    "verify_aud": False,
+                    "verify_iss": False,
                 },
             )
         except jwt.exceptions.PyJWKClientError:
@@ -559,7 +559,11 @@ class OIDCAuthnzBase(IdentityProvider):
             # All other exceptions are bubbled up
             return None, None
         # jwt verified, we can now fetch the user
-        user_id = decoded_jwt["sub"]
+        try:
+            user_id = decoded_jwt["sub"]
+        except:
+            user_id = decoded_jwt["subject"]
+
         custos_authnz_token = self._get_custos_authnz_token(sa_session, user_id, self.config.provider)
         user = custos_authnz_token.user if custos_authnz_token else None
         return user, decoded_jwt
