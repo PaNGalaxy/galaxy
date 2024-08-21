@@ -1517,7 +1517,7 @@ class ColumnListParameter(SelectToolParameter):
                 except Exception:
                     column_list = self.get_column_list(trans, other_values)
             if self.numerical:  # If numerical was requested, filter columns based on metadata
-                if hasattr(dataset, "metadata") and hasattr(dataset.metadata, "column_types"):
+                if hasattr(dataset, "metadata") and getattr(dataset.metadata, "column_types", None) is not None:
                     if len(dataset.metadata.column_types) >= len(column_list):
                         numerics = [i for i, x in enumerate(dataset.metadata.column_types) if x in ["int", "float"]]
                         column_list = [column_list[i] for i in numerics]
@@ -2053,7 +2053,8 @@ def src_id_to_item(
         item = sa_session.get(src_to_class[value["src"]], decoded_id)
     except KeyError:
         raise ValueError(f"Unknown input source {value['src']} passed to job submission API.")
-    assert item
+    if not item:
+        raise ValueError("Invalid input id passed to job submission API.")
     item.extra_params = {k: v for k, v in value.items() if k not in ("src", "id")}
     return item
 
@@ -2188,19 +2189,37 @@ class DataToolParameter(BaseDataToolParameter):
         dataset_matcher_factory = get_dataset_matcher_factory(trans)
         dataset_matcher = dataset_matcher_factory.dataset_matcher(self, other_values)
         for v in rval:
-            if v:
-                if hasattr(v, "deleted") and v.deleted:
+            if isinstance(v, DatasetCollectionElement):
+                if hda := v.hda:
+                    v = hda
+                elif ldda := v.ldda:
+                    v = ldda
+                elif collection := v.child_collection:
+                    v = collection
+                elif not v.collection and v.collection.populated_optimized:
+                    raise ParameterValueError("the selected collection has not been populated.", self.name)
+                else:
+                    raise ParameterValueError("Collection element in unexpected state", self.name)
+            if isinstance(v, DatasetInstance):
+                if v.deleted:
                     raise ParameterValueError("the previously selected dataset has been deleted.", self.name)
-                elif hasattr(v, "dataset") and v.dataset.state in [Dataset.states.ERROR, Dataset.states.DISCARDED]:
+                elif v.dataset and v.dataset.state in [Dataset.states.ERROR, Dataset.states.DISCARDED]:
                     raise ParameterValueError(
                         "the previously selected dataset has entered an unusable state", self.name
                     )
-                elif hasattr(v, "dataset"):
-                    if isinstance(v, DatasetCollectionElement):
-                        v = v.hda
-                    match = dataset_matcher.hda_match(v)
-                    if match and match.implicit_conversion:
-                        v.implicit_conversion = True  # type:ignore[union-attr]
+                match = dataset_matcher.hda_match(v)
+                if match and match.implicit_conversion:
+                    v.implicit_conversion = True  # type:ignore[union-attr]
+            elif isinstance(v, HistoryDatasetCollectionAssociation):
+                if v.deleted:
+                    raise ParameterValueError("the previously selected dataset collection has been deleted.", self.name)
+                v = v.collection
+            if isinstance(v, DatasetCollection):
+                if v.elements_deleted:
+                    raise ParameterValueError(
+                        "the previously selected dataset collection has elements that are deleted.", self.name
+                    )
+
         if not self.multiple:
             if len(rval) > 1:
                 raise ParameterValueError("more than one dataset supplied to single input dataset parameter", self.name)
@@ -2497,10 +2516,19 @@ class DataCollectionToolParameter(BaseDataToolParameter):
                 rval = session.get(HistoryDatasetCollectionAssociation, int(value[len("hdca:") :]))
             else:
                 rval = session.get(HistoryDatasetCollectionAssociation, int(value))
-        if rval and isinstance(rval, HistoryDatasetCollectionAssociation):
-            if rval.deleted:
-                raise ParameterValueError("the previously selected dataset collection has been deleted", self.name)
-            # TODO: Handle error states, implement error states ...
+        if rval:
+            if isinstance(rval, HistoryDatasetCollectionAssociation):
+                if rval.deleted:
+                    raise ParameterValueError("the previously selected dataset collection has been deleted", self.name)
+                if rval.collection.elements_deleted:
+                    raise ParameterValueError(
+                        "the previously selected dataset collection has elements that are deleted.", self.name
+                    )
+            if isinstance(rval, DatasetCollectionElement):
+                if (child_collection := rval.child_collection) and child_collection.elements_deleted:
+                    raise ParameterValueError(
+                        "the previously selected dataset collection has elements that are deleted.", self.name
+                    )
         return rval
 
     def to_text(self, value):
