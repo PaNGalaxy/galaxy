@@ -58,6 +58,7 @@ from galaxy.util import (
     galaxy_directory,
     specs,
     string_as_bool_or_none,
+    unicodify,
 )
 
 log = logging.getLogger(__name__)

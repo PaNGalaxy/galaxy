@@ -12850,7 +12850,10 @@ export interface components {
              * @enum {string}
              */
             type: "aws_s3" | "azure_blob" | "boto3" | "disk" | "generic_s3";
-            /** Uuid */
+            /**
+             * Uuid
+             * Format: uuid4
+             */
             uuid: string;
             /** Variables */
             variables: {
@@ -12924,7 +12927,10 @@ export interface components {
             type: "ftp" | "posix" | "s3fs" | "azure";
             /** Uri Root */
             uri_root: string;
-            /** Uuid */
+            /**
+             * Uuid
+             * Format: uuid4
+             */
             uuid: string;
             /** Variables */
             variables: {

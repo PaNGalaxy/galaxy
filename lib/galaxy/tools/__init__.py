@@ -379,7 +379,7 @@ class PersistentToolTagManager(AbstractToolTagManager):
 
     def reset_tags(self):
         log.info(
-            f"removing all tool tag associations ({str(self.sa_session.scalar(select(func.count(self.app.model.ToolTagAssociation))))})"
+            f"removing all tool tag associations ({str(self.sa_session.scalar(select(func.count(self.app.model.ToolTagAssociation.id))))})"
         )
         self.sa_session.execute(delete(self.app.model.ToolTagAssociation))
         with transaction(self.sa_session):
@@ -2876,7 +2876,27 @@ class ExpressionTool(Tool):
                         break
                 if copy_object is None:
                     raise exceptions.MessageException("Failed to find dataset output.")
-                out_data[key].copy_from(copy_object, include_metadata=True)
+                output = out_data[key]
+                # if change_datatype PJA is associated with expression tool output the new output already has
+                # the desired datatype, so we use it. If the extension is "data" there's no change_dataset PJA and
+                # we want to use the existing extension.
+                new_ext = output.extension if output.extension != "data" else copy_object.extension
+                require_metadata_regeneration = copy_object.extension != new_ext
+                output.copy_from(copy_object, include_metadata=not require_metadata_regeneration)
+                output.extension = new_ext
+                if require_metadata_regeneration:
+                    if app.config.enable_celery_tasks:
+                        from galaxy.celery.tasks import set_metadata
+
+                        output._state = model.Dataset.states.SETTING_METADATA
+                        return set_metadata.si(
+                            dataset_id=output.id, task_user_id=output.history.user_id, ensure_can_set_metadata=False
+                        )
+                    else:
+                        # TODO: move exec_after_process into metadata script so this doesn't run on the headnode ?
+                        output.init_meta()
+                        output.set_meta()
+                        output.set_metadata_success_state()
 
     def parse_environment_variables(self, tool_source):
         """Setup environment variable for inputs file."""
@@ -3812,8 +3832,14 @@ class RelabelFromFileTool(DatabaseOperationTool):
         if how_type == "tabular":
             # We have a tabular file, where the first column is an existing element identifier,
             # and the second column is the new element identifier.
+            new_labels_dict = {}
             source_new_label = (line.strip().split("\t") for line in new_labels)
-            new_labels_dict = dict(source_new_label)
+            for i, label_pair in enumerate(source_new_label):
+                if not len(label_pair) == 2:
+                    raise exceptions.MessageException(
+                        f"Relabel mapping file line {i + 1} contains {len(label_pair)} columns, but 2 are required"
+                    )
+                new_labels_dict[label_pair[0]] = label_pair[1]
             for dce in hdca.collection.elements:
                 dce_object = dce.element_object
                 element_identifier = dce.element_identifier
