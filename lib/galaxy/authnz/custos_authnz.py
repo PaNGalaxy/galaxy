@@ -122,22 +122,17 @@ class OIDCAuthnzBase(IdentityProvider):
         # do not refresh tokens if they didn't reach their half lifetime
         if int(id_token_decoded["iat"]) + int(id_token_decoded["exp"]) > 2 * int(time.time()):
             return False
-        log.info(custos_authnz_token.access_token)
         oauth2_session = self._create_oauth2_session()
         token_endpoint = self.config.token_endpoint
         if self.config.iam_client_secret:
             client_secret = self.config.iam_client_secret
         else:
             client_secret = self.config.client_secret
-        clientIdAndSec = f"{self.config.client_id}:{self.config.client_secret}"  # for custos
 
         params = {
             "client_id": self.config.client_id,
             "client_secret": client_secret,
             "refresh_token": custos_authnz_token.refresh_token,
-            "headers": {
-                "Authorization": f"Basic {util.unicodify(base64.b64encode(util.smart_str(clientIdAndSec)))}"
-            },  # for custos
         }
 
         token = oauth2_session.refresh_token(token_endpoint, **params)
@@ -153,7 +148,8 @@ class OIDCAuthnzBase(IdentityProvider):
         custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
 
         trans.sa_session.add(custos_authnz_token)
-        trans.sa_session.flush()
+        with transaction(trans.sa_session):
+            trans.sa_session.commit()
         return True
 
     def _get_provider_specific_scopes(self):
