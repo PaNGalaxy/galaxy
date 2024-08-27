@@ -807,7 +807,6 @@ class UniverseApplication(StructuredApp, GalaxyManagerApplication):
                 self.application_stack.register_postfork_function(self.refresh_oidc_tokens_task.start)
                 self.haltables.append(("RefreshOIDCTokensTask", self.refresh_oidc_tokens_task.shutdown))
 
-
             # If there is only a single external authentication provider in use
             # TODO: Future work will expand on this and provide an interface for
             # multiple auth providers allowing explicit authenticated association.

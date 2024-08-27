@@ -5,7 +5,10 @@ import logging
 import os
 import random
 import string
-from datetime import datetime, timedelta
+from datetime import (
+    datetime,
+    timedelta,
+)
 
 from cloudauthz import CloudAuthz
 from cloudauthz.exceptions import CloudAuthzBaseException
@@ -305,7 +308,7 @@ class AuthnzManager:
                 )
                 raise exceptions.AuthenticationFailed(
                     err_msg=f"An error occurred getting your ID token. {msg}. If the problem persists, please "
-                            "contact Galaxy admin."
+                    "contact Galaxy admin."
                 )
         return config
 
@@ -361,7 +364,7 @@ class AuthnzManager:
                 msg = f"An error occurred when getting backend for `{auth.provider}` identity provider: {message}"
                 log.error(msg)
                 return False
-            backend.refresh(sa_session, auth, skip_old_tokens_threshold_days = 30)
+            backend.refresh(sa_session, auth, skip_old_tokens_threshold_days=30)
             return True
         except Exception:
             log.exception("An error occurred when refreshing user token")
@@ -370,8 +373,10 @@ class AuthnzManager:
     def refresh_expiring_oidc_tokens(self, sa_session):
         # Galaxy starts multiple RefreshOIDCTokensTask (one for each handler and workes). Until we found a better way
         # to deal with it, we check the server name here and only run refresh for one worker.
-        if (self.app.config.server_name != self.app.config.base_server_name
-                and self.app.config.server_name != f"{self.app.config.base_server_name}.1"):
+        if (
+            self.app.config.server_name != self.app.config.base_server_name
+            and self.app.config.server_name != f"{self.app.config.base_server_name}.1"
+        ):
             return
 
         all_users = sa_session.scalars(select(model.User)).all()
@@ -417,7 +422,8 @@ class AuthnzManager:
     def _validate_permissions(self, user, jwt, provider):
         # Get required scope if provided in config, else use the configured scope prefix
         required_scopes = [
-            f"{self.oidc_backends_config[provider].get('required_scope', f'{self.app.config.oidc_scope_prefix}:*')}"]
+            f"{self.oidc_backends_config[provider].get('required_scope', f'{self.app.config.oidc_scope_prefix}:*')}"
+        ]
         self._assert_jwt_contains_scopes(user, jwt, required_scopes)
 
     def callback(self, provider, state_token, authz_code, trans, login_redirect_url, idphint=None):

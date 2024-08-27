@@ -193,17 +193,19 @@ class PSAAuthnz(IdentityProvider):
         if int(user_authnz_token.extra_data["auth_time"]) + skip_old_tokens_threshold_seconds < int(time.time()):
             return False
 
-
         if int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2 <= int(time.time()):
             on_the_fly_config(sa_session)
-            log.debug(f"Refreshing user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider")
+            log.debug(
+                f"Refreshing user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
+            )
             if self.config["provider"] == "azure":
                 self.refresh_azure(user_authnz_token)
             else:
                 strategy = Strategy(None, sa_session, Storage, self.config)
                 user_authnz_token.refresh_token(strategy)
             log.debug(
-                f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider")
+                f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
+            )
 
             return True
 
@@ -266,8 +268,11 @@ class PSAAuthnz(IdentityProvider):
                  if the access token does not belong to this provider.
         :rtype: Tuple[User, dict]
         """
-        well_known_oidc_config_uri = self.config["well_known_oidc_config_uri"] if self.config.get(
-            "well_known_oidc_config_uri", None) else self._get_well_known_uri_from_url(self.config["provider"])
+        well_known_oidc_config_uri = (
+            self.config["well_known_oidc_config_uri"]
+            if self.config.get("well_known_oidc_config_uri", None)
+            else self._get_well_known_uri_from_url(self.config["provider"])
+        )
         well_known_oidc_config = None
         try:
             well_known_oidc_config = requests.get(
@@ -309,7 +314,8 @@ class PSAAuthnz(IdentityProvider):
             )
         except jwt.exceptions.PyJWKClientError:
             log.debug(
-                f"Could not get signing keys for access token with provider: {self.config['provider']}. Ignoring...")
+                f"Could not get signing keys for access token with provider: {self.config['provider']}. Ignoring..."
+            )
             return None, None
         except jwt.exceptions.InvalidIssuerError:
             # An Invalid issuer means that the access token is not relevant to this provider.
@@ -532,7 +538,7 @@ def verify(strategy=None, response=None, details=None, **kwargs):
 
 
 def allowed_to_disconnect(
-        name=None, user=None, user_storage=None, strategy=None, backend=None, request=None, details=None, **kwargs
+    name=None, user=None, user_storage=None, strategy=None, backend=None, request=None, details=None, **kwargs
 ):
     """
     Disconnect is the process of disassociating a Galaxy user and a third-party authnz.
@@ -555,7 +561,7 @@ def allowed_to_disconnect(
 
 
 def disconnect(
-        name=None, user=None, user_storage=None, strategy=None, backend=None, request=None, details=None, **kwargs
+    name=None, user=None, user_storage=None, strategy=None, backend=None, request=None, details=None, **kwargs
 ):
     """
     Disconnect is the process of disassociating a Galaxy user and a third-party authnz.

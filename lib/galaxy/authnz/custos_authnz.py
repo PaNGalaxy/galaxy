@@ -141,7 +141,9 @@ class OIDCAuthnzBase(IdentityProvider):
             "refresh_token": custos_authnz_token.refresh_token,
         }
 
-        log.debug(f"Refreshing user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider")
+        log.debug(
+            f"Refreshing user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
+        )
         token = oauth2_session.refresh_token(token_endpoint, **params)
         processed_token = self._process_token_after_refresh(token)
 
@@ -158,7 +160,9 @@ class OIDCAuthnzBase(IdentityProvider):
         with transaction(sa_session):
             sa_session.commit()
 
-        log.debug(f"Refreshed user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider")
+        log.debug(
+            f"Refreshed user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
+        )
 
         return True
 
@@ -202,7 +206,6 @@ class OIDCAuthnzBase(IdentityProvider):
             (datetime.now() + timedelta(seconds=token["refresh_expires_in"])) if "refresh_expires_in" in token else None
         )
         return processed_token
-
 
     def _process_token(self, trans, oauth2_session, token, validate_nonce=True):
         processed_token = {}
