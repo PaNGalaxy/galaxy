@@ -355,6 +355,7 @@ class AuthnzManager:
         return qres
 
     def refresh_expiring_oidc_tokens_for_provider(self, sa_session, auth):
+        self.app.config.server_name
         try:
             success, message, backend = self._get_authnz_backend(auth.provider)
             if success is False:
@@ -368,6 +369,8 @@ class AuthnzManager:
             return False
 
     def refresh_expiring_oidc_tokens(self, sa_session):
+            if (self.app.config.server_name != self.app.config.base_server_name and self.app.config.server_name != f"{self.app.config}.1"):
+                return
             user_filter = datetime.now() - timedelta(days=30)
             all_users = sa_session.scalars(select(model.User)).all()
             for user in all_users:
