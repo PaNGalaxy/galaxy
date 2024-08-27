@@ -115,12 +115,17 @@ class OIDCAuthnzBase(IdentityProvider):
     def _decode_token_no_signature(self, token):
         return jwt.decode(token, audience=self.config.client_id, options={"verify_signature": False})
 
-    def refresh(self, sa_session, custos_authnz_token):
+    def refresh(self, sa_session, custos_authnz_token, skip_old_tokens_threshold_days):
         if custos_authnz_token is None:
             raise exceptions.AuthenticationFailed("cannot find authorized user while refreshing token")
         id_token_decoded = self._decode_token_no_signature(custos_authnz_token.id_token)
         # do not refresh tokens if they didn't reach their half lifetime
         if int(id_token_decoded["iat"]) + int(id_token_decoded["exp"]) > 2 * int(time.time()):
+            return False
+
+        # do not refresh tokens if last token is too old
+        skip_old_tokens_threshold_seconds = skip_old_tokens_threshold_days * 86400  # 86400 seconds in a day
+        if int(id_token_decoded["iat"]) + skip_old_tokens_threshold_seconds < int(time.time()):
             return False
 
         oauth2_session = self._create_oauth2_session()

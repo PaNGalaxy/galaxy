@@ -361,22 +361,21 @@ class AuthnzManager:
                 msg = f"An error occurred when getting backend for `{auth.provider}` identity provider: {message}"
                 log.error(msg)
                 return False
-            backend.refresh(sa_session, auth)
+            backend.refresh(sa_session, auth, skip_old_tokens_threshold_days = 30)
             return True
         except Exception:
             log.exception("An error occurred when refreshing user token")
             return False
 
     def refresh_expiring_oidc_tokens(self, sa_session):
+        # Galaxy starts multiple RefreshOIDCTokensTask (one for each handler and workes). Until we found a better way
+        # to deal with it, we check the server name here and only run refresh for one worker.
         if (self.app.config.server_name != self.app.config.base_server_name
                 and self.app.config.server_name != f"{self.app.config.base_server_name}.1"):
             return
-        user_filter = datetime.now() - timedelta(days=90)
+
         all_users = sa_session.scalars(select(model.User)).all()
         for user in all_users:
-            if not user.galaxy_sessions or user.current_galaxy_session.update_time < user_filter:
-                log.debug(f"skipping token refresh for user {user.username}")
-                continue
             for auth in user.custos_auth or []:
                 self.refresh_expiring_oidc_tokens_for_provider(sa_session, auth)
             for auth in user.social_auth or []:
