@@ -3029,7 +3029,7 @@ mapping:
 
       oidc_refresh_tokens_interval:
         type: int
-        default: 60
+        default: 300
         required: false
         desc: |
           The interval in seconds between calls to refresh OIDC tokens

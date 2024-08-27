@@ -4173,7 +4173,7 @@
 
 :Description:
     The interval in seconds between calls to refresh OIDC tokens
-:Default: ``60``
+:Default: ``300``
 :Type: int
 
 

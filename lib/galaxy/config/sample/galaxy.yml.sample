@@ -2262,7 +2262,7 @@ galaxy:
   #oidc_scope_prefix: https://galaxyproject.org/api
 
   # The interval in seconds between calls to refresh OIDC tokens
-  #oidc_refresh_tokens_interval: 60
+  #oidc_refresh_tokens_interval: 300
 
   # XML config file that allows the use of different authentication
   # providers (e.g. LDAP) instead or in addition to local authentication
