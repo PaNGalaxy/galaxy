@@ -136,6 +136,7 @@ class OIDCAuthnzBase(IdentityProvider):
             "refresh_token": custos_authnz_token.refresh_token,
         }
 
+        log.debug(f"Refreshing user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider")
         token = oauth2_session.refresh_token(token_endpoint, **params)
         processed_token = self._process_token_after_refresh(token)
 

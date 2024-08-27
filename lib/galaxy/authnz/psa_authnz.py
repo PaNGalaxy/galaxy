@@ -189,6 +189,7 @@ class PSAAuthnz(IdentityProvider):
             return False
         if int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2 <= int(time.time()):
             on_the_fly_config(sa_session)
+            log.debug(f"Refreshing user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider")
             if self.config["provider"] == "azure":
                 self.refresh_azure(user_authnz_token)
             else:

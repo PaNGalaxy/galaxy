@@ -368,9 +368,13 @@ class AuthnzManager:
             return False
 
     def refresh_expiring_oidc_tokens(self, sa_session):
-        user_filter = datetime.now() - timedelta(days=7)
-        all_users = sa_session.scalars(select(model.User).filter(model.User.update_time < user_filter)).all()
-        for user in all_users:
+            user_filter = datetime.now() - timedelta(days=30)
+            all_users = sa_session.scalars(select(model.User)).all()
+            for user in all_users:
+                if not user.galaxy_sessions or user.current_galaxy_session.update_time < user_filter:
+                    log.debug(f"skipping token refresh for user {user.username}")
+                    continue
+
             for auth in user.custos_auth or []:
                 self.refresh_expiring_oidc_tokens_for_provider(sa_session, auth)
             for auth in user.social_auth or []:
