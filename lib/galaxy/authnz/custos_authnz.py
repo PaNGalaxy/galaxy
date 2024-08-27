@@ -115,13 +115,14 @@ class OIDCAuthnzBase(IdentityProvider):
     def _decode_token_no_signature(self, token):
         return jwt.decode(token, audience=self.config.client_id, options={"verify_signature": False})
 
-    def refresh(self, trans, custos_authnz_token):
+    def refresh(self, sa_session, custos_authnz_token):
         if custos_authnz_token is None:
             raise exceptions.AuthenticationFailed("cannot find authorized user while refreshing token")
         id_token_decoded = self._decode_token_no_signature(custos_authnz_token.id_token)
         # do not refresh tokens if they didn't reach their half lifetime
         if int(id_token_decoded["iat"]) + int(id_token_decoded["exp"]) > 2 * int(time.time()):
             return False
+
         oauth2_session = self._create_oauth2_session()
         token_endpoint = self.config.token_endpoint
         if self.config.iam_client_secret:
@@ -136,7 +137,7 @@ class OIDCAuthnzBase(IdentityProvider):
         }
 
         token = oauth2_session.refresh_token(token_endpoint, **params)
-        processed_token = self._process_token(trans, oauth2_session, token, False)
+        processed_token = self._process_token_after_refresh(token)
 
         custos_authnz_token.access_token = processed_token["access_token"]
         if "id_token" in processed_token:
@@ -147,9 +148,12 @@ class OIDCAuthnzBase(IdentityProvider):
         custos_authnz_token.expiration_time = processed_token["expiration_time"]
         custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
 
-        trans.sa_session.add(custos_authnz_token)
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        sa_session.add(custos_authnz_token)
+        with transaction(sa_session):
+            sa_session.commit()
+
+        log.debug(f"Refreshed user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider")
+
         return True
 
     def _get_provider_specific_scopes(self):
@@ -181,6 +185,18 @@ class OIDCAuthnzBase(IdentityProvider):
         trans.set_cookie(value=state, name=STATE_COOKIE_NAME)
         trans.set_cookie(value=nonce, name=NONCE_COOKIE_NAME)
         return authorization_url
+
+    def _process_token_after_refresh(self, token):
+        processed_token = {}
+        processed_token["access_token"] = token["access_token"]
+        processed_token["id_token"] = token["id_token"]
+        processed_token["refresh_token"] = token["refresh_token"] if "refresh_token" in token else None
+        processed_token["expiration_time"] = datetime.now() + timedelta(seconds=token.get("expires_in", 3600))
+        processed_token["refresh_expiration_time"] = (
+            (datetime.now() + timedelta(seconds=token["refresh_expires_in"])) if "refresh_expires_in" in token else None
+        )
+        return processed_token
+
 
     def _process_token(self, trans, oauth2_session, token, validate_nonce=True):
         processed_token = {}

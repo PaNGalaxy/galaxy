@@ -176,7 +176,7 @@ class PSAAuthnz(IdentityProvider):
         extra_data["expires"] = int(expires - time.time())
         user_authnz_token.set_extra_data(extra_data)
 
-    def refresh(self, trans, user_authnz_token):
+    def refresh(self, sa_session, user_authnz_token):
         if not user_authnz_token or not user_authnz_token.extra_data:
             return False
         # refresh tokens if they reached their half lifetime
@@ -188,13 +188,17 @@ class PSAAuthnz(IdentityProvider):
             log.debug("No `expires` or `expires_in` key found in token extra data, cannot refresh")
             return False
         if int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2 <= int(time.time()):
-            on_the_fly_config(trans.sa_session)
+            on_the_fly_config(sa_session)
             if self.config["provider"] == "azure":
                 self.refresh_azure(user_authnz_token)
             else:
-                strategy = Strategy(trans.request, trans.session, Storage, self.config)
+                strategy = Strategy(None, sa_session, Storage, self.config)
                 user_authnz_token.refresh_token(strategy)
+            log.debug(
+                f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider")
+
             return True
+
         return False
 
     def authenticate(self, trans):

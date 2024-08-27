@@ -721,15 +721,6 @@ galaxy:
   # Configured user file source templates embedded into Galaxy's config.
   #file_source_templates: null
 
-  # Configure URIs for user object stores to use either the object ID
-  # ('id') or UUIDs ('uuid'). Either is fine really, Galaxy doesn't
-  # typically expose database objects by 'id' but there isn't any
-  # obvious disadvantage to doing it in this case and it keeps user
-  # exposed URIs much smaller. The default of UUID feels a little more
-  # like a typical way to do this within Galaxy though. Do not change
-  # this value once user object stores have been created.
-  #user_config_templates_index_by: uuid
-
   # User defined object stores and file sources are saved in the
   # database with their last valid configuration. It may be the case
   # that the admin changes file source and object store templates over
@@ -1331,7 +1322,7 @@ galaxy:
   # defaults to "GLOBAL" if not set or the
   # `geographical_server_location_code` value is invalid or unsupported.
   # To see a full list of supported locations, visit
-  # https://docs.galaxyproject.org/en/master/admin/carbon_emissions.html
+  # https://galaxyproject.org/admin/carbon_emissions
   #geographical_server_location_code: GLOBAL
 
   # The estimated power usage effectiveness of the data centre housing
@@ -2076,14 +2067,14 @@ galaxy:
   # Hide the sign out link in the user menu (Useful if only third party
   # authentication is enabled, and users should only sign out using the
   # authentication provider's sign out page.)
-  #hide_sign_out: true
+  #hide_sign_out: false
+
+  # Hides internal Galaxy login form fields
+  #disable_internal_login: false
 
   # Show the site's welcome page (see welcome_url) alongside the login
   # page (even if require_login is true).
   #show_welcome_with_login: false
-
-  # Hides internal Galaxy login form fields
-  #disable_internal_login: false
 
   # Controls the order of the login page to prefer Custos-based login
   # and registration.
@@ -2269,6 +2260,9 @@ galaxy:
   # only * is recognised as a valid scope, and future iterations may
   # provide more fine-grained scopes.
   #oidc_scope_prefix: https://galaxyproject.org/api
+
+  # The interval in seconds between calls to refresh OIDC tokens
+  #oidc_refresh_tokens_interval: 60
 
   # XML config file that allows the use of different authentication
   # providers (e.g. LDAP) instead or in addition to local authentication
