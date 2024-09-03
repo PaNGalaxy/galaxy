@@ -3027,6 +3027,14 @@ mapping:
           Currently, only * is recognised as a valid scope, and future iterations may
           provide more fine-grained scopes.
 
+      oidc_refresh_tokens_interval:
+        type: int
+        default: 300
+        required: false
+        desc: |
+          The interval in seconds between calls to refresh OIDC tokens
+
+
       auth_config_file:
         type: str
         default: auth_conf.xml

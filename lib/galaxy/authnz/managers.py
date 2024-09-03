@@ -5,9 +5,14 @@ import logging
 import os
 import random
 import string
+from datetime import (
+    datetime,
+    timedelta,
+)
 
 from cloudauthz import CloudAuthz
 from cloudauthz.exceptions import CloudAuthzBaseException
+from sqlalchemy import select
 
 from galaxy import (
     exceptions,
@@ -352,29 +357,34 @@ class AuthnzManager:
             raise exceptions.ItemAccessibilityException(msg)
         return qres
 
-    def refresh_expiring_oidc_tokens_for_provider(self, trans, auth):
+    def refresh_expiring_oidc_tokens_for_provider(self, sa_session, auth):
         try:
             success, message, backend = self._get_authnz_backend(auth.provider)
             if success is False:
-                msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
+                msg = f"An error occurred when getting backend for `{auth.provider}` identity provider: {message}"
                 log.error(msg)
                 return False
-            refreshed = backend.refresh(trans, auth)
-            if refreshed:
-                log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
+            backend.refresh(sa_session, auth, skip_old_tokens_threshold_days=30)
             return True
         except Exception:
             log.exception("An error occurred when refreshing user token")
             return False
 
-    def refresh_expiring_oidc_tokens(self, trans, user=None):
-        user = trans.user or user
-        if not isinstance(user, model.User):
+    def refresh_expiring_oidc_tokens(self, sa_session):
+        # Galaxy starts multiple RefreshOIDCTokensTask (one for each handler and workes). Until we found a better way
+        # to deal with it, we check the server name here and only run refresh for one worker.
+        if (
+            self.app.config.server_name != self.app.config.base_server_name
+            and self.app.config.server_name != f"{self.app.config.base_server_name}.1"
+        ):
             return
-        for auth in user.custos_auth or []:
-            self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
-        for auth in user.social_auth or []:
-            self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
+
+        all_users = sa_session.scalars(select(model.User)).all()
+        for user in all_users:
+            for auth in user.custos_auth or []:
+                self.refresh_expiring_oidc_tokens_for_provider(sa_session, auth)
+            for auth in user.social_auth or []:
+                self.refresh_expiring_oidc_tokens_for_provider(sa_session, auth)
 
     def authenticate(self, provider, trans, idphint=None):
         """
@@ -411,7 +421,9 @@ class AuthnzManager:
 
     def _validate_permissions(self, user, jwt, provider):
         # Get required scope if provided in config, else use the configured scope prefix
-        required_scopes = [f"{self.oidc_backends_config[provider].get('required_scope', f'{self.app.config.oidc_scope_prefix}:*')}"]
+        required_scopes = [
+            f"{self.oidc_backends_config[provider].get('required_scope', f'{self.app.config.oidc_scope_prefix}:*')}"
+        ]
         self._assert_jwt_contains_scopes(user, jwt, required_scopes)
 
     def callback(self, provider, state_token, authz_code, trans, login_redirect_url, idphint=None):
