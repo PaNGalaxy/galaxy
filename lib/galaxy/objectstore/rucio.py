@@ -1,5 +1,4 @@
 import hashlib
-
 import logging
 import os
 import shutil
@@ -32,7 +31,6 @@ from galaxy.util import (
     umask_fix_perms,
     unlink,
 )
-
 from ._caching_base import CachingConcreteObjectStore
 from .caching import (
     enable_cache_monitor,
@@ -86,7 +84,6 @@ def parse_config_xml(config_xml):
         if e_xml:
             oidc_providers = [e.text for e in e_xml]
 
-
         enable_cache_mon = string_as_bool(config_xml.findtext("enable_cache_monitor", "False"))
 
         e_xml = config_xml.findall("rucio_upload_scheme")
@@ -100,7 +97,6 @@ def parse_config_xml(config_xml):
             rucio_upload_scheme = None
             rucio_scope = None
             rucio_register_only = False
-
 
         e_xml = config_xml.findall("rucio_auth")
         if not e_xml:
@@ -311,7 +307,8 @@ class RucioObjectStore(CachingConcreteObjectStore):
         self._initialize()
 
     def _initialize(self):
-        self._ensure_staging_path_writable()
+        if not self.rucio_config["register_only"]:
+            self._ensure_staging_path_writable()
         self._start_cache_monitor_if_needed()
 
     def _pull_into_cache(self, rel_path, auth_token):

@@ -4380,8 +4380,6 @@ class Dataset(Base, StorableObject, Serializable):
         # TODO: purge metadata files
         self.deleted = True
         self.purged = True
-        self.file_size = 0
-        self.total_size = 0
 
     def get_access_roles(self, security_agent):
         roles = []
@@ -6508,6 +6506,23 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
 
         q = q.order_by(*order_by_columns)
         return q
+
+    @property
+    def elements_deleted(self):
+        if not hasattr(self, "_elements_deleted"):
+            if session := object_session(self):
+                stmt = self._build_nested_collection_attributes_stmt(
+                    hda_attributes=("deleted",), dataset_attributes=("deleted",)
+                )
+                stmt = stmt.exists().where(or_(HistoryDatasetAssociation.deleted == true(), Dataset.deleted == true()))
+                self._elements_deleted = session.execute(select(stmt)).scalar()
+            else:
+                self._elements_deleted = False
+                for dataset_instance in self.dataset_instances:
+                    if dataset_instance.deleted or dataset_instance.dataset.deleted:
+                        self._elements_deleted = True
+                        break
+        return self._elements_deleted
 
     @property
     def dataset_states_and_extensions_summary(self):

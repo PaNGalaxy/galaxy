@@ -2919,6 +2919,7 @@ mapping:
         type: str
         default: default
         required: false
+        per_host: true
         desc: |
           Default tool panel view for the current Galaxy configuration. This should refer to an id of
           a panel view defined using the panel_views or panel_views_dir configuration options or an
@@ -3025,6 +3026,14 @@ mapping:
           would have to be specified as "<prefix>:*". e.g "https://galaxyproject.org/api:*".
           Currently, only * is recognised as a valid scope, and future iterations may
           provide more fine-grained scopes.
+
+      oidc_refresh_tokens_interval:
+        type: int
+        default: 300
+        required: false
+        desc: |
+          The interval in seconds between calls to refresh OIDC tokens
+
 
       auth_config_file:
         type: str

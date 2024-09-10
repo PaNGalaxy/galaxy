@@ -793,22 +793,6 @@
 :Type: seq
 
 
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-``user_config_templates_index_by``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-:Description:
-    Configure URIs for user object stores to use either the object ID
-    ('id') or UUIDs ('uuid'). Either is fine really, Galaxy doesn't
-    typically expose database objects by 'id' but there isn't any
-    obvious disadvantage to doing it in this case and it keeps user
-    exposed URIs much smaller. The default of UUID feels a little more
-    like a typical way to do this within Galaxy though. Do not change
-    this value once user object stores have been created.
-:Default: ``uuid``
-:Type: str
-
-
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``user_config_templates_use_saved_configuration``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -3758,6 +3742,28 @@
 :Type: bool
 
 
+~~~~~~~~~~~~~~~~~
+``hide_sign_out``
+~~~~~~~~~~~~~~~~~
+
+:Description:
+    Hide the sign out link in the user menu (Useful if only third
+    party authentication is enabled, and users should only sign out
+    using the  authentication provider's sign out page.)
+:Default: ``false``
+:Type: bool
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+``disable_internal_login``
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Hides internal Galaxy login form fields
+:Default: ``false``
+:Type: bool
+
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``show_welcome_with_login``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -3768,14 +3774,6 @@
 :Default: ``false``
 :Type: bool
 
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-``disable_internal_login``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-:Description:
-    Hides internal Galaxy login form fields.
-:Default: ``false``
-:Type: bool
 
 ~~~~~~~~~~~~~~~~~~~~~~~
 ``prefer_custos_login``
@@ -4167,6 +4165,16 @@
     iterations may provide more fine-grained scopes.
 :Default: ``https://galaxyproject.org/api``
 :Type: str
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``oidc_refresh_tokens_interval``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    The interval in seconds between calls to refresh OIDC tokens
+:Default: ``300``
+:Type: int
 
 
 ~~~~~~~~~~~~~~~~~~~~

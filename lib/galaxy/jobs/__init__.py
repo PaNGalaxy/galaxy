@@ -2010,13 +2010,13 @@ class MinimalJobWrapper(HasResourceParameters):
         # Once datasets are collected, set the total dataset size (includes extra files)
         for dataset_assoc in job.output_datasets:
             dataset = dataset_assoc.dataset.dataset
-            if not dataset.purged:
-                # assume all datasets in a job get written to the same objectstore
-                quota_source_info = dataset.quota_source_info
-                collected_bytes += dataset.set_total_size()
-            else:
+            # assume all datasets in a job get written to the same objectstore
+            quota_source_info = dataset.quota_source_info
+            collected_bytes += dataset.set_total_size()
+            if dataset.purged:
                 # Purge, in case job wrote directly to object store
                 dataset.full_delete()
+                collected_bytes = 0
 
         user = job.user
         if user and collected_bytes > 0 and quota_source_info is not None and quota_source_info.use:
@@ -2025,8 +2025,9 @@ class MinimalJobWrapper(HasResourceParameters):
         # Certain tools require tasks to be completed after job execution
         # ( this used to be performed in the "exec_after_process" hook, but hooks are deprecated ).
         param_dict = self.get_param_dict(job)
+        task_wrapper = None
         try:
-            self.tool.exec_after_process(
+            task_wrapper = self.tool.exec_after_process(
                 self.app, inp_data, out_data, param_dict, job=job, final_job_state=final_job_state
             )
         except Exception as e:
@@ -2068,6 +2069,10 @@ class MinimalJobWrapper(HasResourceParameters):
             self.sa_session.commit()
         if job.state == job.states.ERROR:
             self._report_error()
+        elif task_wrapper:
+            # Only task is setting metadata (if necessary) on expression tool output.
+            # The dataset state is SETTING_METADATA, which delays dependent jobs until the task completes.
+            task_wrapper.delay()
         cleanup_job = self.cleanup_job
         delete_files = cleanup_job == "always" or (job.state == job.states.OK and cleanup_job == "onsuccess")
         self.cleanup(delete_files=delete_files)

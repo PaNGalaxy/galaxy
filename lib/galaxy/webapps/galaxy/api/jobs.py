@@ -99,7 +99,7 @@ UserIdQueryParam: Optional[DecodedDatabaseIdField] = Query(
 )
 
 ViewQueryParam: JobIndexViewEnum = Query(
-    default="collection",
+    default=JobIndexViewEnum.collection,
     title="View",
     description="Determines columns to return. Defaults to 'collection'.",
 )
@@ -376,13 +376,13 @@ class FastAPIJobs:
         summary="Returns STDOUT and STDERR from job.",
     )
     def console_output(
-            self,
-            job_id: Annotated[DecodedDatabaseIdField, JobIdPathParam],
-            stdout_position: int,
-            stdout_length: int,
-            stderr_position: int,
-            stderr_length: int,
-            trans: ProvidesUserContext = DependsOnTrans,
+        self,
+        job_id: Annotated[DecodedDatabaseIdField, JobIdPathParam],
+        stdout_position: int,
+        stdout_length: int,
+        stderr_position: int,
+        stderr_length: int,
+        trans: ProvidesUserContext = DependsOnTrans,
     ) -> JobConsoleOutput:
         """
         Get the stdout and/or stderr of a job. The position parameters are the index

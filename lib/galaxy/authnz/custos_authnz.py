@@ -115,13 +115,19 @@ class OIDCAuthnzBase(IdentityProvider):
     def _decode_token_no_signature(self, token):
         return jwt.decode(token, audience=self.config.client_id, options={"verify_signature": False})
 
-    def refresh(self, trans, custos_authnz_token):
+    def refresh(self, sa_session, custos_authnz_token, skip_old_tokens_threshold_days):
         if custos_authnz_token is None:
             raise exceptions.AuthenticationFailed("cannot find authorized user while refreshing token")
         id_token_decoded = self._decode_token_no_signature(custos_authnz_token.id_token)
         # do not refresh tokens if they didn't reach their half lifetime
         if int(id_token_decoded["iat"]) + int(id_token_decoded["exp"]) > 2 * int(time.time()):
             return False
+
+        # do not refresh tokens if last token is too old
+        skip_old_tokens_threshold_seconds = skip_old_tokens_threshold_days * 86400  # 86400 seconds in a day
+        if int(id_token_decoded["iat"]) + skip_old_tokens_threshold_seconds < int(time.time()):
+            return False
+
         oauth2_session = self._create_oauth2_session()
         token_endpoint = self.config.token_endpoint
         if self.config.iam_client_secret:
@@ -135,8 +141,11 @@ class OIDCAuthnzBase(IdentityProvider):
             "refresh_token": custos_authnz_token.refresh_token,
         }
 
+        log.debug(
+            f"Refreshing user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
+        )
         token = oauth2_session.refresh_token(token_endpoint, **params)
-        processed_token = self._process_token(trans, oauth2_session, token, False)
+        processed_token = self._process_token_after_refresh(token)
 
         custos_authnz_token.access_token = processed_token["access_token"]
         if "id_token" in processed_token:
@@ -147,9 +156,14 @@ class OIDCAuthnzBase(IdentityProvider):
         custos_authnz_token.expiration_time = processed_token["expiration_time"]
         custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
 
-        trans.sa_session.add(custos_authnz_token)
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        sa_session.add(custos_authnz_token)
+        with transaction(sa_session):
+            sa_session.commit()
+
+        log.debug(
+            f"Refreshed user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
+        )
+
         return True
 
     def _get_provider_specific_scopes(self):
@@ -181,6 +195,17 @@ class OIDCAuthnzBase(IdentityProvider):
         trans.set_cookie(value=state, name=STATE_COOKIE_NAME)
         trans.set_cookie(value=nonce, name=NONCE_COOKIE_NAME)
         return authorization_url
+
+    def _process_token_after_refresh(self, token):
+        processed_token = {}
+        processed_token["access_token"] = token["access_token"]
+        processed_token["id_token"] = token["id_token"]
+        processed_token["refresh_token"] = token["refresh_token"] if "refresh_token" in token else None
+        processed_token["expiration_time"] = datetime.now() + timedelta(seconds=token.get("expires_in", 3600))
+        processed_token["refresh_expiration_time"] = (
+            (datetime.now() + timedelta(seconds=token["refresh_expires_in"])) if "refresh_expires_in" in token else None
+        )
+        return processed_token
 
     def _process_token(self, trans, oauth2_session, token, validate_nonce=True):
         processed_token = {}
@@ -541,10 +566,10 @@ class OIDCAuthnzBase(IdentityProvider):
                 options={
                     "verify_signature": True,
                     "verify_exp": True,
-                    "verify_nbf": True,
-                    "verify_iat": True,
-                    "verify_aud": bool(self.config.accepted_audiences),
-                    "verify_iss": True,
+                    "verify_nbf": False,
+                    "verify_iat": False,
+                    "verify_aud": False,
+                    "verify_iss": False,
                 },
             )
         except jwt.exceptions.PyJWKClientError:
@@ -555,7 +580,11 @@ class OIDCAuthnzBase(IdentityProvider):
             # All other exceptions are bubbled up
             return None, None
         # jwt verified, we can now fetch the user
-        user_id = decoded_jwt["sub"]
+        try:
+            user_id = decoded_jwt["sub"]
+        except:
+            user_id = decoded_jwt["subject"]
+
         custos_authnz_token = self._get_custos_authnz_token(sa_session, user_id, self.config.provider)
         user = custos_authnz_token.user if custos_authnz_token else None
         return user, decoded_jwt

@@ -651,7 +651,9 @@ class BamNative(CompressedArchive, _BamOrSam):
     def get_chunk(self, trans, dataset: HasFileName, offset: int = 0, ck_size: Optional[int] = None) -> str:
         if not offset == -1:
             try:
-                with pysam.AlignmentFile(dataset.get_file_name(user=trans.user if trans else None), "rb", check_sq=False) as bamfile:
+                with pysam.AlignmentFile(
+                    dataset.get_file_name(user=trans.user if trans else None), "rb", check_sq=False
+                ) as bamfile:
                     if ck_size is None:
                         ck_size = 300  # 300 lines
                     if offset == 0:
@@ -1505,7 +1507,7 @@ class Anndata(H5):
                     count = len(tmp.dtype)
                     size = int(tmp.size)
                 else:
-                    layers = list(tmp.attrs)
+                    layers = list(tmp.keys())
                     count = len(layers)
                     size = lennames
                 return (layers, count, size)
@@ -3758,6 +3760,31 @@ class Fast5ArchiveBz2(Fast5Archive):
         if not is_bz2(filename):
             return False
         return Fast5Archive.sniff(self, filename)
+
+
+class Pod5(Binary):
+    """
+    Class describing a POD5 file. The POD5 Format Specification is at
+    https://pod5-file-format.readthedocs.io/en/latest/SPECIFICATION.html
+
+    >>> from galaxy.datatypes.sniff import get_test_fname
+    >>> fname = get_test_fname('test.pod5')
+    >>> Pod5().sniff(fname)
+    True
+    >>> fname = get_test_fname('test.fast5.tar')
+    >>> Pod5().sniff(fname)
+    False
+    """
+
+    file_ext = "pod5"
+
+    def sniff(self, filename: str) -> bool:
+        expected_signature = bytes([0x8B, 0x50, 0x4F, 0x44, 0x0D, 0x0A, 0x1A, 0x0A])
+        with open(filename, "rb") as f:
+            first_8_bytes = f.read(8)
+            f.seek(-8, 2)
+            last_8_bytes = f.read(8)
+            return first_8_bytes == expected_signature and last_8_bytes == expected_signature
 
 
 class SearchGuiArchive(CompressedArchive):

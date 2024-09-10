@@ -122,6 +122,7 @@ class MockEvaluator:
     def populate_interactivetools(self):
         return []
 
+
 class MockJobQueue:
     def __init__(self, app):
         self.app = app

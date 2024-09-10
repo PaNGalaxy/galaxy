@@ -2086,14 +2086,25 @@ steps:
           pick_from:
           - value:
             __class__: RuntimeValue
+  consume_index:
+    tool_id: metadata_bam
+    in:
+      input_bam: pick_value/data_param
+    tool_state:
+      ref_names:
+        - chr10_random
+        - chr11
+        - chrM
+        - chrX
+        - chr16
 outputs:
   pick_out:
     outputSource: pick_value/data_param
 """,
                 test_data="""
 some_file:
-  value: 1.bam
-  file_type: bam
+  value: 3.bam
+  file_type: unsorted.bam
   type: File
 """,
                 history_id=history_id,
@@ -2106,6 +2117,7 @@ some_file:
         )
         assert dataset_details["metadata_reference_names"]
         assert dataset_details["metadata_bam_index"]
+        assert dataset_details["file_ext"] == "bam"
 
     def test_run_workflow_simple_conditional_step(self):
         with self.dataset_populator.test_history() as history_id:
@@ -6981,6 +6993,35 @@ steps:
             invocation_response = self._post(url, data=workflow_request, json=True)
             # Take a valid stat and make it invalid, assert workflow won't run.
             self._assert_status_code_is(invocation_response, 400)
+
+    @skip_without_tool("collection_paired_test")
+    def test_run_map_over_with_step_parameter_dict(self):
+        # Tests what the legacy run form submits
+        with self.dataset_populator.test_history() as history_id:
+            hdca = self.dataset_collection_populator.create_list_of_pairs_in_history(history_id).json()["outputs"][0]
+            workflow_id = self._upload_yaml_workflow(
+                """
+class: GalaxyWorkflow
+steps:
+  "0":
+    tool_id: collection_paired_conditional_structured_like
+    state:
+      cond:
+        input1:
+          __class__: RuntimeValue
+"""
+            )
+            workflow_request = {
+                "history": f"hist_id={history_id}",
+                "parameters": dumps({"0": {"cond|input1": {"values": [{"id": hdca["id"], "src": "hdca"}]}}}),
+                "parameters_normalized": True,
+            }
+            url = f"workflows/{workflow_id}/invocations"
+            invocation_response = self._post(url, data=workflow_request, json=True)
+            invocation_response.raise_for_status()
+            self.workflow_populator.wait_for_invocation_and_jobs(
+                history_id=history_id, workflow_id=workflow_id, invocation_id=invocation_response.json()["id"]
+            )
 
     @skip_without_tool("validation_default")
     def test_parameter_substitution_validation_value_errors_1(self):

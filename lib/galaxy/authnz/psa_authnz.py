@@ -56,6 +56,8 @@ BACKENDS_NAME = {
     "egi_checkin": "egi-checkin",
 }
 
+AZURE_USERINFO_ENDPOINT = "https://graph.microsoft.com/oidc/userinfo"
+
 AUTH_PIPELINE = (
     # Get the information we can about the user and return it in a simple
     # format to create the user instance later. On some cases the details are
@@ -141,6 +143,8 @@ class PSAAuthnz(IdentityProvider):
             self.config[setting_name("API_URL")] = oidc_backend_config.get("api_url")
         if oidc_backend_config.get("url") is not None:
             self.config[setting_name("URL")] = oidc_backend_config.get("url")
+        if oidc_backend_config.get("well_known_oidc_config_uri") is not None:
+            self.config["well_known_oidc_config_uri"] = oidc_backend_config.get("well_known_oidc_config_uri")
 
     def _get_helper(self, name, do_import=False):
         this_config = self.config.get(setting_name(name), DEFAULTS.get(name, None))
@@ -172,7 +176,7 @@ class PSAAuthnz(IdentityProvider):
         extra_data["expires"] = int(expires - time.time())
         user_authnz_token.set_extra_data(extra_data)
 
-    def refresh(self, trans, user_authnz_token):
+    def refresh(self, sa_session, user_authnz_token, skip_old_tokens_threshold_days):
         if not user_authnz_token or not user_authnz_token.extra_data:
             return False
         # refresh tokens if they reached their half lifetime
@@ -183,14 +187,28 @@ class PSAAuthnz(IdentityProvider):
         else:
             log.debug("No `expires` or `expires_in` key found in token extra data, cannot refresh")
             return False
+
+        # do not refresh tokens if last token is too old
+        skip_old_tokens_threshold_seconds = skip_old_tokens_threshold_days * 86400  # 86400 seconds in a day
+        if int(user_authnz_token.extra_data["auth_time"]) + skip_old_tokens_threshold_seconds < int(time.time()):
+            return False
+
         if int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2 <= int(time.time()):
-            on_the_fly_config(trans.sa_session)
+            on_the_fly_config(sa_session)
+            log.debug(
+                f"Refreshing user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
+            )
             if self.config["provider"] == "azure":
                 self.refresh_azure(user_authnz_token)
             else:
-                strategy = Strategy(trans.request, trans.session, Storage, self.config)
+                strategy = Strategy(None, sa_session, Storage, self.config)
                 user_authnz_token.refresh_token(strategy)
+            log.debug(
+                f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
+            )
+
             return True
+
         return False
 
     def authenticate(self, trans):
@@ -235,6 +253,90 @@ class PSAAuthnz(IdentityProvider):
         if isinstance(response, str):
             return True, "", response
         return response.get("success", False), response.get("message", ""), ""
+
+    def decode_user_access_token(self, sa_session, access_token):
+        """Verifies and decodes an access token against this provider, returning the user and
+        a dict containing the decoded token data.
+
+        :type  sa_session:      sqlalchemy.orm.scoping.scoped_session
+        :param sa_session:      SQLAlchemy database handle.
+
+        :type  access_token: string
+        :param access_token: An OIDC access token
+
+        :return: A tuple containing the user and decoded jwt data or [None, None]
+                 if the access token does not belong to this provider.
+        :rtype: Tuple[User, dict]
+        """
+        well_known_oidc_config_uri = (
+            self.config["well_known_oidc_config_uri"]
+            if self.config.get("well_known_oidc_config_uri", None)
+            else self._get_well_known_uri_from_url(self.config["provider"])
+        )
+        well_known_oidc_config = None
+        try:
+            well_known_oidc_config = requests.get(
+                well_known_oidc_config_uri,
+                headers={},
+                verify=True,
+                params={},
+            ).json()
+        except Exception:
+            log.error(f"Failed to load well-known OIDC config URI: {well_known_oidc_config_uri}")
+            raise
+        jwks_client = jwt.PyJWKClient(well_known_oidc_config["jwks_uri"])
+
+        try:
+            signing_key = jwks_client.get_signing_key_from_jwt(access_token)
+            accepted_aud = self.config.get("accepted_audiences", None)
+            headers = jwt.get_unverified_header(access_token)
+            verify_signature = True
+            if headers.get("nonce", None) and self.config["provider"] == "azure":
+                # Tokens with Nonce in header are not supposed to be verified
+                verify_signature = False
+                r = requests.get(AZURE_USERINFO_ENDPOINT, headers={"Authorization": f"Bearer {access_token}"})
+                r.raise_for_status()
+
+            decoded_jwt = jwt.decode(
+                access_token,
+                signing_key.key,
+                algorithms=["RS256"],
+                issuer=well_known_oidc_config["issuer"],
+                audience=accepted_aud,
+                options={
+                    "verify_signature": verify_signature,
+                    "verify_exp": True,
+                    "verify_nbf": True,
+                    "verify_iat": True,
+                    "verify_aud": bool(accepted_aud),
+                    "verify_iss": True,
+                },
+            )
+        except jwt.exceptions.PyJWKClientError:
+            log.debug(
+                f"Could not get signing keys for access token with provider: {self.config['provider']}. Ignoring..."
+            )
+            return None, None
+        except jwt.exceptions.InvalidIssuerError:
+            # An Invalid issuer means that the access token is not relevant to this provider.
+            # All other exceptions are bubbled up
+            return None, None
+        # jwt verified, we can now fetch the user
+        user_id = decoded_jwt["unique_name"]
+        authnz_token = self._get_authnz_token(sa_session, user_id, self.config["provider"])
+        user = authnz_token.user if authnz_token else None
+        return user, decoded_jwt
+
+    @staticmethod
+    def _get_authnz_token(sa_session, user_id, provider):
+        return sa_session.query(UserAuthnzToken).filter_by(uid=user_id).one_or_none()
+
+    def _get_well_known_uri_from_url(self, provider):
+        # TODO: Look up this URL from a Python library
+        base_url = self.config["SOCIAL_AUTH_URL"]
+        # Remove potential trailing slash to avoid "//realms"
+        base_url = base_url if base_url[-1] != "/" else base_url[:-1]
+        return f"{base_url}/.well-known/openid-configuration"
 
 
 class Strategy(BaseStrategy):
