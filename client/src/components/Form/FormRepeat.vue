@@ -59,6 +59,10 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    singleDatasetInput: {
+        type: Boolean,
+        default: true,
+    },
 });
 
 const emit = defineEmits<{
@@ -169,7 +173,7 @@ const { keyObject } = useKeyedObjects();
             </template>
 
             <template v-slot:body>
-                <FormNode v-bind="props.passthroughProps" :inputs="cache" :prefix="getPrefix(cacheId)" />
+                <FormNode v-bind="props.passthroughProps" :inputs="cache" :prefix="getPrefix(cacheId)" :singleDatasetInput="props.singleDatasetInput" />
             </template>
         </FormCard>
 

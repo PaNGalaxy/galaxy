@@ -39,6 +39,7 @@ const props = withDefaults(
         collectionTypes?: Array<string>;
         flavor?: string;
         tag?: string;
+        singleDatasetInput?: boolean;
     }>(),
     {
         loading: false,
@@ -50,6 +51,7 @@ const props = withDefaults(
         collectionTypes: undefined,
         flavor: undefined,
         tag: undefined,
+        singleDatasetInput: false,
     }
 );
 
@@ -523,6 +525,17 @@ const noOptionsWarningMessage = computed(() => {
         <div class="d-flex flex-column">
             <BButtonGroup v-if="variant && variant.length > 1" buttons class="align-self-start">
                 <BButton
+                    v-if="props.singleDatasetInput"
+                    v-for="(v, index) in variant.slice(0,1)"
+                    :key="index"
+                    v-b-tooltip.hover.bottom
+                    :pressed="currentField === index"
+                    :title="v.tooltip"
+                    @click="currentField = index">
+                    <FontAwesomeIcon :icon="['far', v.icon]" />
+                </BButton>
+                <BButton
+                    v-else
                     v-for="(v, index) in variant"
                     :key="index"
                     v-b-tooltip.hover.bottom
