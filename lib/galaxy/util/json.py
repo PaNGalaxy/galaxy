@@ -1,4 +1,5 @@
 import copy
+import html
 import json
 import logging
 import math
@@ -63,6 +64,15 @@ def safe_loads(arg):
     return loaded
 
 
+def escape_key_names(obj):
+    if isinstance(obj, dict):
+        return {html.escape(str(key)): escape_key_names(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [escape_key_names(element) for element in obj]
+    else:
+        return obj
+
+
 def safe_dumps(obj, **kwargs):
     """
     This is a wrapper around dumps that encodes Infinity and NaN values.  It's a
@@ -70,6 +80,10 @@ def safe_dumps(obj, **kwargs):
     json.dumps to blow up if it encounters Infinity/NaN, or Decimal values
     and we 'fix' it before re-encoding.
     """
+    if kwargs.get("escape_key_names", False):
+        obj = escape_key_names(obj)
+        kwargs.pop('escape_key_names')
+
     try:
         dumped = json.dumps(obj, allow_nan=False, **kwargs)
     except (ValueError, TypeError):
@@ -78,7 +92,6 @@ def safe_dumps(obj, **kwargs):
     if kwargs.get("escape_closing_tags", True):
         return dumped.replace("</", "<\\/")
     return dumped
-
 
 def safe_dumps_formatted(obj):
     """Attempt to format an object for display.
