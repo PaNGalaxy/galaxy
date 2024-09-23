@@ -60,8 +60,8 @@
         console.debug("Initializing javascript application:", "${js_app_entry_fn}");
 
         // js-app.mako
-        var options = ${ h.dumps( options ) };
-        var bootstrapped = ${ h.dumps( bootstrapped ) };
+        var options = ${ h.dumps( options, escape_key_names=True ) };
+        var bootstrapped = ${ h.dumps( bootstrapped, escape_key_names=True ) };
 
         config.set({
             options: options,
