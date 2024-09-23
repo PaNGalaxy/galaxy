@@ -300,7 +300,7 @@ function onAlert(value: string | undefined) {
                 :tag="attrs.tag"
                 :type="props.type"
                 :collection-types="attrs.collection_types"
-                :singleDatasetInput="props.singleDatasetInput"
+                :single-dataset-input="props.singleDatasetInput"
                 @alert="onAlert" />
             <FormDrilldown
                 v-else-if="props.type === 'drill_down'"

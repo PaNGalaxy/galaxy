@@ -173,7 +173,7 @@ const { keyObject } = useKeyedObjects();
             </template>
 
             <template v-slot:body>
-                <FormNode v-bind="props.passthroughProps" :inputs="cache" :prefix="getPrefix(cacheId)" :singleDatasetInput="props.singleDatasetInput" />
+                <FormNode v-bind="props.passthroughProps" :inputs="cache" :prefix="getPrefix(cacheId)" :single-dataset-input="props.singleDatasetInput" />
             </template>
         </FormCard>
 
