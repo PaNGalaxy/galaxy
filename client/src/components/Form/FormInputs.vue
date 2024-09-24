@@ -14,6 +14,7 @@
                         :refresh-on-change="false"
                         :disabled="sustainConditionals"
                         :attributes="input.test_param"
+                        :single-dataset-input="singleDatasetInput"
                         @change="onChange" />
                     <div v-for="(caseDetails, caseId) in input.cases" :key="caseId">
                         <FormNode
@@ -59,6 +60,7 @@
                 :collapsed-disable-icon="collapsedDisableIcon"
                 :loading="loading"
                 :workflow-building-mode="workflowBuildingMode"
+                :single-dataset-input="singleDatasetInput"
                 @change="onChange" />
         </div>
     </div>
@@ -126,6 +128,10 @@ export default {
             required: true,
         },
         workflowBuildingMode: {
+            type: Boolean,
+            default: false,
+        },
+        singleDatasetInput: {
             type: Boolean,
             default: false,
         },
