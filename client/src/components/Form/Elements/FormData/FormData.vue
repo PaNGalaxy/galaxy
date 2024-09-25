@@ -39,7 +39,6 @@ const props = withDefaults(
         collectionTypes?: Array<string>;
         flavor?: string;
         tag?: string;
-        singleDatasetInput?: boolean;
     }>(),
     {
         loading: false,
@@ -51,12 +50,13 @@ const props = withDefaults(
         collectionTypes: undefined,
         flavor: undefined,
         tag: undefined,
-        singleDatasetInput: false,
     }
 );
 
 const eventStore = useEventStore();
 const { datatypesMapper } = useDatatypesMapper();
+
+const disableBatchInput = getGalaxyInstance().config.disable_batch_input;
 
 const $emit = defineEmits(["input", "alert"]);
 
@@ -224,6 +224,11 @@ const variant = computed(() => {
     const flavorKey = props.flavor ? `${props.flavor}_` : "";
     const multipleKey = props.multiple ? `_multiple` : "";
     const variantKey = `${flavorKey}${props.type}${multipleKey}`;
+    if (disableBatchInput && VARIANTS[variantKey]) {
+        return VARIANTS[variantKey]!.filter((v) => {
+            return v.batch === BATCH.DISABLED;
+        });
+    }
     return VARIANTS[variantKey];
 });
 
@@ -523,19 +528,8 @@ const noOptionsWarningMessage = computed(() => {
         @dragover.prevent
         @drop.prevent="onDrop">
         <div class="d-flex flex-column">
-            <BButtonGroup v-if="variant && variant.length > 1" buttons class="align-self-start">
+            <BButtonGroup v-if="variant && variant.length > 0" buttons class="align-self-start">
                 <BButton
-                    v-if="props.singleDatasetInput"
-                    v-for="(v, index) in variant.slice(0,1)"
-                    :key="index"
-                    v-b-tooltip.hover.bottom
-                    :pressed="currentField === index"
-                    :title="v.tooltip"
-                    @click="currentField = index">
-                    <FontAwesomeIcon :icon="['far', v.icon]" />
-                </BButton>
-                <BButton
-                    v-else
                     v-for="(v, index) in variant"
                     :key="index"
                     v-b-tooltip.hover.bottom

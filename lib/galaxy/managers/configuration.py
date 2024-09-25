@@ -231,6 +231,7 @@ class ConfigSerializer(base.ModelSerializer):
             "fixed_delegated_auth": _defaults_to(False),
             "help_forum_api_url": _use_config,
             "enable_help_forum_tool_panel_integration": _use_config,
+            "disable_batch_input": _use_config,
         }
 
 

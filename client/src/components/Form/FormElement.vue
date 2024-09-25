@@ -48,7 +48,6 @@ interface FormElementProps {
     connectedEnableIcon?: string;
     connectedDisableIcon?: string;
     workflowBuildingMode?: boolean;
-    singleDatasetInput?: boolean;
 }
 
 const props = withDefaults(defineProps<FormElementProps>(), {
@@ -64,7 +63,6 @@ const props = withDefaults(defineProps<FormElementProps>(), {
     connectedEnableIcon: "fa fa-times",
     connectedDisableIcon: "fa fa-arrows-alt-h",
     workflowBuildingMode: false,
-    singleDatasetInput: false,
 });
 
 const emit = defineEmits<{
@@ -300,7 +298,6 @@ function onAlert(value: string | undefined) {
                 :tag="attrs.tag"
                 :type="props.type"
                 :collection-types="attrs.collection_types"
-                :single-dataset-input="props.singleDatasetInput"
                 @alert="onAlert" />
             <FormDrilldown
                 v-else-if="props.type === 'drill_down'"
