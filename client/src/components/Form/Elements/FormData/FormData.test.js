@@ -114,7 +114,7 @@ describe("FormData", () => {
         const options = wrapper.find(".btn-group").findAll("button");
         expect(options.length).toBe(3);
         expect(options.at(0).classes()).toContain("active");
-        expect(options.at(0).attributes("title")).toBe("Multiple datasets");
+        expect(options.at(0).attributes("title")).toBe("Dataset(s)");
         expect(wrapper.emitted().input[0][0]).toEqual({
             batch: false,
             product: false,
@@ -451,7 +451,7 @@ describe("FormData", () => {
         const selectedValues = wrapper.findAll(SELECTED_VALUE);
         expect(selectedValues.length).toBe(1);
         expect(selectedValues.at(0).text()).toBe("5: hdcaName5");
-        await wrapper.find("[title='Multiple datasets'").trigger("click");
+        await wrapper.find("[title='Dataset(s)'").trigger("click");
         expect(options.at(0).classes()).toContain("active");
         expect(wrapper.emitted().input[2][0]).toEqual(null);
     });
