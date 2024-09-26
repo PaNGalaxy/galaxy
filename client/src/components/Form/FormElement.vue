@@ -7,6 +7,7 @@ import { sanitize } from "dompurify";
 import type { ComputedRef } from "vue";
 import { computed, ref, useAttrs } from "vue";
 
+import { getGalaxyInstance } from "@/app";
 import { linkify } from "@/utils/utils";
 
 import type { FormParameterAttributes, FormParameterTypes, FormParameterValue } from "./parameterTypes";
@@ -87,6 +88,8 @@ const collapsed = ref(false);
 
 const collapsible = computed(() => !props.disabled && collapsibleValue.value !== undefined);
 const connectable = computed(() => collapsible.value && Boolean(attrs.value["connectable"]));
+
+const disableBatchInput = computed(() => getGalaxyInstance().config.disable_batch_input);
 
 // Determines whether to expand or collapse the input
 {
@@ -298,6 +301,7 @@ function onAlert(value: string | undefined) {
                 :tag="attrs.tag"
                 :type="props.type"
                 :collection-types="attrs.collection_types"
+                :disable-batch-input="disableBatchInput"
                 @alert="onAlert" />
             <FormDrilldown
                 v-else-if="props.type === 'drill_down'"

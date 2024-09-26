@@ -39,6 +39,7 @@ const props = withDefaults(
         collectionTypes?: Array<string>;
         flavor?: string;
         tag?: string;
+        disableBatchInput?: boolean;
     }>(),
     {
         loading: false,
@@ -50,13 +51,13 @@ const props = withDefaults(
         collectionTypes: undefined,
         flavor: undefined,
         tag: undefined,
+        disableBatchInput: false,
     }
 );
 
 const eventStore = useEventStore();
 const { datatypesMapper } = useDatatypesMapper();
 
-const disableBatchInput = getGalaxyInstance().config.disable_batch_input;
 
 const $emit = defineEmits(["input", "alert"]);
 
@@ -224,7 +225,7 @@ const variant = computed(() => {
     const flavorKey = props.flavor ? `${props.flavor}_` : "";
     const multipleKey = props.multiple ? `_multiple` : "";
     const variantKey = `${flavorKey}${props.type}${multipleKey}`;
-    if (disableBatchInput && VARIANTS[variantKey]) {
+    if (props.disableBatchInput && VARIANTS[variantKey]) {
         return VARIANTS[variantKey]!.filter((v) => {
             return v.batch === BATCH.DISABLED;
         });
