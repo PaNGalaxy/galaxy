@@ -514,15 +514,6 @@ defineExpose({
                 @click="eventStart">
                 <span v-localize>Start</span>
             </BButton>
-            <BButton
-                v-if="isCollection"
-                id="btn-build"
-                :disabled="!enableBuild"
-                title="Build"
-                :variant="enableBuild ? 'primary' : null"
-                @click="eventBuild">
-                <span v-localize>Build</span>
-            </BButton>
             <BButton id="btn-reset" title="Reset" :disabled="!enableReset" @click="eventReset">
                 <span v-localize>Reset</span>
             </BButton>
