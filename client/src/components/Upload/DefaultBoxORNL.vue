@@ -500,12 +500,14 @@ defineExpose({
                 <span v-localize>Paste/Fetch data</span>
             </BButton>
             <BButton
-                v-show="isRunning"
-                id="btn-stop" title="Cancel" :disabled="!isRunning" @click="eventStop">
+                v-if="isRunning"
+                id="btn-stop"
+                title="Cancel"
+                @click="eventStop">
                 <span v-localize>Cancel</span>
             </BButton>
             <BButton
-                v-show="!isRunning"
+                v-else
                 id="btn-start"
                 title="Start"
                 :variant="enableStart ? 'primary' : null"
