@@ -4099,3 +4099,10 @@ mapping:
         per_host: true
         desc: |
           Enable the integration of the Galaxy Help Forum in the tool panel. This requires the help_forum_api_url to be set.
+
+      disable_batch_input:
+        type: bool
+        default: false
+        required: false
+        desc: |
+          Disable the batch input mode for all tools. This will remove the "Multiple Datasets" and "Dataset Collection" input types from single dataset inputs in all tools.

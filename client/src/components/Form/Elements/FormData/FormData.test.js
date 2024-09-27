@@ -87,6 +87,18 @@ describe("FormData", () => {
         expect(wrapper.find(SELECTED_VALUE).text()).toEqual("4: hdaName4");
     });
 
+    it("regular data no batch input", async () => {
+        const wrapper = createTarget({
+            value: null,
+            options: defaultOptions,
+            disableBatchInput: true,
+        });
+        const options = wrapper.find(".btn-group").findAll("button");
+        expect(options.length).toBe(2);
+        expect(options.at(0).classes()).toContain("active");
+        expect(options.at(0).attributes("title")).toBe("Single dataset");
+    });
+
     it("optional dataset", async () => {
         const wrapper = createTarget({
             value: null,
