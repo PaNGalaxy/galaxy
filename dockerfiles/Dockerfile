@@ -1,5 +1,5 @@
 ARG BASE_TAG=latest
-FROM code.ornl.gov:4567/ndip/galaxy/base:${BASE_TAG}
+FROM savannah.ornl.gov/ndip/galaxy/base:${BASE_TAG}
 
 WORKDIR /galaxy
 COPY . /galaxy
