@@ -1240,7 +1240,7 @@ class DefaultJobDispatcher:
             log.debug(f"({job_wrapper.job_id}) Dispatching to {job_wrapper.job_destination.runner} runner")
         runner.put(job_wrapper)
 
-    def stop(self, job, job_wrapper):
+    def stop(self, job, job_wrapper, soft_kill=False):
         """
         Stop the given job. The input variable job may be either a Job or a Task.
         """
@@ -1260,7 +1260,10 @@ class DefaultJobDispatcher:
             runner_name = job_runner_name.split(":", 1)[0]
             log.debug(f"Stopping job {job_wrapper.get_id_tag()} in {runner_name} runner")
             try:
-                self.job_runners[runner_name].stop_job(job_wrapper)
+                try:
+                    self.job_runners[runner_name].stop_job(job_wrapper, soft_kill=soft_kill)
+                except:
+                    self.job_runners[runner_name].stop_job(job_wrapper)
             except KeyError:
                 log.error(f"stop(): ({job_wrapper.get_id_tag()}) Invalid job runner: {runner_name}")
                 # Job and output dataset states have already been updated, so nothing is done here.

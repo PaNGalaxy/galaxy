@@ -762,7 +762,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 )
             return False
 
-    def stop_job(self, job_wrapper, soft_kill=True):
+    def stop_job(self, job_wrapper, soft_kill=False):
         job = job_wrapper.get_job()
         if not job.job_runner_external_id:
             return

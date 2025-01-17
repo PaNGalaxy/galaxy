@@ -6,7 +6,7 @@ stages:
 
 variables:
   GIT_STRATEGY: clone
-  CONTAINER_GALAXY_URL: "${CI_REGISTRY_IMAGE}"
+  CONTAINER_GALAXY_URL: "${NDIP_DOCKER_REPOSITORY}/${CI_PROJECT_PATH}"
   CONTAINER_GALAXY_BASE_URL: "${CONTAINER_GALAXY_URL}/base"
   CONTAINER_GALAXY_COMMIT_URL: "${CONTAINER_GALAXY_URL}/commit"
   GALAXY_VERSION_PYTHON: 24.1.dev3+ornl
@@ -15,7 +15,7 @@ variables:
 # This import is for the func_rse_docker_* functions
 before_script:
   - curl https://code.ornl.gov/rse-deployment/rse-sharables/raw/master/rse-bash-modules.sh -O
-  - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  - docker login -u $NDIP_DOCKER_USER -p $NDIP_DOCKER_PASSWORD $NDIP_DOCKER_REPOSITORY
   - source rse-bash-modules.sh
   - func_rse_docker_cleanup
 
@@ -33,8 +33,8 @@ service-build:
       docker build
       -f dockerfiles/Dockerfile 
       -t galaxy .
-    - docker tag galaxy $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
-    - docker push $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+    - docker tag galaxy $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
+    - docker push $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
   tags:
     - rse-multi-builder
   except:
@@ -46,7 +46,7 @@ client-tests:
     - >    
       docker run
       --entrypoint=""
-      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+      $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
       bash -c ". .venv/bin/activate && cd client && yarn run jest"
   tags:
     - rse-multi-builder
@@ -63,7 +63,7 @@ client-tests:
 #      docker run
 #      --entrypoint=""
 #      --network=host
-#      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+#      $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
 #      bash -c "GALAXY_TEST_DBURI=postgresql://postgres:psql@127.0.0.1:5432/galaxy_test ./run_tests.sh -api"
 #    - docker rm -f postgres
 #  tags:
@@ -78,7 +78,7 @@ unit-tests:
     - >    
       docker run
       --entrypoint=""
-      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+      $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
       bash -c "GALAXY_SKIP_EXTERNAL_DEPENDENCY_MANAGEMENT=1  ./run_tests.sh -unit"
   tags:
     - rse-multi-builder
@@ -108,7 +108,7 @@ package:
   script:
     - >
       docker run
-      $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
+      $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
       bash -c ". .venv/bin/activate . && pip install build twine && cd packages/objectstore &&
       sed -i -e '/version =/ s/= .*/= '$GALAXY_VERSION_PYTHON'/' setup.cfg &&
       make dist && 
@@ -123,8 +123,8 @@ package:
 tag-docker:
   stage: deploy
   script:
-    - docker pull $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA
-    - docker tag $CONTAINER_GALAXY_COMMIT_URL:$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
+    - docker pull $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
+    - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
     - docker push $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
   when: manual
   except:
