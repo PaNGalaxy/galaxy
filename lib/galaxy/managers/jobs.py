@@ -337,12 +337,14 @@ class JobManager:
         if not job.finished:
             try:
                 job.mark_stopped(self.app.config.track_jobs_in_database)
+                job_wrapper = self.app.job_manager.job_handler.job_queue.job_wrapper(job)
+                self.app.job_manager.job_handler.dispatcher.stop(job, job_wrapper, soft_kill=True)
                 session = self.app.model.session
                 with transaction(session):
                     session.commit()
                 self.app.job_manager.stop(job, message="")
                 return True
-            except Exception:
+            except Exception as e:
                 log.error("Job Runner does not support stopping job early.")
         return False
 
