@@ -39,6 +39,7 @@ const props = withDefaults(
         collectionTypes?: Array<string>;
         flavor?: string;
         tag?: string;
+        disableBatchInput?: boolean;
     }>(),
     {
         loading: false,
@@ -50,11 +51,13 @@ const props = withDefaults(
         collectionTypes: undefined,
         flavor: undefined,
         tag: undefined,
+        disableBatchInput: false,
     }
 );
 
 const eventStore = useEventStore();
 const { datatypesMapper } = useDatatypesMapper();
+
 
 const $emit = defineEmits(["input", "alert"]);
 
@@ -222,6 +225,11 @@ const variant = computed(() => {
     const flavorKey = props.flavor ? `${props.flavor}_` : "";
     const multipleKey = props.multiple ? `_multiple` : "";
     const variantKey = `${flavorKey}${props.type}${multipleKey}`;
+    if (props.disableBatchInput && VARIANTS[variantKey]) {
+        return VARIANTS[variantKey]!.filter((v) => {
+            return v.batch === BATCH.DISABLED;
+        });
+    }
     return VARIANTS[variantKey];
 });
 
@@ -521,7 +529,7 @@ const noOptionsWarningMessage = computed(() => {
         @dragover.prevent
         @drop.prevent="onDrop">
         <div class="d-flex flex-column">
-            <BButtonGroup v-if="variant && variant.length > 1" buttons class="align-self-start">
+            <BButtonGroup v-if="variant && variant.length > 0" buttons class="align-self-start">
                 <BButton
                     v-for="(v, index) in variant"
                     :key="index"

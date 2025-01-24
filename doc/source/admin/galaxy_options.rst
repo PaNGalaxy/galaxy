@@ -5615,4 +5615,16 @@
 :Type: bool
 
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``disable_batch_input``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Disable the batch input mode for all tools. This will remove the "Multiple Datasets" and
+    "Dataset Collection" input types from single dataset inputs in all tools.
+
+:Default: ``false``
+:Type: bool
+
+
 

@@ -684,6 +684,10 @@ class PulsarJobRunner(AsynchronousJobRunner):
                         tool_stderr = file_content.read()
                 except Exception:
                     pass
+            if not tool_stdout:
+                tool_stdout = ''
+            if not tool_stderr:
+                tool_stderr = ''
             job_stdout = run_results.get("job_stdout")
             job_stderr = run_results.get("job_stderr")
             exit_code = run_results.get("returncode")
@@ -758,7 +762,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 )
             return False
 
-    def stop_job(self, job_wrapper, soft_kill=True):
+    def stop_job(self, job_wrapper, soft_kill=False):
         job = job_wrapper.get_job()
         if not job.job_runner_external_id:
             return

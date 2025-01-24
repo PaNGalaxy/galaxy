@@ -70,7 +70,7 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
-    collectionName: {
+    defaultCollectionName: {
         type: String,
         default: "",
         required: false,
@@ -92,6 +92,7 @@ const uploadFile = ref(null);
 const uploadItems = ref({});
 const uploadSize = ref(0);
 const queue = ref(createUploadQueue());
+const collectionName = ref("");
 
 const counterNonRunning = computed(() => counterAnnounce.value + counterSuccess.value + counterError.value);
 const enableBuild = computed(
@@ -106,7 +107,7 @@ const historyId = computed(() => props.historyId);
 const listExtensions = computed(() => props.effectiveExtensions.filter((ext) => !ext.composite_files));
 const showHelper = computed(() => Object.keys(uploadItems.value).length === 0);
 const uploadValues = computed(() => Object.values(uploadItems.value));
-
+const collectionNameComputed = computed(() => collectionName.value ? collectionName.value: props.defaultCollectionName);
 
 
 function createUploadQueue() {
@@ -136,8 +137,8 @@ function addFiles(files, immediate = false) {
         }
 
         var relativePath = files[0].webkitRelativePath.split("/")[0];
-        if (props.collectionName === "") {
-            props.collectionName = relativePath;
+        if (collectionName.value === "") {
+            collectionName.value = relativePath;
         }
 
     }
@@ -185,7 +186,7 @@ function eventBuild() {
     }));
     const queryBody = {
         collection_type: "list",
-        name: props.collectionName,
+        name: collectionName.value,
         hide_source_items: true,
         element_identifiers: elements,
         options: {}
@@ -204,11 +205,11 @@ function eventComplete() {
         }
     });
     counterRunning.value = 0;
-    queueStopping.value = false;
-    if (props.isCollection) {
+    if (props.isCollection && !(queueStopping.value)) {
         eventBuild();
     }
-    props.collectionName = "";
+    queueStopping.value = false;
+    collectionName.value = "";
 }
 
 /** Create a new file */
@@ -412,8 +413,8 @@ defineExpose({
             <input
                 type="text"
                 id="collectionNameTextInput"
-                :value="props.collectionName"
-                @input="props.collectionName = $event.target.value"
+                :value="collectionNameComputed"
+                @input="collectionName = $event.target.value"
                 style="margin: 5px;">
         </div>
         <UploadBox @add="addFiles">
@@ -499,24 +500,19 @@ defineExpose({
                 <span v-localize>Paste/Fetch data</span>
             </BButton>
             <BButton
+                v-if="isRunning"
+                id="btn-stop"
+                title="Cancel"
+                @click="eventStop">
+                <span v-localize>Cancel</span>
+            </BButton>
+            <BButton
+                v-else
                 id="btn-start"
-                :disabled="!enableStart"
                 title="Start"
                 :variant="enableStart ? 'primary' : null"
                 @click="eventStart">
-                <span v-localize>Finish</span>
-            </BButton>
-            <BButton
-                v-if="isCollection"
-                id="btn-build"
-                :disabled="!enableBuild"
-                title="Build"
-                :variant="enableBuild ? 'primary' : null"
-                @click="eventBuild">
-                <span v-localize>Build</span>
-            </BButton>
-            <BButton id="btn-stop" title="Pause" :disabled="!isRunning" @click="eventStop">
-                <span v-localize>Pause</span>
+                <span v-localize>Start</span>
             </BButton>
             <BButton id="btn-reset" title="Reset" :disabled="!enableReset" @click="eventReset">
                 <span v-localize>Reset</span>
