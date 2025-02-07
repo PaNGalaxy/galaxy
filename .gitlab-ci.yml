@@ -9,8 +9,8 @@ variables:
   CONTAINER_GALAXY_URL: "${NDIP_DOCKER_REPOSITORY}/${CI_PROJECT_PATH}"
   CONTAINER_GALAXY_BASE_URL: "${CONTAINER_GALAXY_URL}/base"
   CONTAINER_GALAXY_COMMIT_URL: "${CONTAINER_GALAXY_URL}/commit"
-  GALAXY_VERSION_PYTHON: 24.1.dev4+ornl
-  GALAXY_VERSION_DOCKER: 24.1.dev4.ornl
+  GALAXY_VERSION_PYTHON: 24.1.dev5+ornl
+  GALAXY_VERSION_DOCKER: 24.1.dev5.ornl
 
 # This import is for the func_rse_docker_* functions
 before_script:
