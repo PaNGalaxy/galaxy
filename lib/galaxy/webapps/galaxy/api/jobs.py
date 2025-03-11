@@ -72,7 +72,7 @@ from galaxy.webapps.galaxy.services.jobs import (
     JobIndexViewEnum,
     JobsService,
 )
-from galaxy.work.context import WorkRequestContext
+from galaxy.work.context import proxy_work_context_for_history
 
 log = logging.getLogger(__name__)
 
@@ -373,7 +373,7 @@ class FastAPIJobs:
     @router.get(
         "/api/jobs/{job_id}/console_output",
         name="get_console_output",
-        summary="Returns STDOUT and STDERR from job.",
+        summary="Returns STDOUT and STDERR from the tool running in a specific job.",
     )
     def console_output(
         self,
@@ -385,7 +385,7 @@ class FastAPIJobs:
         trans: ProvidesUserContext = DependsOnTrans,
     ) -> JobConsoleOutput:
         """
-        Get the stdout and/or stderr of a job. The position parameters are the index
+        Get the stdout and/or stderr from the tool running in a specific job. The position parameters are the index
         of where to start reading stdout/stderr. The length parameters control how much
         stdout/stderr is read.
         """
@@ -484,24 +484,6 @@ class FastAPIJobs:
         job = self.service.get_job(trans, job_id=job_id)
         return JobDestinationParams(**summarize_destination_params(trans, job))
 
-    @router.put(
-        "/api/jobs/{job_id}/finish",
-        name="finish_job",
-        summary="Finished a job regardless of execution status (ie early job finish)",
-    )
-    def finish(
-        self,
-        job_id: Annotated[DecodedDatabaseIdField, JobIdPathParam],
-        trans: ProvidesUserContext = DependsOnTrans,
-    ) -> bool:
-        job = self.service.get_job(trans=trans, job_id=job_id)
-        if not job:
-            raise exceptions.ObjectNotFound("Could not access job with the given id")
-        if job.state == job.states.RUNNING:
-            return self.service.job_manager.finish_early(job)
-        else:
-            return False
-
     @router.post(
         "/api/jobs/search",
         name="search_jobs",
@@ -527,10 +509,8 @@ class FastAPIJobs:
         for k, v in payload.__annotations__.items():
             if k.startswith("files_") or k.startswith("__files_"):
                 inputs[k] = v
-        request_context = WorkRequestContext(app=trans.app, user=trans.user, history=trans.history)
-        all_params, all_errors, _, _ = tool.expand_incoming(
-            trans=trans, incoming=inputs, request_context=request_context
-        )
+        request_context = proxy_work_context_for_history(trans)
+        all_params, all_errors, _, _ = tool.expand_incoming(request_context, incoming=inputs)
         if any(all_errors):
             return []
         params_dump = [tool.params_to_strings(param, trans.app, nested=True) for param in all_params]

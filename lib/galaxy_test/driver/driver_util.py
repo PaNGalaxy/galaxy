@@ -34,6 +34,7 @@ from galaxy.tool_util.verify.interactor import (
     GalaxyInteractorApi,
     verify_tool,
 )
+from galaxy.tool_util.verify.test_data import TestDataResolver
 from galaxy.util import (
     asbool,
     download_to_file,
@@ -799,7 +800,7 @@ class TestDriver:
         self.server_wrappers: List[ServerWrapper] = []
         self.temp_directories: List[str] = []
 
-    def setup(self, config_object=None) -> None:
+    def setup(self) -> None:
         """Called before tests are built."""
 
     def tear_down(self) -> None:
@@ -850,7 +851,8 @@ class GalaxyTestDriver(TestDriver):
 
         default_tool_conf: Optional[str]
         datatypes_conf_override: Optional[str]
-        if getattr(config_object, "framework_tool_and_types", False):
+        framework_tools_and_types = getattr(config_object, "framework_tool_and_types", False)
+        if framework_tools_and_types:
             default_tool_conf = FRAMEWORK_SAMPLE_TOOLS_CONF
             datatypes_conf_override = FRAMEWORK_DATATYPES_CONF
         else:
@@ -964,6 +966,7 @@ class GalaxyTestDriver(TestDriver):
             test_index=index,
             galaxy_interactor=galaxy_interactor,
             resource_parameters=resource_parameters,
+            test_data_resolver=TestDataResolver(),
             **kwd,
         )
 

@@ -670,13 +670,13 @@ class PulsarJobRunner(AsynchronousJobRunner):
             client = self.get_client_from_state(job_state)
             run_results = client.full_status()
             remote_metadata_directory = run_results.get("metadata_directory", None)
-            tool_stdout = run_results.get("stdout", "")
-            tool_stderr = run_results.get("stderr", "")
+            tool_stdout = unicodify(run_results.get("stdout", ""), strip_null=True)
+            tool_stderr = unicodify(run_results.get("stderr", ""), strip_null=True)
             for file in ("tool_stdout", "tool_stderr"):
                 if tool_stdout and tool_stderr:
                     pass
                 try:
-                    file_path = Path(job_wrapper.working_directory) / "outputs" / file
+                    file_path = os.path.join(job_wrapper.working_directory, "outputs", file)
                     file_content = open(file_path)
                     if tool_stdout is None and file == "tool_stdout":
                         tool_stdout = file_content.read()
@@ -725,16 +725,9 @@ class PulsarJobRunner(AsynchronousJobRunner):
             ) as exit_code_file:
                 exit_code_file.write(str(exit_code))
             self._handle_metadata_externally(job_wrapper, resolve_requirements=True)
+        job_metrics_directory = os.path.join(job_wrapper.working_directory, "metadata")
         # Finish the job
         try:
-            job_metrics_directory = os.path.join(job_wrapper.working_directory, "metadata")
-            # Following check is a hack for jobs started during 19.01 or earlier release
-            # and finishing with a 19.05 code base. Eliminate the hack in 19.09 or later
-            # along with hacks for legacy metadata compute strategy.
-            if not os.path.exists(job_metrics_directory) or not any(
-                "__instrument" in f for f in os.listdir(job_metrics_directory)
-            ):
-                job_metrics_directory = job_wrapper.working_directory
             job_wrapper.finish(
                 tool_stdout,
                 tool_stderr,
@@ -746,7 +739,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
             )
         except Exception:
             log.exception("Job wrapper finish method failed")
-            job_wrapper.fail("Unable to finish job", exception=True)
+            job_wrapper.fail("Unable to finish job", exception=True, job_metrics_directory=job_metrics_directory)
 
     def check_pid(self, pid):
         try:
@@ -1068,7 +1061,7 @@ class PulsarMQJobRunner(PulsarJobRunner):
 
 
 DEFAULT_PULSAR_CONTAINER = "galaxy/pulsar-pod-staging:0.15.0.2"
-COEXECUTION_DESTENTATION_DEFAULTS = {
+COEXECUTION_DESTINATION_DEFAULTS = {
     "default_file_action": "remote_transfer",
     "rewrite_parameters": "true",
     "jobs_directory": "/pulsar_staging",
@@ -1080,7 +1073,7 @@ COEXECUTION_DESTENTATION_DEFAULTS = {
 
 
 class PulsarCoexecutionJobRunner(PulsarMQJobRunner):
-    destination_defaults = COEXECUTION_DESTENTATION_DEFAULTS
+    destination_defaults = COEXECUTION_DESTINATION_DEFAULTS
 
     def _populate_parameter_defaults(self, job_destination):
         super()._populate_parameter_defaults(job_destination)
@@ -1094,7 +1087,7 @@ class PulsarCoexecutionJobRunner(PulsarMQJobRunner):
             pulsar_app_config["staging_directory"] = params.get("jobs_directory")
 
 
-KUBERNETES_DESTINATION_DEFAULTS: Dict[str, Any] = {"k8s_enabled": True, **COEXECUTION_DESTENTATION_DEFAULTS}
+KUBERNETES_DESTINATION_DEFAULTS: Dict[str, Any] = {"k8s_enabled": True, **COEXECUTION_DESTINATION_DEFAULTS}
 
 
 class PulsarKubernetesJobRunner(PulsarCoexecutionJobRunner):
@@ -1102,14 +1095,14 @@ class PulsarKubernetesJobRunner(PulsarCoexecutionJobRunner):
     poll = True  # Poll so we can check API for pod IP for ITs.
 
 
-TES_DESTENTATION_DEFAULTS: Dict[str, Any] = {
+TES_DESTINATION_DEFAULTS: Dict[str, Any] = {
     "tes_url": PARAMETER_SPECIFICATION_REQUIRED,
-    **COEXECUTION_DESTENTATION_DEFAULTS,
+    **COEXECUTION_DESTINATION_DEFAULTS,
 }
 
 
 class PulsarTesJobRunner(PulsarCoexecutionJobRunner):
-    destination_defaults = TES_DESTENTATION_DEFAULTS
+    destination_defaults = TES_DESTINATION_DEFAULTS
 
 
 class PulsarRESTJobRunner(PulsarJobRunner):

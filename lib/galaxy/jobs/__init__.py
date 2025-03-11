@@ -20,6 +20,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Optional,
     TYPE_CHECKING,
 )
 
@@ -70,6 +71,7 @@ from galaxy.model.base import transaction
 from galaxy.model.store import copy_dataset_instance_metadata_attributes
 from galaxy.model.store.discover import MaxDiscoveredFilesExceededError
 from galaxy.objectstore import (
+    is_user_object_store,
     ObjectStorePopulator,
     serialize_static_object_store_config,
 )
@@ -99,6 +101,7 @@ from galaxy.work.context import WorkRequestContext
 
 if TYPE_CHECKING:
     from galaxy.jobs.handler import JobHandlerQueue
+    from galaxy.tools import Tool
 
 log = logging.getLogger(__name__)
 
@@ -326,7 +329,7 @@ class JobConfiguration(ConfiguresHandlers):
         """Parse the job configuration XML."""
         self.app = app
         self.runner_plugins = []
-        self.dynamic_params = None
+        self.dynamic_params: Optional[Dict[str, Any]] = None
         self.handlers = {}
         self.handler_runner_plugins = {}
         self.default_handler_id = None
@@ -382,6 +385,8 @@ class JobConfiguration(ConfiguresHandlers):
                             f" release of Galaxy. Please convert to YAML at {self.app.config.job_config_file} or"
                             f" explicitly set `job_config_file` to {job_config_file} to remove this message"
                         )
+                if not job_config_file:
+                    raise OSError()
                 if ".xml" in job_config_file:
                     tree = load(job_config_file)
                     job_config_dict = self.__parse_job_conf_xml(tree)
@@ -430,7 +435,7 @@ class JobConfiguration(ConfiguresHandlers):
                 continue
             self.runner_plugins.append(runner_info)
         if "dynamic" in job_config_dict:
-            self.dynamic_params = job_config_dict.get("dynamic", None)
+            self.dynamic_params = job_config_dict["dynamic"]
 
         # Parse handlers
         handling_config_dict = job_config_dict.get("handling", {})
@@ -828,12 +833,12 @@ class JobConfiguration(ConfiguresHandlers):
         """
         return self.destinations.get(id_or_tag, [])
 
-    def get_job_runner_plugins(self, handler_id):
+    def get_job_runner_plugins(self, handler_id: str):
         """Load all configured job runner plugins
 
         :returns: list of job runner plugins
         """
-        rval = {}
+        rval: Dict[str, BaseJobRunner] = {}
         if handler_id in self.handler_runner_plugins:
             plugins_to_load = [rp for rp in self.runner_plugins if rp["id"] in self.handler_runner_plugins[handler_id]]
             log.info(
@@ -869,11 +874,9 @@ class JobConfiguration(ConfiguresHandlers):
                     # If the name included a '.' or loading from the static runners path failed, try the original name
                     module = __import__(load)
                     module_name = load
-            if module is None:
-                # Module couldn't be loaded, error should have already been displayed
-                continue
             for comp in module_name.split(".")[1:]:
                 module = getattr(module, comp)
+            assert module  # make mypy happy
             if not class_names:
                 # If there's not a ':', we check <module>.__all__ for class names
                 try:
@@ -984,11 +987,17 @@ class MinimalJobWrapper(HasResourceParameters):
 
     is_task = False
 
-    def __init__(self, job: model.Job, app: MinimalManagerApp, use_persisted_destination: bool = False, tool=None):
+    def __init__(
+        self,
+        job: model.Job,
+        app: MinimalManagerApp,
+        use_persisted_destination: bool = False,
+        tool: Optional["Tool"] = None,
+    ):
         self.job_id = job.id
         self.session_id = job.session_id
         self.user_id = job.user_id
-        self.app: MinimalManagerApp = app
+        self.app = app
         self.tool = tool
         self.sa_session = self.app.model.context
         self.extra_filenames: List[str] = []
@@ -1322,7 +1331,7 @@ class MinimalJobWrapper(HasResourceParameters):
             )
         return self.__working_directory
 
-    def working_directory_exists(self):
+    def working_directory_exists(self) -> bool:
         job = self.get_job()
         return self.app.object_store.exists(job, base_dir="job_work", dir_only=True, obj_dir=True)
 
@@ -1382,7 +1391,15 @@ class MinimalJobWrapper(HasResourceParameters):
                 util.umask_fix_perms(path, self.app.config.umask, 0o666, self.app.config.gid)
 
     def fail(
-        self, message, exception=False, tool_stdout="", tool_stderr="", exit_code=None, job_stdout=None, job_stderr=None
+        self,
+        message,
+        exception=False,
+        tool_stdout="",
+        tool_stderr="",
+        exit_code=None,
+        job_stdout=None,
+        job_stderr=None,
+        job_metrics_directory=None,
     ):
         """
         Indicate job failure by setting state and message on all output
@@ -1408,6 +1425,10 @@ class MinimalJobWrapper(HasResourceParameters):
         # Might be AssertionError or other exception
         message = str(message)
         working_directory_exists = self.working_directory_exists()
+
+        if not job.tasks and working_directory_exists:
+            # If job was composed of tasks, don't attempt to recollect statistics
+            self._collect_metrics(job, job_metrics_directory)
 
         # if the job was deleted, don't fail it
         if not job.state == job.states.DELETED:
@@ -1484,6 +1505,7 @@ class MinimalJobWrapper(HasResourceParameters):
             pjaa.post_job_action for pjaa in job.post_job_actions if pjaa.post_job_action.action_type == "EmailAction"
         ]:
             ActionBox.execute(self.app, self.sa_session, pja, job)
+
         # If the job was deleted, call tool specific fail actions (used for e.g. external metadata) and clean up
         if self.tool:
             try:
@@ -1499,7 +1521,7 @@ class MinimalJobWrapper(HasResourceParameters):
             job = self.get_job()
         if message is None:
             message = "Execution of this dataset's job is paused"
-        if job.state == job.states.NEW:
+        if job.state in (job.states.NEW, job.states.QUEUED):
             for dataset_assoc in job.output_datasets + job.output_library_datasets:
                 dataset_assoc.dataset.dataset.state = dataset_assoc.dataset.dataset.states.PAUSED
                 dataset_assoc.dataset.info = message
@@ -1599,9 +1621,17 @@ class MinimalJobWrapper(HasResourceParameters):
         self.set_job_destination(self.job_destination, None, flush=False, job=job)
         # Set object store after job destination so can leverage parameters...
         self._set_object_store_ids(job)
+        # Now that we have the object store id, check if we are over the limit
+        self._pause_job_if_over_quota(job)
         with transaction(self.sa_session):
             self.sa_session.commit()
         return True
+
+    def _pause_job_if_over_quota(self, job):
+        if self.app.quota_agent.is_over_quota(self.app, job, self.job_destination):
+            log.info("(%d) User (%s) is over quota: job paused" % (job.id, job.user_id))
+            message = "Execution of this dataset's job is paused because you were over your disk quota at the time it was ready to run"
+            self.pause(job, message)
 
     def set_job_destination(self, job_destination, external_id=None, flush=True, job=None):
         """Subclasses should implement this to persist a destination, if necessary."""
@@ -1844,6 +1874,7 @@ class MinimalJobWrapper(HasResourceParameters):
                 job_stdout=job_stdout,
                 job_stderr=job_stderr,
                 exception=exception,
+                job_metrics_directory=job_metrics_directory,
             )
 
         # TODO: After failing here, consider returning from the function.
@@ -2127,7 +2158,7 @@ class MinimalJobWrapper(HasResourceParameters):
 
         return state
 
-    def cleanup(self, delete_files=True):
+    def cleanup(self, delete_files: bool = True) -> None:
         # At least one of these tool cleanup actions (job import), is needed
         # for the tool to work properly, that is why one might want to run
         # cleanup but not delete files.
@@ -2148,7 +2179,13 @@ class MinimalJobWrapper(HasResourceParameters):
 
     def _collect_metrics(self, has_metrics, job_metrics_directory=None):
         job = has_metrics.get_job()
-        job_metrics_directory = job_metrics_directory or self.working_directory
+        if job_metrics_directory is None:
+            try:
+                # working directory might have been purged already
+                job_metrics_directory = self.working_directory
+            except Exception:
+                log.exception("Could not recover job metrics")
+                return
         per_plugin_properties = self.app.job_metrics.collect_properties(
             job.destination_id, self.job_id, job_metrics_directory
         )
@@ -2313,7 +2350,7 @@ class MinimalJobWrapper(HasResourceParameters):
         required_user_object_store_uris = set()
         for out_dataset_instance in out_data.values():
             object_store_id = out_dataset_instance.dataset.object_store_id
-            if object_store_id and object_store_id.startswith("user_objects://"):
+            if is_user_object_store(object_store_id):
                 required_user_object_store_uris.add(object_store_id)
 
         job_metadata = os.path.join(self.tool_working_directory, self.tool.provided_metadata_file)
@@ -2496,7 +2533,9 @@ class MinimalJobWrapper(HasResourceParameters):
     def user_system_pwent(self):
         if self.__user_system_pwent is None:
             job = self.get_job()
-            self.__user_system_pwent = job.user.system_user_pwent(self.app.config.real_system_username)
+            self.__user_system_pwent = job.user.system_user_pwent(
+                self.get_destination_configuration("real_system_username", self.app.config.real_system_username)
+            )
         return self.__user_system_pwent
 
     @property
@@ -2538,10 +2577,15 @@ class MinimalJobWrapper(HasResourceParameters):
 
 
 class JobWrapper(MinimalJobWrapper):
-    def __init__(self, job, queue: "JobHandlerQueue", use_persisted_destination=False, app=None):
-        super().__init__(job, app=queue.app, use_persisted_destination=use_persisted_destination)
+    def __init__(self, job, queue: "JobHandlerQueue", use_persisted_destination=False):
+        app = queue.app
+        super().__init__(
+            job,
+            app=app,
+            use_persisted_destination=use_persisted_destination,
+            tool=app.toolbox.get_tool(job.tool_id, job.tool_version, exact=True),
+        )
         self.queue = queue
-        self.tool = self.app.toolbox.get_tool(job.tool_id, job.tool_version, exact=True)
         self.job_runner_mapper = JobRunnerMapper(self, queue.dispatcher.url_to_destination, self.app.job_config)
         if use_persisted_destination:
             self.job_runner_mapper.cached_job_destination = JobDestination(from_job=job)

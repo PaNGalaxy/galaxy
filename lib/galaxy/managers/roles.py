@@ -3,10 +3,7 @@ Manager and Serializer for Roles.
 """
 
 import logging
-from typing import (
-    List,
-    Sequence,
-)
+from typing import List
 
 from sqlalchemy import (
     false,
@@ -29,7 +26,6 @@ from galaxy.managers import base
 from galaxy.managers.context import ProvidesUserContext
 from galaxy.model import Role
 from galaxy.model.base import transaction
-from galaxy.model.scoped_session import galaxy_scoped_session
 from galaxy.schema.schema import RoleDefinitionModel
 from galaxy.util import unicodify
 
@@ -88,7 +84,11 @@ class RoleManager(base.ModelManager[model.Role]):
         user_ids = role_definition_model.user_ids or []
         group_ids = role_definition_model.group_ids or []
 
-        stmt = select(Role).where(Role.name == name).limit(1)
+        stmt = (
+            select(Role)
+            .where(Role.name == name)  # type:ignore[arg-type,comparison-overlap]  # Role.name is a SA hybrid property
+            .limit(1)
+        )
         if trans.sa_session.scalars(stmt).first():
             raise Conflict(f"A role with that name already exists [{name}]")
 
@@ -165,8 +165,3 @@ class RoleManager(base.ModelManager[model.Role]):
         with transaction(trans.sa_session):
             trans.sa_session.commit()
         return role
-
-
-def get_roles_by_ids(session: galaxy_scoped_session, role_ids: List[int]) -> Sequence[Role]:
-    stmt = select(Role).where(Role.id.in_(role_ids))
-    return session.scalars(stmt).all()

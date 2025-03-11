@@ -464,6 +464,32 @@ steps:
             assert hdca["visible"]
             assert isoparse(hdca["update_time"]) > (isoparse(first_update_time))
 
+    def test_rerun_exception_handling(self):
+        with self.dataset_populator.test_history() as history_id:
+            other_run_response = self.dataset_populator.run_tool(
+                tool_id="job_properties",
+                inputs={},
+                history_id=history_id,
+            )
+            unrelated_job_id = other_run_response["jobs"][0]["id"]
+            run_response = self._run_map_over_error(history_id)
+            job_id = run_response["jobs"][0]["id"]
+            self.dataset_populator.wait_for_job(job_id)
+            failed_hdca = self.dataset_populator.get_history_collection_details(
+                history_id=history_id,
+                content_id=run_response["implicit_collections"][0]["id"],
+                assert_ok=False,
+            )
+            assert failed_hdca["visible"]
+            rerun_params = self._get(f"jobs/{job_id}/build_for_rerun").json()
+            inputs = rerun_params["state_inputs"]
+            inputs["rerun_remap_job_id"] = unrelated_job_id
+            before_rerun_items = self.dataset_populator.get_history_contents(history_id)
+            rerun_response = self._run_detect_errors(history_id=history_id, inputs=inputs)
+            assert "does not match rerun tool id" in rerun_response["err_msg"]
+            after_rerun_items = self.dataset_populator.get_history_contents(history_id)
+            assert len(before_rerun_items) == len(after_rerun_items)
+
     @skip_without_tool("empty_output")
     def test_common_problems(self):
         with self.dataset_populator.test_history() as history_id:
@@ -608,7 +634,7 @@ steps:
         assert response.status_code == 400
         assert (
             response.json()["err_msg"]
-            == "parameter 'collection': the previously selected dataset collection has elements that are deleted."
+            == "Parameter 'collection': the previously selected dataset collection has elements that are deleted."
         )
 
     @pytest.mark.require_new_history
@@ -1049,6 +1075,24 @@ steps:
         empty_search_response = self._post("jobs/search", data=search_payload, json=True)
         self._assert_status_code_is(empty_search_response, 200)
         assert len(empty_search_response.json()) == 0
+
+    @pytest.mark.require_new_history
+    def test_delete_job_with_message(self, history_id):
+        input_dataset_id = self.__history_with_ok_dataset(history_id)
+        inputs = json.dumps({"input1": {"src": "hda", "id": input_dataset_id}})
+        search_payload = self._search_payload(history_id=history_id, tool_id="cat1", inputs=inputs)
+        # create a job
+        tool_response = self._post("tools", data=search_payload).json()
+        job_id = tool_response["jobs"][0]["id"]
+        output_dataset_id = tool_response["outputs"][0]["id"]
+        # delete the job with message
+        expected_message = "test message"
+        delete_job_response = self._delete(f"jobs/{job_id}", data={"message": expected_message}, json=True)
+        self._assert_status_code_is(delete_job_response, 200)
+        # Check the output dataset is deleted and the info field contains the message
+        dataset_details = self._get(f"histories/{history_id}/contents/{output_dataset_id}").json()
+        assert dataset_details["deleted"] is True
+        assert dataset_details["misc_info"] == expected_message
 
     @pytest.mark.require_new_history
     def test_destination_params(self, history_id):

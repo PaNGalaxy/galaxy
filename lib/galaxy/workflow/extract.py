@@ -116,7 +116,7 @@ def extract_steps(
         if name not in step_labels:
             step.label = name
             step_labels.add(name)
-        step.tool_inputs = dict(name=name)  # type:ignore[assignment]
+        step.tool_inputs = dict(name=name)
         hid_to_output_pair[hid] = (step, "output")
         steps.append(step)
     for i, hid in enumerate(dataset_collection_ids):
@@ -132,7 +132,7 @@ def extract_steps(
         if name not in step_labels:
             step.label = name
             step_labels.add(name)
-        step.tool_inputs = dict(name=name, collection_type=collection_type)  # type:ignore[assignment]
+        step.tool_inputs = dict(name=name, collection_type=collection_type)
         hid_to_output_pair[hid] = (step, "output")
         steps.append(step)
     # Tool steps
@@ -283,7 +283,7 @@ class WorkflowSummary:
         # just grab the implicitly mapped jobs and handle in second pass. Second pass is
         # needed because cannot allow selection of individual datasets from an implicit
         # mapping during extraction - you get the collection or nothing.
-        for content in self.history.active_contents:
+        for content in self.history.visible_contents:
             self.__summarize_content(content)
 
     def __summarize_content(self, content):

@@ -1,8 +1,6 @@
 import logging
 
 from markupsafe import escape
-from sqlalchemy import desc
-from sqlalchemy.orm import joinedload
 
 from galaxy import (
     model,
@@ -38,8 +36,7 @@ class WorkflowController(BaseUIController, SharableMixin, UsesStoredWorkflowMixi
     def __init__(self, app: StructuredApp):
         super().__init__(app)
 
-    @web.expose
-    def display_by_username_and_slug(self, trans, username, slug, format="html", **kwargs):
+    def _display_by_username_and_slug(self, trans, username, slug, format="html", **kwargs):
         """
         Display workflow based on a username and slug. Format can be html, json, or json-download.
         """
@@ -164,16 +161,6 @@ class WorkflowController(BaseUIController, SharableMixin, UsesStoredWorkflowMixi
             else:
                 new_workflow = True
 
-        # The following query loads all user-owned workflows,
-        # So that they can be copied or inserted in the workflow editor.
-        workflows = (
-            trans.sa_session.query(model.StoredWorkflow)
-            .filter_by(user=trans.user, deleted=False, hidden=False)
-            .order_by(desc(model.StoredWorkflow.table.c.update_time))
-            .options(joinedload(model.StoredWorkflow.latest_workflow).joinedload(model.Workflow.steps))
-            .all()
-        )
-
         # create workflow module models
         module_sections = []
         for module_section in load_module_sections(trans).values():
@@ -216,27 +203,14 @@ class WorkflowController(BaseUIController, SharableMixin, UsesStoredWorkflowMixi
             # identify item tags
             item_tags = stored.make_tag_string_list()
 
-        # create workflow models
-        workflows = [
-            {
-                "id": trans.security.encode_id(workflow.id),
-                "latest_id": trans.security.encode_id(workflow.latest_workflow.id),
-                "step_count": len(workflow.latest_workflow.steps),
-                "name": workflow.name,
-            }
-            for workflow in workflows
-            if new_workflow or workflow.id != stored.id
-        ]
-
         # build workflow editor model
         editor_config = {
             "moduleSections": module_sections,
             "dataManagers": data_managers,
-            "workflows": workflows,
         }
 
         # for existing workflow add its data to the model
-        if new_workflow is False:
+        if stored:
             editor_config.update(
                 {
                     "id": trans.security.encode_id(stored.id),
@@ -276,7 +250,7 @@ class WorkflowController(BaseUIController, SharableMixin, UsesStoredWorkflowMixi
         return self._workflow_to_dict(trans, stored)
 
     @web.json_pretty
-    def export_to_file(self, trans, id):
+    def export_to_file(self, trans, id, **kwds):
         """
         Get the latest Workflow for the StoredWorkflow identified by `id` and
         export it to a JSON file that can be imported back into Galaxy.

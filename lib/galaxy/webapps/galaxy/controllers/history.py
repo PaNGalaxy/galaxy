@@ -88,8 +88,7 @@ class HistoryController(BaseUIController, SharableMixin, UsesAnnotations, UsesIt
             "allow_user_dataset_purge": trans.app.config.allow_user_dataset_purge,
         }
 
-    @web.expose
-    def display_by_username_and_slug(self, trans, username, slug, **kwargs):
+    def _display_by_username_and_slug(self, trans, username, slug, **kwargs):
         """
         Display history based on a username and slug.
         """
@@ -244,7 +243,7 @@ class HistoryController(BaseUIController, SharableMixin, UsesAnnotations, UsesIt
             history = trans.get_history()
             if history:
                 history.resume_paused_jobs()
-                return trans.show_ok_message("Your jobs have been resumed.")
+                return {"message": "Your jobs have been resumed.", "status": "success"}
         raise exceptions.RequestParameterInvalidException(
             "You can currently only resume all the datasets of the current history."
         )

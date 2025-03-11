@@ -11,11 +11,17 @@ import sys
 import threading
 import time
 import traceback
-import typing
 import uuid
 from queue import (
     Empty,
     Queue,
+)
+from typing import (
+    Any,
+    Dict,
+    Optional,
+    TYPE_CHECKING,
+    Union,
 )
 
 import jwt
@@ -61,7 +67,7 @@ from galaxy.util.custom_logging import get_logger
 from galaxy.util.monitors import Monitors
 from .state_handler_factory import build_state_handlers
 
-if typing.TYPE_CHECKING:
+if TYPE_CHECKING:
     from galaxy.app import GalaxyManagerApplication
     from galaxy.jobs import (
         JobDestination,
@@ -186,7 +192,7 @@ class BaseJobRunner:
                         # Prevent fail_job cycle in the work_queue
                         self.work_queue.put((self.fail_job, job_state))
 
-    def _ensure_db_session(self, arg: typing.Union["JobWrapper", "JobState"]) -> None:
+    def _ensure_db_session(self, arg: Union["JobWrapper", "JobState"]) -> None:
         """Ensure Job object belongs to current session."""
         try:
             job_wrapper = arg.job_wrapper  # type: ignore[union-attr]
@@ -267,7 +273,7 @@ class BaseJobRunner:
         """
         return galaxy.jobs.JobDestination(runner=url.split(":")[0])
 
-    def parse_destination_params(self, params: typing.Dict[str, typing.Any]):
+    def parse_destination_params(self, params: Dict[str, Any]):
         """Parse the JobDestination ``params`` dict and return the runner's native representation of those params."""
         raise NotImplementedError()
 
@@ -350,8 +356,8 @@ class BaseJobRunner:
     def get_work_dir_outputs(
         self,
         job_wrapper: "MinimalJobWrapper",
-        job_working_directory: typing.Optional[str] = None,
-        tool_working_directory: typing.Optional[str] = None,
+        job_working_directory: Optional[str] = None,
+        tool_working_directory: Optional[str] = None,
     ):
         """
         Returns list of pairs (source_file, destination) describing path
@@ -505,6 +511,7 @@ class BaseJobRunner:
             env_setup_commands.append(env_to_statement(env))
         command_line = job_wrapper.runner_command_line
         tmp_dir_creation_statement = job_wrapper.tmp_dir_creation_statement
+        assert job_wrapper.tool
         options = dict(
             tmp_dir_creation_statement=tmp_dir_creation_statement,
             job_instrumenter=job_instrumenter,
@@ -572,10 +579,10 @@ class BaseJobRunner:
     def _find_container(
         self,
         job_wrapper: "MinimalJobWrapper",
-        compute_working_directory: typing.Optional[str] = None,
-        compute_tool_directory: typing.Optional[str] = None,
-        compute_job_directory: typing.Optional[str] = None,
-        compute_tmp_directory: typing.Optional[str] = None,
+        compute_working_directory: Optional[str] = None,
+        compute_tool_directory: Optional[str] = None,
+        compute_job_directory: Optional[str] = None,
+        compute_tmp_directory: Optional[str] = None,
     ):
         job_directory_type = "galaxy" if compute_working_directory is None else "pulsar"
         if not compute_working_directory:
@@ -584,13 +591,14 @@ class BaseJobRunner:
         if not compute_job_directory:
             compute_job_directory = job_wrapper.working_directory
 
+        tool = job_wrapper.tool
+        assert tool
         if not compute_tool_directory:
-            compute_tool_directory = job_wrapper.tool.tool_dir
+            compute_tool_directory = str(tool.tool_dir) if tool.tool_dir is not None else None
 
         if not compute_tmp_directory:
             compute_tmp_directory = job_wrapper.tmp_directory()
 
-        tool = job_wrapper.tool
         guest_ports = job_wrapper.guest_ports
         tool_info = ToolInfo(
             tool.containers,
@@ -630,7 +638,8 @@ class BaseJobRunner:
             log.exception("Caught exception in runner state handler")
 
     def fail_job(self, job_state: "JobState", exception=False, message="Job failed", full_status=None):
-        if getattr(job_state, "stop_job", True):
+        job = job_state.job_wrapper.get_job()
+        if getattr(job_state, "stop_job", True) and job.state != model.Job.states.NEW:
             self.stop_job(job_state.job_wrapper)
         job_state.job_wrapper.reclaim_ownership()
         self._handle_runner_state("failure", job_state)
@@ -647,7 +656,7 @@ class BaseJobRunner:
                 fail_message, tool_stdout=tool_stdout, tool_stderr=tool_stderr, exception=exception
             )
 
-    def mark_as_resubmitted(self, job_state: "JobState", info: typing.Optional[str] = None):
+    def mark_as_resubmitted(self, job_state: "JobState", info: Optional[str] = None):
         job_state.job_wrapper.mark_as_resubmitted(info=info)
         if not self.app.config.track_jobs_in_database:
             job_state.job_wrapper.change_state(model.Job.states.QUEUED)

@@ -123,6 +123,7 @@ class ItemGrabber:
         self.self_handler_tags = self_handler_tags
         self.max_grab = max_grab
         self.handler_tags = handler_tags
+        self._grab_conn_opts = {}
         self._grab_query = None
         self._supports_returning = self.app.application_stack.supports_returning()
 
@@ -130,7 +131,13 @@ class ItemGrabber:
         if self.grab_model is model.Job:
             grab_condition = self.grab_model.state == self.grab_model.states.NEW
         elif self.grab_model is model.WorkflowInvocation:
-            grab_condition = self.grab_model.state.in_((self.grab_model.states.NEW, self.grab_model.states.CANCELLING))
+            grab_condition = self.grab_model.state.in_(
+                (
+                    self.grab_model.states.NEW,
+                    self.grab_model.states.REQUIRES_MATERIALIZATION,
+                    self.grab_model.states.CANCELLING,
+                )
+            )
         else:
             raise NotImplementedError(f"Grabbing {self.grab_model.__name__} not implemented")
         subq = (
@@ -187,6 +194,7 @@ class ItemGrabber:
             self.setup_query()
 
         with self.app.model.engine.connect() as conn:
+            conn.execution_options(**self._grab_conn_opts)
             with conn.begin() as trans:
                 try:
                     proxy = conn.execute(self._grab_query)
@@ -225,7 +233,7 @@ class StopSignalException(Exception):
 class BaseJobHandlerQueue(Monitors):
     STOP_SIGNAL = object()
 
-    def __init__(self, app: MinimalManagerApp, dispatcher):
+    def __init__(self, app: MinimalManagerApp, dispatcher: "DefaultJobDispatcher"):
         """
         Initializes the Queue, creates (unstarted) monitoring thread.
         """
@@ -303,12 +311,15 @@ class JobHandlerQueue(BaseJobHandlerQueue):
             with transaction(session):
                 session.commit()
 
-    def _check_job_at_startup(self, job):
+    def _check_job_at_startup(self, job: model.Job):
+        assert job.tool_id is not None
         if not self.app.toolbox.has_tool(job.tool_id, job.tool_version, exact=True):
             log.warning(f"({job.id}) Tool '{job.tool_id}' removed from tool config, unable to recover job")
             self.job_wrapper(job).fail(
                 "This tool was disabled before the job completed.  Please contact your Galaxy administrator."
             )
+        elif job.copied_from_job_id:
+            self.queue.put((job.id, job.tool_id))
         elif job.job_runner_name is not None and job.job_runner_external_id is None:
             # This could happen during certain revisions of Galaxy where a runner URL was persisted before the job was dispatched to a runner.
             log.debug(f"({job.id}) Job runner assigned but no external ID recorded, adding to the job handler queue")
@@ -553,18 +564,12 @@ class JobHandlerQueue(BaseJobHandlerQueue):
                     log.info("(%d) Job deleted by user while still queued" % job.id)
                 elif job_state == JOB_ADMIN_DELETED:
                     log.info("(%d) Job deleted by admin while still queued" % job.id)
-                elif job_state in (JOB_USER_OVER_QUOTA, JOB_USER_OVER_TOTAL_WALLTIME):
-                    if job_state == JOB_USER_OVER_QUOTA:
-                        log.info("(%d) User (%s) is over quota: job paused" % (job.id, job.user_id))
-                        what = "your disk quota"
-                    else:
-                        log.info("(%d) User (%s) is over total walltime limit: job paused" % (job.id, job.user_id))
-                        what = "your total job runtime"
-
+                elif job_state == JOB_USER_OVER_TOTAL_WALLTIME:
+                    log.info("(%d) User (%s) is over total walltime limit: job paused" % (job.id, job.user_id))
                     job.set_state(model.Job.states.PAUSED)
                     for dataset_assoc in job.output_datasets + job.output_library_datasets:
                         dataset_assoc.dataset.dataset.state = model.Dataset.states.PAUSED
-                        dataset_assoc.dataset.info = f"Execution of this dataset's job is paused because you were over {what} at the time it was ready to run"
+                        dataset_assoc.dataset.info = "Execution of this dataset's job is paused because you were over your total job runtime at the time it was ready to run"
                         self.sa_session.add(dataset_assoc.dataset.dataset)
                     self.sa_session.add(job)
                 elif job_state == JOB_ERROR:
@@ -738,8 +743,6 @@ class JobHandlerQueue(BaseJobHandlerQueue):
 
         if state == JOB_READY:
             state = self.__check_user_jobs(job, job_wrapper)
-        if state == JOB_READY and self.app.quota_agent.is_over_quota(self.app, job, job_destination):
-            return JOB_USER_OVER_QUOTA, job_destination
         # Check total walltime limits
         if state == JOB_READY and "delta" in self.app.job_config.limits.total_walltime:
             jobs_to_check = self.sa_session.query(model.Job).filter(
@@ -1199,7 +1202,7 @@ class DefaultJobDispatcher:
         for runner in self.job_runners.values():
             runner.start()
 
-    def url_to_destination(self, url):
+    def url_to_destination(self, url: str):
         """This is used by the runner mapper (a.k.a. dynamic runner) and
         recovery methods to have runners convert URLs to destinations.
 
@@ -1260,10 +1263,11 @@ class DefaultJobDispatcher:
             runner_name = job_runner_name.split(":", 1)[0]
             log.debug(f"Stopping job {job_wrapper.get_id_tag()} in {runner_name} runner")
             try:
-                try:
-                    self.job_runners[runner_name].stop_job(job_wrapper, soft_kill=soft_kill)
-                except:
-                    self.job_runners[runner_name].stop_job(job_wrapper)
+                if job.state != model.Job.states.NEW:
+                    try:
+                        self.job_runners[runner_name].stop_job(job_wrapper, soft_kill=soft_kill)
+                    except:
+                        self.job_runners[runner_name].stop_job(job_wrapper)
             except KeyError:
                 log.error(f"stop(): ({job_wrapper.get_id_tag()}) Invalid job runner: {runner_name}")
                 # Job and output dataset states have already been updated, so nothing is done here.

@@ -190,7 +190,7 @@
     <datatype extension="gif" type="galaxy.datatypes.images:Gif" mimetype="image/gif"/>
     <datatype extension="gmaj.zip" type="galaxy.datatypes.images:Gmaj" mimetype="application/zip"/>
     <datatype extension="graph_dot" type="galaxy.datatypes.data:Text" subclass="true"/>
-    <datatype extension="gtf" type="galaxy.datatypes.interval:Gtf" display_in_upload="true">
+    <datatype extension="gtf" auto_compressed_types="gz" type="galaxy.datatypes.interval:Gtf" display_in_upload="true">
       <converter file="gff_to_interval_index_converter.xml" target_datatype="interval_index"/>
       <converter file="bed_gff_or_vcf_to_bigwig_converter.xml" target_datatype="bigwig"/>
       <display file="igb/gtf.xml"/>
@@ -202,6 +202,7 @@
     <datatype extension="grib" type="galaxy.datatypes.binary:Grib" mimetype="application/octet-stream" display_in_upload="true"/>
     <datatype extension="loom" type="galaxy.datatypes.binary:Loom" description="An HDF5-based Loom File" mimetype="application/octet-stream" display_in_upload="true"/>
     <datatype extension="h5ad" type="galaxy.datatypes.binary:Anndata" description="An HDF5-based anndata File" mimetype="application/octet-stream" display_in_upload="true"/>
+    <datatype extension="h5mu" type="galaxy.datatypes.binary:H5" mimetype="application/octet-stream" display_in_upload="true" subclass="true" description="MuData is a format analogous to Anndata for multimodal datasets and is based on HDF5" description_url="https://github.com/scverse/mudata"/>
     <datatype extension="visium.tar.gz" type="galaxy.datatypes.binary:Visium" subclass="true" display_in_upload="true" description="Visium is a tar.gz archive with at least a 'Spatial' subfolder, a filtered h5 file and a raw h5 file." />
     <datatype extension="mz5" type="galaxy.datatypes.binary:H5" subclass="true" mimetype="application/octet-stream" display_in_upload="true"/>
     <datatype extension="hyphy_results.json" type="galaxy.datatypes.text:Json" mimetype="application/json" subclass="true" display_in_upload="false"/>
@@ -230,6 +231,7 @@
     <datatype extension="fastk_ktab" type="galaxy.datatypes.binary:Binary" subclass="true" description="A table of canonical k‑mers and their counts for the fastk toolkit." display_in_upload="true" description_url="https://github.com/thegenemyers/FASTK?tab=readme-ov-file#file-encodings"/>
     <datatype extension="fastk_hist" type="galaxy.datatypes.binary:Binary" subclass="true" description="A binary histogram file of kmers and frequencies for the fastk toolkit." display_in_upload="true" description_url="https://github.com/thegenemyers/FASTK?tab=readme-ov-file#file-encodings"/>
     <datatype extension="fastk_prof" type="galaxy.datatypes.binary:Binary" subclass="true" description="Read profile file for the fastk toolkit." display_in_upload="true" description_url="https://github.com/thegenemyers/FASTK?tab=readme-ov-file#file-encodings"/>
+    <datatype extension="fastk_ktab_tar" type="galaxy.datatypes.binary:CompressedArchive" subclass="true" description="Associated hidden ktab files that are essential for the fastk toolkit." display_in_upload="true" description_url="https://github.com/thegenemyers/FASTK?tab=readme-ov-file#file-encodings"/>
     <datatype extension="npy" type="galaxy.datatypes.binary:Numpy" description="Standard format for saving numpy arrays" display_in_upload="true" description_url="https://numpy.org/devdocs/reference/generated/numpy.lib.format.html"/>
 
     <!-- ISA data types -->
@@ -288,13 +290,23 @@
       <display file="qiime/qiime2/q2view.xml"/>
     </datatype>
     <datatype extension='qiime2.tabular' type="galaxy.datatypes.qiime2:QIIME2Metadata" display_in_upload="true"/>
-    <datatype extension="zip" type="galaxy.datatypes.binary:CompressedZipArchive" display_in_upload="true"/>
+    <datatype extension="zip" type="galaxy.datatypes.binary:CompressedZipArchive" display_in_upload="true">
+        <converter file="archive_to_directory.xml" target_datatype="directory" />
+    </datatype>
     <datatype extension="ncbi_genome_dataset.zip" type="galaxy.datatypes.binary:CompressedZipArchive" subclass="true" display_in_upload="true"/>
-    <datatype extension="tar" type="galaxy.datatypes.binary:CompressedArchive" subclass="true" display_in_upload="true">
-      <converter file="tar_to_directory.xml" target_datatype="directory"/>
+    <datatype extension="zarr.zip" type="galaxy.datatypes.binary:CompressedZarrZipArchive" display_in_upload="true">
+        <converter file="archive_to_directory.xml" target_datatype="zarr" />
     </datatype>
-    <datatype extension="directory" type="galaxy.datatypes.data:Directory">
+    <datatype extension="ome_zarr.zip" type="galaxy.datatypes.binary:CompressedOMEZarrZipArchive" display_in_upload="true">
+        <converter file="archive_to_directory.xml" target_datatype="ome_zarr" />
     </datatype>
+    <datatype extension="tar" auto_compressed_types="gz,bz2" type="galaxy.datatypes.binary:CompressedArchive" subclass="true" display_in_upload="true">
+      <converter file="archive_to_directory.xml" target_datatype="directory"/>
+    </datatype>
+    <datatype extension="directory" type="galaxy.datatypes.data:Directory"/>
+    <datatype extension="bwa_mem2_index" display_in_upload="true" type="galaxy.datatypes.data:Directory" subclass="true"/>
+    <datatype extension="zarr" type="galaxy.datatypes.data:ZarrDirectory" />
+    <datatype extension="ome_zarr" type="galaxy.datatypes.images:OMEZarr" />
     <datatype extension="yaml" type="galaxy.datatypes.text:Yaml" display_in_upload="true" />
     <!-- Proteomics Datatypes -->
     <datatype extension="mrm" type="galaxy.datatypes.tabular:Tabular" display_in_upload="true" subclass="true"/>
@@ -720,6 +732,7 @@
     <datatype extension="rdata.camera.quick" type="galaxy.datatypes.binary:RData" mimetype="application/x-gzip" subclass="true" display_in_upload="true"/>
     <datatype extension="rdata.se" type="galaxy.datatypes.hdf5:HDF5SummarizedExperiment"  mimetype="text/html" display_in_upload="true"/>
     <datatype extension="rdock_as" type="galaxy.datatypes.binary:Binary" description="rDock active site format" subclass="true" display_in_upload="true"/>
+    <datatype extension="prm" type="galaxy.datatypes.text:Prm" mimetype="text/plain" description="rDock prm format for system definition files, scoring function definition files and search protocol definition files" description_url="https://rdock.github.io/documentation/html_docs/reference-guide/file-formats.html" display_in_upload="true" />
     <datatype extension="oxlicg" type="galaxy.datatypes.binary:OxliCountGraph" mimetype="application/octet-stream" display_in_upload="true"/>
     <datatype extension="oxling" type="galaxy.datatypes.binary:OxliNodeGraph" mimetype="application/octet-stream" display_in_upload="true"/>
     <datatype extension="oxlits" type="galaxy.datatypes.binary:OxliTagSet" mimetype="application/octet-stream" display_in_upload="true"/>
@@ -975,6 +988,7 @@
     <datatype extension="gmsh.msh" type="galaxy.datatypes.constructive_solid_geometry:GmshMsh" display_in_upload="true"/>
     <datatype extension="gmsh.geo" type="galaxy.datatypes.constructive_solid_geometry:GmshGeo" display_in_upload="true"/>
     <datatype extension="zset.geof" type="galaxy.datatypes.constructive_solid_geometry:ZsetGeof" display_in_upload="true"/>
+    <datatype extension="vtkxml" type="galaxy.datatypes.constructive_solid_geometry:VtkXml" display_in_upload="true"/>
     <datatype extension="stl" type="galaxy.datatypes.binary:Binary" mimetype="application/octet-stream" display_in_upload="true" description="STL is a file format native to the stereolithography CAD software created by 3D Systems."/>
     <!-- Povray script -->
     <datatype extension="pov" type="galaxy.datatypes.text:Text" subclass="true" display_in_upload="true"/>
@@ -1007,6 +1021,7 @@
     <datatype extension="fits" type="galaxy.datatypes.binary:FITS" mimetype="application/octet-stream" display_in_upload="true" description="Flexible Image Transport System (FITS) used in Astronomy"/>
     <datatype extension="chain" type="galaxy.datatypes.chain:Chain" display_in_upload="true" description_url="https://genome.ucsc.edu/goldenPath/help/chain.html"/>
     <datatype extension="ucsc.net" type="galaxy.datatypes.chain:Net" display_in_upload="true" description_url="https://genome.ucsc.edu/goldenPath/help/net.html"/>
+    <datatype extension="bcsp" type="galaxy.datatypes.binary:Binary" mimetype="application/octet-stream" display_in_upload="true" subclass="true" description="Binary format of k-mer hash table which is only compatible with Fairy"/>
   </registration>
   <sniffers>
     <!--
@@ -1033,6 +1048,7 @@
     <sniffer type="galaxy.datatypes.mothur:Axes"/>
     <sniffer type="galaxy.datatypes.constructive_solid_geometry:PlyAscii"/>
     <sniffer type="galaxy.datatypes.constructive_solid_geometry:PlyBinary"/>
+    <sniffer type="galaxy.datatypes.constructive_solid_geometry:VtkXml"/>
     <sniffer type="galaxy.datatypes.constructive_solid_geometry:VtkAscii"/>
     <sniffer type="galaxy.datatypes.constructive_solid_geometry:VtkBinary"/>
     <sniffer type="galaxy.datatypes.constructive_solid_geometry:NeperTess"/>
@@ -1107,6 +1123,8 @@
     <sniffer type="galaxy.datatypes.qiime2:QIIME2Metadata"/>
     <sniffer type="galaxy.datatypes.qiime2:QIIME2Artifact"/>
     <sniffer type="galaxy.datatypes.qiime2:QIIME2Visualization"/>
+    <sniffer type="galaxy.datatypes.binary:CompressedOMEZarrZipArchive"/>
+    <sniffer type="galaxy.datatypes.binary:CompressedZarrZipArchive"/>
     <sniffer type="galaxy.datatypes.binary:CompressedZipArchive"/>
     <sniffer type="galaxy.datatypes.binary:Pretext"/>
     <sniffer type="galaxy.datatypes.annotation:Augustus"/>
