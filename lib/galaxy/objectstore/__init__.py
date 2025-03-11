@@ -632,6 +632,7 @@ class BaseObjectStore(ObjectStore):
         alt_name=None,
         obj_dir: bool = False,
         sync_cache: bool = True,
+        user: str = None,
     ) -> str:
         return self._invoke(
             "get_filename",
@@ -643,6 +644,7 @@ class BaseObjectStore(ObjectStore):
             alt_name=alt_name,
             obj_dir=obj_dir,
             sync_cache=sync_cache,
+            user=user,
         )
 
     def update_from_file(

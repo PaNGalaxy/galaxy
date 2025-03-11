@@ -6,7 +6,10 @@ import { useServerMock } from "@/api/client/__mocks__";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useUserStore } from "@/stores/userStore";
 
-import UploadContainerORNL from "./UploadContainerORNL.vue";
+// todo: gcage
+#import UploadContainerORNL from "./UploadContainerORNL.vue";
+import UploadContainer from "./UploadContainer.vue";
+
 import UploadModal from "./UploadModal.vue";
 
 jest.mock("@/composables/config", () => ({
@@ -84,13 +87,15 @@ describe("UploadModal.vue", () => {
     });
 
     it("should load with correct defaults", async () => {
-        const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+        //const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+        const contentWrapper = wrapper.findComponent(UploadContainer);
         expect(contentWrapper.vm.auto.id).toBe("auto");
         expect(contentWrapper.vm.datatypesDisableAuto).toBe(false);
     });
 
     it("should fetch datatypes and parse them", async () => {
-        const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+        //const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+        const contentWrapper = wrapper.findComponent(UploadContainer);
         expect(contentWrapper.exists()).toBe(true);
         expect(contentWrapper.vm.listExtensions.length).toBe(2);
         expect(contentWrapper.vm.listExtensions[0].id).toBe("auto");
@@ -98,7 +103,8 @@ describe("UploadModal.vue", () => {
     });
 
     it("should fetch genomes and parse them", async () => {
-        const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+        //const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+        const contentWrapper = wrapper.findComponent(UploadContainer);
         expect(contentWrapper.vm.listDbKeys.length).toBe(3);
     });
 });

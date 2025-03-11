@@ -33,6 +33,24 @@ export async function deleteContent(
 }
 
 /**
+* Stops job and marks it as complete.
+*/
+export async function stopJob(jobId: string) {
+// todo: gcage
+//    const { data, error } = await GalaxyApi().PUT("api/jobs/${job_id}/finish", {
+//        params: { path: { job_id: jobId, theme } },
+//    });
+
+
+//    if (error) {
+//        rethrowSimple(error);
+//    }
+//    return data;
+    return {}
+}
+
+
+/**
  * Update specific fields on datasets or collections.
  */
 export async function updateContentFields(content: HistoryItemSummary, newFields = {}) {

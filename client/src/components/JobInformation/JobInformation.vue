@@ -87,18 +87,6 @@ function updateConsoleOutputs(output) {
     }
 }
 
-function updateConsoleOutputs(output) {
-    // Keep stdout in memory and only fetch new text via JobProvider
-    if (output) {
-        if (output.stdout != null) {
-            stdout_text.value += output.stdout;
-        }
-        if (output.stderr != null) {
-            stderr_text.value += output.stderr;
-        }
-    }
-}
-
 function filterMetadata(jobMessages) {
     return jobMessages.map((item) => {
         return Object.entries(item).reduce((acc, [key, value]) => {
