@@ -57,6 +57,9 @@ const metadataDetail = ref({
 
 function updateJob(newJob) {
     job.value = newJob;
+    if (newJob) {
+        fetchInvocation(newJob.id);
+    }
     if (jobStateIsTerminal(newJob?.state)) {
         if (newJob.tool_stdout) {
             stdout_text.value = newJob.tool_stdout;
@@ -75,14 +78,6 @@ function updateConsoleOutputs(output) {
         }
         if (output.stderr != null) {
             stderr_text.value += output.stderr;
-        }
-    }
-    if (jobIsTerminal.value) {
-        if (newJob.tool_stdout) {
-            stdout_text.value = newJob.tool_stdout;
-        }
-        if (newJob.tool_stderr) {
-            stderr_text.value = newJob.tool_stderr;
         }
     }
 }

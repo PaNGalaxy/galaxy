@@ -10,7 +10,6 @@ import { createDatasetCollection } from "components/History/model/queries";
 
 import { UploadQueue } from "@/utils/upload-queue.js";
 
-import { collectionBuilder } from "./builders.js";
 import { defaultModel } from "./model.js";
 import { COLLECTION_TYPES, DEFAULT_FILE_NAME, hasBrowserSupport } from "./utils";
 
@@ -60,7 +59,7 @@ const props = defineProps({
     },
     lazyLoad: {
         type: Number,
-        default: 50,
+        default: 150,
     },
     listDbKeys: {
         type: Array,
@@ -74,10 +73,18 @@ const props = defineProps({
         type: String,
         default: "",
         required: false,
-    }
+    },
+    disableFooter: {
+        type: Boolean,
+        default: false,
+    },
+    emitUploaded: {
+        type: Boolean,
+        default: false,
+    },
 });
 
-const emit = defineEmits(["dismiss", "progress", "updateCollectionName"]);
+const emit = defineEmits(["dismiss", "progress", "uploaded", "updateCollectionName"]);
 
 const collectionType = ref("list");
 const counterAnnounce = ref(0);
@@ -164,34 +171,38 @@ function eventAnnounce(index, file) {
 
 /** Populates collection builder with uploaded files */
 function eventBuild() {
-    const Galaxy = getGalaxyInstance();
-    const models = {};
-    uploadValues.value.forEach((model) => {
-        const outputs = model.outputs;
-        if (outputs) {
-            Object.entries(outputs).forEach((output) => {
-                const outputDetails = output[1];
-                models[outputDetails.id] = outputDetails;
-            });
-        } else {
-            console.debug("Warning, upload response does not contain outputs.", model);
-        }
-    });
-    var elements = Object.values(models);
-    elements = elements.map((element) => ({
-        id: element.id,
-        name: element.name,
-        //TODO: this allows for list:list even if the filter above does not - reconcile
-        src: element.src || (element.history_content_type == "dataset" ? "hda" : "hdca"),
-    }));
-    const queryBody = {
-        collection_type: "list",
-        name: collectionName.value,
-        hide_source_items: true,
-        element_identifiers: elements,
-        options: {}
-    };
-    createDatasetCollection({ id: Galaxy.currHistoryPanel.model.id }, queryBody);
+    try {
+        const Galaxy = getGalaxyInstance();
+        const models = {};
+        uploadValues.value.forEach((model) => {
+            const outputs = model.outputs;
+            if (outputs) {
+                Object.entries(outputs).forEach((output) => {
+                    const outputDetails = output[1];
+                    models[outputDetails.id] = outputDetails;
+                });
+            } else {
+                console.debug("Warning, upload response does not contain outputs.", model);
+            }
+        });
+        var elements = Object.values(models);
+        elements = elements.map((element) => ({
+            id: element.id,
+            name: element.name,
+            //TODO: this allows for list:list even if the filter above does not - reconcile
+            src: element.src || (element.history_content_type == "dataset" ? "hda" : "hdca"),
+        }));
+        const queryBody = {
+            collection_type: "list",
+            name: collectionName.value,
+            hide_source_items: true,
+            element_identifiers: elements,
+            options: {}
+        };
+        createDatasetCollection({ id: Galaxy.currHistoryPanel.model.id }, queryBody);
+    } catch (err) {
+        console.error(err)
+    }
     counterRunning.value = 0;
     eventReset();
     emit("dismiss");
@@ -435,8 +446,8 @@ defineExpose({
                     :file-name="uploadItem.fileName"
                     :file-size="uploadItem.fileSize"
                     :info="uploadItem.info"
-                    :list-extensions="isCollection ? null : listExtensions"
-                    :list-db-keys="isCollection ? null : listDbKeys"
+                    :list-extensions="!isCollection && listExtensions.length > 1 ? listExtensions : null"
+                    :list-db-keys="!isCollection && listDbKeys.length > 1 ? listDbKeys : null"
                     :percentage="uploadItem.percentage"
                     :space-to-tab="uploadItem.spaceToTab"
                     :status="uploadItem.status"
@@ -453,7 +464,7 @@ defineExpose({
             </div>
             <input ref="uploadFile" type="file" :multiple="multiple" @change="addFiles($event.target.files)" />
         </UploadBox>
-        <div class="upload-footer text-center">
+        <div v-if="!disableFooter" class="upload-footer text-center">
             <span v-if="isCollection" class="upload-footer-title">Collection:</span>
             <UploadSelect
                 v-if="isCollection"
@@ -482,6 +493,7 @@ defineExpose({
                 placeholder="Select Reference"
                 @input="updateDbKey" />
         </div>
+        <slot name="footer" />
         <div class="upload-buttons d-flex justify-content-end">
             <BButton id="btn-local" :disabled="!enableSources" @click="singleFileUpload()">
                 <FontAwesomeIcon icon="fa-laptop" />

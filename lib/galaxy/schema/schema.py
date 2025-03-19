@@ -91,6 +91,7 @@ class DatasetState(str, Enum):
     # be able to have history contents associated (normal HDAs?)
     DEFERRED = "deferred"
     DISCARDED = "discarded"
+    STOPPED = "stopped"
 
     @classmethod
     def values(self):

@@ -2934,6 +2934,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/{job_id}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Finished a job regardless of execution status (ie early job finish) */
+        put: operations["finish_job_api_jobs__job_id__finish_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}/inputs": {
         parameters: {
             query?: never;
@@ -8123,9 +8140,8 @@ export interface components {
             | "setting_metadata"
             | "failed_metadata"
             | "deferred"
-/** ndip_todo: is this a right place?      */
-            | "stopped"
-            | "discarded";
+            | "discarded"
+            | "stopped";
         /** DatasetStorageDetails */
         DatasetStorageDetails: {
             /**
@@ -28217,6 +28233,49 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobErrorSummary"];
+                };
+            };
+            /** @description Request Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageExceptionModel"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageExceptionModel"];
+                };
+            };
+        };
+    };
+    finish_job_api_jobs__job_id__finish_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The user ID that will be used to effectively make this API call. Only admins and designated users can make API calls on behalf of other users. */
+                "run-as"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": boolean;
                 };
             };
             /** @description Request Error */

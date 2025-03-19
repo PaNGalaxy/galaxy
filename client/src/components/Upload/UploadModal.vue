@@ -9,9 +9,9 @@ import { useUserHistories } from "@/composables/userHistories";
 import { useUserStore } from "@/stores/userStore";
 import { wait } from "@/utils/utils";
 
-// todo: gcage
-//import UploadContainerORNL from "./UploadContainerORNL.vue";
-import UploadContainer from "./UploadContainer.vue";
+
+import UploadContainerORNL from "./UploadContainerORNL.vue";
+//import UploadContainer from "./UploadContainer.vue";
 import ExternalLink from "../ExternalLink.vue";
 import HelpText from "../Help/HelpText.vue";
 
@@ -129,7 +129,7 @@ defineExpose({
                 </BCarousel>
             </div>
         </template>
-        <UploadContainer
+        <UploadContainerORNL
             v-if="currentHistoryId"
             ref="content"
             :current-user-id="currentUser?.id"
