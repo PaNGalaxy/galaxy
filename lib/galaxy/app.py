@@ -821,16 +821,6 @@ class UniverseApplication(StructuredApp, GalaxyManagerApplication):
             self.authnz_manager = managers.AuthnzManager(
                 self, self.config.oidc_config_file, self.config.oidc_backends_config_file
             )
-            if self.is_webapp:
-                self.refresh_oidc_tokens_task = IntervalTask(
-                    func=lambda: self.authnz_manager.refresh_expiring_oidc_tokens(self.model.session),
-                    name="RefreshOIDCTokensTask",
-                    interval=self.config.oidc_refresh_tokens_interval,
-                    immediate_start=True,
-                    time_execution=True,
-                )
-                self.application_stack.register_postfork_function(self.refresh_oidc_tokens_task.start)
-                self.haltables.append(("RefreshOIDCTokensTask", self.refresh_oidc_tokens_task.shutdown))
 
             # If there is only a single external authentication provider in use
             # TODO: Future work will expand on this and provide an interface for
