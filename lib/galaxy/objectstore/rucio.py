@@ -460,8 +460,7 @@ class RucioObjectStore(CachingConcreteObjectStore):
                 tokens = user.get_oidc_tokens(backend)
                 if tokens["id"]:
                     return tokens["id"]
-        except Exception as e:
-            log.debug("Failed to get auth token: %s", e)
+        except Exception:
             return None
 
     def _get_filename(self, obj, sync_cache: bool = True, **kwargs) -> str:

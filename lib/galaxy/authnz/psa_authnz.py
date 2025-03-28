@@ -180,7 +180,7 @@ class PSAAuthnz(IdentityProvider):
         extra_data["expires"] = int(expires - time.time())
         user_authnz_token.set_extra_data(extra_data)
 
-    def refresh(self, sa_session, user_authnz_token, skip_old_tokens_threshold_days):
+    def refresh(self, trans, user_authnz_token, skip_old_tokens_threshold_days):
         if not user_authnz_token or not user_authnz_token.extra_data:
             return False
         # refresh tokens if they reached their half lifetime
@@ -198,14 +198,14 @@ class PSAAuthnz(IdentityProvider):
             return False
 
         if int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2 <= int(time.time()):
-            on_the_fly_config(sa_session)
+            on_the_fly_config(trans.sa_session)
             log.debug(
                 f"Refreshing user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
             )
             if self.config["provider"] == "azure":
                 self.refresh_azure(user_authnz_token)
             else:
-                strategy = Strategy(None, sa_session, Storage, self.config)
+                strategy = Strategy(None, trans.sa_session, Storage, self.config)
                 user_authnz_token.refresh_token(strategy)
             log.debug(
                 f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
