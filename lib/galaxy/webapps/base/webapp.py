@@ -347,6 +347,26 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             self._ensure_valid_session(session_cookie)
 
         if self.galaxy_session:
+            success = True
+            if hasattr(self.app, "authnz_manager") and self.app.authnz_manager:
+                success = self.app.authnz_manager.refresh_expiring_oidc_tokens(self)
+            if not success:
+                self.handle_user_logout()
+                if self.environ.get("is_api_request", False):
+                    self.response.status = 401
+                    self.user = None
+                    self.galaxy_session = None
+                else:
+                    self.response.send_redirect(
+                        url_for(
+                            controller="login",
+                            action="start",
+                            message="You have been logged from your identity provider.  Please log in again to continue using Galaxy.",
+                            status="info",
+                            use_panels=True,
+                        )
+                    )
+                return
             # When we've authenticated by session, we have to check the
             # following.
             # Prevent deleted users from accessing Galaxy

@@ -1,5 +1,6 @@
 import builtins
 import logging
+import fcntl
 
 from galaxy import (
     exceptions,
@@ -282,28 +283,35 @@ class AuthnzManager:
             raise exceptions.ItemAccessibilityException(msg)
 
     def refresh_expiring_oidc_tokens_for_provider(self, trans, auth):
-        try:
-            success, message, backend = self._get_authnz_backend(auth.provider)
-            if success is False:
-                msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
-                log.error(msg)
+        with open("/dev/null", "w") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                success, message, backend = self._get_authnz_backend(auth.provider)
+                if success is False:
+                    msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
+                    log.error(msg)
+                    return False
+                refreshed = backend.refresh(trans, auth, 30)
+                if refreshed:
+                    log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
+                return True
+            except BlockingIOError:
+                log.debug("Another process is refreshing, skipping")
+                return True
+            except Exception:
+                log.exception("An error occurred when refreshing user token")
                 return False
-            refreshed = backend.refresh(trans, auth)
-            if refreshed:
-                log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
-            return True
-        except Exception:
-            log.exception("An error occurred when refreshing user token")
-            return False
 
     def refresh_expiring_oidc_tokens(self, trans, user=None):
         user = trans.user or user
         if not isinstance(user, model.User):
-            return
+            return True
+        success = False
         for auth in user.custos_auth or []:
-            self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
+            success |= self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
         for auth in user.social_auth or []:
-            self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
+            success |= self.refresh_expiring_oidc_tokens_for_provider(trans, auth)
+        return success
 
     def authenticate(self, provider, trans, idphint=None):
         """

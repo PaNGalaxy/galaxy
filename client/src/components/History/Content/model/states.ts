@@ -107,8 +107,8 @@ export const STATES: StateMap = {
     },
     /** the job has been manually stopped */
     stopped: {
-        text: "This job was stopped manually.",
         status: "stopped",
+        text: "This job was stopped manually.",
         icon: "stop-circle",
     },
     /** the dataset is not yet loaded in the UI. This state is only visual and transitional, it does not exist in the database. */

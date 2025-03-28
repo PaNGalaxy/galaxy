@@ -48,6 +48,7 @@ class FastAPIJobTokens:
         trans: ProvidesAppContext = DependsOnTrans,
     ) -> str:
         job = self.__authorize_job_access(trans, job_id, job_key)
+        trans.app.authnz_manager.refresh_expiring_oidc_tokens(trans, job.user)  # type: ignore[attr-defined]
         tokens = job.user.get_oidc_tokens(provider_name_to_backend(provider))
         return tokens["id"]
 

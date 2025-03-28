@@ -77,14 +77,6 @@ function updateConsoleOutputs(output) {
             stderr_text.value += output.stderr;
         }
     }
-    if (jobIsTerminal.value) {
-        if (newJob.tool_stdout) {
-            stdout_text.value = newJob.tool_stdout;
-        }
-        if (newJob.tool_stderr) {
-            stderr_text.value = newJob.tool_stderr;
-        }
-    }
 }
 
 function filterMetadata(jobMessages) {

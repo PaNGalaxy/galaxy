@@ -229,6 +229,7 @@ class ObjectStore(metaclass=abc.ABCMeta):
         extra_dir_at_root=False,
         alt_name=None,
         obj_dir: bool = False,
+        user = None,
     ) -> bool:
         """
         Delete the object identified by `obj`.
@@ -586,6 +587,7 @@ class BaseObjectStore(ObjectStore):
         extra_dir_at_root=False,
         alt_name=None,
         obj_dir: bool = False,
+        user=None,
     ) -> bool:
         return self._invoke(
             "delete",
@@ -597,6 +599,7 @@ class BaseObjectStore(ObjectStore):
             extra_dir_at_root=extra_dir_at_root,
             alt_name=alt_name,
             obj_dir=obj_dir,
+            user=user,
         )
 
     def get_data(
@@ -960,6 +963,7 @@ class DiskObjectStore(ConcreteObjectStore):
         obj_dir: bool = False,
         in_cache: bool = False,
         old_style=False,
+        user=None
     ) -> str:
         """
         Construct the absolute path for accessing the object identified by `obj.id`.
