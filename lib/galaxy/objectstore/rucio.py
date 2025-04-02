@@ -238,8 +238,15 @@ class RucioBroker:
                 }
             items = [item]
             download_client = self.get_rucio_download_client(auth_token=auth_token)
-            res = download_client.download_dids(items)
-            os.replace(res[0]["dest_file_paths"][0], dest_path)
+            try:
+                res = download_client.download_dids(items)
+                os.replace(res[0]["dest_file_paths"][0], dest_path)
+            except Exception as e:
+                if os.path.exists(dest_path):
+                    log.debug("File was already downloaded")
+                else:
+                    log.exception(f"Cannot download file: {str(e)}")
+                    return False
         except Exception as e:
             log.exception(f"Cannot download file: {str(e)}")
             return False
