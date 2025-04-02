@@ -112,7 +112,6 @@ from sqlalchemy.ext.associationproxy import (
     association_proxy,
     AssociationProxy,
 )
-from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.ext.orderinglist import ordering_list
 from sqlalchemy.orm import (
     aliased,
@@ -231,9 +230,12 @@ from galaxy.util.json import safe_loads
 from galaxy.util.sanitize_html import sanitize_html
 
 if TYPE_CHECKING:
+    from sqlalchemy.sql.expression import BindParameter
+
     from galaxy.objectstore import (
         BaseObjectStore,
         ObjectStorePopulator,
+        QuotaSourceMap,
     )
     from galaxy.schema.invocation import InvocationMessageUnion
 
@@ -675,9 +677,9 @@ WHERE dataset.id IN (SELECT dataset_id FROM per_hist_hdas)
 """
 
 
-def calculate_user_disk_usage_statements(user_id, quota_source_map, for_sqlite=False):
+def calculate_user_disk_usage_statements(user_id: int, quota_source_map: "QuotaSourceMap", for_sqlite: bool = False):
     """Standalone function so can be reused for postgres directly in pgcleanup.py."""
-    statements = []
+    statements: List[Tuple[str, Dict[str, Any]]] = []
     default_quota_enabled = quota_source_map.default_quota_enabled
     default_exclude_ids = quota_source_map.default_usage_excluded_ids()
     default_cond = "dataset.object_store_id IS NULL" if default_quota_enabled and default_exclude_ids else ""
@@ -693,7 +695,7 @@ def calculate_user_disk_usage_statements(user_id, quota_source_map, for_sqlite=F
 UPDATE galaxy_user SET disk_usage = ({default_usage})
 WHERE id = :id
 """
-    params = {"id": user_id}
+    params: Dict[str, Any] = {"id": user_id}
     if default_exclude_ids:
         params["exclude_object_store_ids"] = default_exclude_ids
     statements.append((default_usage, params))
@@ -1162,13 +1164,13 @@ ON CONFLICT
         usage = sa_session.scalar(sql_calc, params)
         return usage
 
-    def calculate_and_set_disk_usage(self, object_store):
+    def calculate_and_set_disk_usage(self, object_store: "BaseObjectStore"):
         """
         Calculates and sets user disk usage.
         """
         self._calculate_or_set_disk_usage(object_store=object_store)
 
-    def _calculate_or_set_disk_usage(self, object_store):
+    def _calculate_or_set_disk_usage(self, object_store: "BaseObjectStore"):
         """
         Utility to calculate and return the disk usage.  If dryrun is False,
         the new value is set immediately.
@@ -1176,11 +1178,13 @@ ON CONFLICT
         assert object_store is not None
         quota_source_map = object_store.get_quota_source_map()
         sa_session = object_session(self)
+        assert sa_session
+        assert sa_session.bind
         for_sqlite = "sqlite" in sa_session.bind.dialect.name
         statements = calculate_user_disk_usage_statements(self.id, quota_source_map, for_sqlite)
         for sql, args in statements:
             statement = text(sql)
-            binds = []
+            binds: List[BindParameter] = []
             for key, _ in args.items():
                 expand_binding = key.endswith("s")
                 binds.append(bindparam(key, expanding=expand_binding))
@@ -3839,7 +3843,7 @@ class Role(Base, Dictifiable, RepresentById):
     id: Mapped[int] = mapped_column(primary_key=True)
     create_time: Mapped[datetime] = mapped_column(default=now, nullable=True)
     update_time: Mapped[datetime] = mapped_column(default=now, onupdate=now, nullable=True)
-    _name: Mapped[str] = mapped_column("name", String(255), index=True)
+    name: Mapped[str] = mapped_column(String(255), index=True)
     description: Mapped[Optional[str]] = mapped_column(TEXT)
     type: Mapped[Optional[str]] = mapped_column(String(40), index=True)
     deleted: Mapped[Optional[bool]] = mapped_column(index=True, default=False)
@@ -3861,19 +3865,6 @@ class Role(Base, Dictifiable, RepresentById):
     @staticmethod
     def default_name(role_type):
         return f"{role_type.value} role"
-
-    @hybrid_property
-    def name(self):
-        if self.type == Role.types.PRIVATE:
-            user_assocs = self.users
-            assert len(user_assocs) == 1, f"Did not find exactly one user for private role {self}"
-            return user_assocs[0].user.email
-        else:
-            return self._name
-
-    @name.setter  # type:ignore[no-redef]  # property setter
-    def name(self, name):
-        self._name = name
 
     def __init__(self, name=None, description=None, type=types.SYSTEM, deleted=False):
         self.name = name or Role.default_name(type)
