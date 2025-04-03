@@ -80,6 +80,7 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
         name,
         filename=None,
         extra_files=None,
+        metadata=None,
         metadata_source_name=None,
         info=None,
         library_folder=None,
@@ -132,11 +133,6 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
                 )
                 self.persist_object(primary_data)
 
-                if init_from:
-                    self.permission_provider.copy_dataset_permissions(init_from, primary_data)
-                    primary_data.state = init_from.state
-                else:
-                    self.permission_provider.set_default_hda_permissions(primary_data)
             else:
                 ld = galaxy.model.LibraryDataset(folder=library_folder, name=name)
                 ldda = galaxy.model.LibraryDatasetDatasetAssociation(
@@ -156,6 +152,12 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
         primary_data.state = final_job_state
         #        if final_job_state == galaxy.model.Job.states.ERROR and not self.get_implicit_collection_jobs_association_id():
         #            primary_data.visible = True
+
+        if metadata:
+            for key, value in metadata.items():
+                metadata_element = primary_data.datatype.metadata_spec.get(key)
+                if metadata_element and metadata_element.set_in_upload:
+                    setattr(primary_data.metadata, key, value)
 
         for source_dict in sources:
             source = galaxy.model.DatasetSource()
@@ -208,6 +210,7 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
                     filename=filename,
                     link_data=link_data,
                     output_name=output_name,
+                    init_from=init_from,
                 )
             else:
                 storage_callbacks.append(
@@ -218,11 +221,14 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
                         filename=filename,
                         link_data=link_data,
                         output_name=output_name,
+                        init_from=init_from,
                     )
                 )
         return primary_data
 
-    def finalize_storage(self, primary_data, dataset_attributes, extra_files, filename, link_data, output_name):
+    def finalize_storage(
+        self, primary_data, dataset_attributes, extra_files, filename, link_data, output_name, init_from
+    ):
         if primary_data.dataset.purged:
             # metadata won't be set, maybe we should do that, then purge ?
             primary_data.dataset.file_size = 0
@@ -243,6 +249,12 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
         else:
             # We are sure there are no extra files, so optimize things that follow by settting total size also.
             primary_data.set_size(no_extra_files=True)
+
+        if init_from:
+            self.permission_provider.copy_dataset_permissions(init_from, primary_data)
+        else:
+            self.permission_provider.set_default_hda_permissions(primary_data)
+
         # TODO: this might run set_meta after copying the file to the object store, which could be inefficient if job working directory is closer to the node.
         self.set_datasets_metadata(datasets=[primary_data], datasets_attributes=[dataset_attributes])
 
@@ -855,6 +867,7 @@ def persist_hdas(elements, model_persistence_context, final_job_state="ok"):
                     name=name,
                     filename=discovered_file.path,
                     extra_files=extra_files,
+                    metadata=element.get("metadata"),
                     info=info,
                     tag_list=tag_list,
                     link_data=link_data,
@@ -925,9 +938,7 @@ def replace_request_syntax_sugar(obj):
                     new_hashes.append({"hash_function": key, "hash_value": obj[key.lower()]})
                     del obj[key.lower()]
 
-            if "hashes" not in obj:
-                obj["hashes"] = []
-            obj["hashes"].extend(new_hashes)
+            obj.setdefault("hashes", []).extend(new_hashes)
 
 
 class DiscoveredFile(NamedTuple):

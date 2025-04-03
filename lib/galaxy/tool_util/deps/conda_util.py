@@ -48,7 +48,7 @@ IS_OS_X = sys.platform == "darwin"
 VERSIONED_ENV_DIR_NAME = re.compile(r"__(.*)@(.*)")
 UNVERSIONED_ENV_DIR_NAME = re.compile(r"__(.*)@_uv_")
 USE_PATH_EXEC_DEFAULT = False
-CONDA_PACKAGE_SPECS = ("conda>=23.7.0", "conda-libmamba-solver", "'pyopenssl>=22.1.0'")
+CONDA_PACKAGE_SPECS = ("conda>=23.7.0", "conda-libmamba-solver", "pyopenssl>=22.1.0")
 CONDA_BUILD_SPECS = ("conda-build>=3.22.0",)
 USE_LOCAL_DEFAULT = False
 
@@ -60,13 +60,10 @@ def conda_link() -> str:
         else:
             url = "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-x86_64.sh"
     else:
-        if sys.maxsize > 2**32:
-            if "arm64" in platform.platform():
-                url = "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh"
-            else:
-                url = "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
+        if "arm64" in platform.platform():
+            url = "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh"
         else:
-            url = "https://repo.anaconda.com/miniconda/Miniconda3-4.5.12-Linux-x86.sh"
+            url = "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
     return url
 
 
@@ -75,21 +72,12 @@ def find_conda_prefix() -> str:
     for Miniconda installs.
     """
     home = os.path.expanduser("~")
-    miniconda_2_dest = os.path.join(home, "miniconda2")
-    miniconda_3_dest = os.path.join(home, "miniconda3")
-    anaconda_2_dest = os.path.join(home, "anaconda2")
-    anaconda_3_dest = os.path.join(home, "anaconda3")
-    # Prefer miniconda3 install if both available
-    if os.path.exists(miniconda_3_dest):
-        return miniconda_3_dest
-    elif os.path.exists(miniconda_2_dest):
-        return miniconda_2_dest
-    elif os.path.exists(anaconda_3_dest):
-        return anaconda_3_dest
-    elif os.path.exists(anaconda_2_dest):
-        return anaconda_2_dest
-    else:
-        return miniconda_3_dest
+    destinations = ["miniforge3", "miniconda3", "miniconda2", "anaconda3", "anaconda2"]
+    for destination in destinations:
+        destination = os.path.join(home, destination)
+        if os.path.exists(destination):
+            return destination
+    return os.path.join(home, "miniforge3")
 
 
 class CondaContext(installable.InstallableContext):
@@ -101,7 +89,7 @@ class CondaContext(installable.InstallableContext):
     def __init__(
         self,
         conda_prefix: Optional[str] = None,
-        conda_exec: Optional[str] = None,
+        conda_exec: Optional[Union[str, List[str]]] = None,
         shell_exec: Optional[Callable[..., int]] = None,
         debug: bool = False,
         ensure_channels: Union[str, List[str]] = "",
@@ -204,11 +192,12 @@ class CondaContext(installable.InstallableContext):
 
     def is_conda_installed(self) -> bool:
         """
-        Check if conda_exec exists
+        Check if conda_info() works
         """
-        if os.path.exists(self.conda_exec):
+        try:
+            self.conda_info()
             return True
-        else:
+        except Exception:
             return False
 
     def can_install_conda(self) -> bool:
@@ -218,6 +207,7 @@ class CondaContext(installable.InstallableContext):
         If conda_exec equals conda_prefix/bin/conda, we can install conda if either conda_prefix
         does not exist or is empty.
         """
+        assert isinstance(self.conda_exec, str), "conda_exec is not a str"
         conda_exec = os.path.abspath(self.conda_exec)
         conda_prefix_plus_exec = os.path.abspath(os.path.join(self.conda_prefix, "bin/conda"))
         if conda_exec == conda_prefix_plus_exec:
@@ -437,7 +427,7 @@ class CondaTarget:
     def __init__(
         self, package: str, version: Optional[str] = None, build: Optional[str] = None, channel: Optional[str] = None
     ) -> None:
-        if SHELL_UNSAFE_PATTERN.search(package) is not None:
+        if SHELL_UNSAFE_PATTERN.search(package) is not None or not package:
             raise ValueError(f"Invalid package [{package}] encountered.")
         self.capitalized_package = package
         self.package = package.lower()

@@ -1,18 +1,16 @@
 import { mount } from "@vue/test-utils";
-import axios from "axios";
-import MockAdapter from "axios-mock-adapter";
 import { createPinia } from "pinia";
-import { useHistoryStore } from "stores/historyStore";
-import { useUserStore } from "stores/userStore";
 import { getLocalVue } from "tests/jest/helpers";
 
-import { mockFetcher } from "@/api/schema/__mocks__";
+import { useServerMock } from "@/api/client/__mocks__";
+import { useHistoryStore } from "@/stores/historyStore";
+import { useUserStore } from "@/stores/userStore";
+
 
 import UploadContainerORNL from "./UploadContainerORNL.vue";
-import UploadModal from "./UploadModal.vue";
+//import UploadContainer from "./UploadContainer.vue";
 
-jest.mock("app");
-jest.mock("@/api/schema");
+import UploadModal from "./UploadModal.vue";
 
 jest.mock("@/composables/config", () => ({
     useConfig: jest.fn(() => ({
@@ -20,6 +18,8 @@ jest.mock("@/composables/config", () => ({
         isConfigLoaded: true,
     })),
 }));
+
+const { server, http } = useServerMock();
 
 const fastaResponse = {
     description_url: "https://wiki.galaxyproject.org/Learn/Datatypes#Fasta",
@@ -42,19 +42,23 @@ const propsData = {
 
 describe("UploadModal.vue", () => {
     let wrapper;
-    let axiosMock;
     let userStore;
     let historyStore;
 
     beforeEach(async () => {
-        mockFetcher
-            .path("/api/datatypes")
-            .method("get")
-            .mock({ data: [fastaResponse] });
-        mockFetcher.path("/api/genomes").method("get").mock({ data: genomesResponse });
+        server.use(
+            http.get("/api/datatypes", ({ response }) => {
+                return response(200).json([fastaResponse]);
+            }),
 
-        axiosMock = new MockAdapter(axios);
-        axiosMock.onGet(`/api/histories/count`).reply(200, 0);
+            http.get("/api/genomes", ({ response }) => {
+                return response(200).json(genomesResponse);
+            }),
+
+            http.get("/api/histories/count", ({ response }) => {
+                return response(200).json(0);
+            })
+        );
 
         const localVue = getLocalVue();
         const pinia = createPinia();
@@ -82,19 +86,16 @@ describe("UploadModal.vue", () => {
         await wrapper.vm.open();
     });
 
-    afterEach(() => {
-        axiosMock.restore();
-        axiosMock.reset();
-    });
-
     it("should load with correct defaults", async () => {
         const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+//        const contentWrapper = wrapper.findComponent(UploadContainer);
         expect(contentWrapper.vm.auto.id).toBe("auto");
         expect(contentWrapper.vm.datatypesDisableAuto).toBe(false);
     });
 
     it("should fetch datatypes and parse them", async () => {
         const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+//        const contentWrapper = wrapper.findComponent(UploadContainer);
         expect(contentWrapper.exists()).toBe(true);
         expect(contentWrapper.vm.listExtensions.length).toBe(2);
         expect(contentWrapper.vm.listExtensions[0].id).toBe("auto");
@@ -103,6 +104,7 @@ describe("UploadModal.vue", () => {
 
     it("should fetch genomes and parse them", async () => {
         const contentWrapper = wrapper.findComponent(UploadContainerORNL);
+//        const contentWrapper = wrapper.findComponent(UploadContainer);
         expect(contentWrapper.vm.listDbKeys.length).toBe(3);
     });
 });

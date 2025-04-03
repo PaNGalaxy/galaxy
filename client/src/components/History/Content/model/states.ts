@@ -1,4 +1,5 @@
-import type { components } from "@/api/schema";
+import { isHDCA } from "@/api";
+import { type components } from "@/api/schema";
 
 type DatasetState = components["schemas"]["DatasetState"];
 // The 'failed' state is for the collection job state summary, not a dataset state.
@@ -106,8 +107,8 @@ export const STATES: StateMap = {
     },
     /** the job has been manually stopped */
     stopped: {
-        text: "This job was stopped manually.",
         status: "stopped",
+        text: "This job was stopped manually.",
         icon: "stop-circle",
     },
     /** the dataset is not yet loaded in the UI. This state is only visual and transitional, it does not exist in the database. */
@@ -152,3 +153,26 @@ export const HIERARCHICAL_COLLECTION_JOB_STATES = [
     "queued",
     "new",
 ] as const;
+
+export function getContentItemState(item: any) {
+    if (isHDCA(item)) {
+        if (item.populated_state === "failed") {
+            return "failed_populated_state";
+        }
+        if (item.populated_state === "new") {
+            return "new_populated_state";
+        }
+        if (item.job_state_summary) {
+            for (const jobState of HIERARCHICAL_COLLECTION_JOB_STATES) {
+                if (item.job_state_summary[jobState] > 0) {
+                    return jobState;
+                }
+            }
+        }
+    } else if (item.accessible === false) {
+        return "inaccessible";
+    } else if (item.state) {
+        return item.state;
+    }
+    return "ok";
+}

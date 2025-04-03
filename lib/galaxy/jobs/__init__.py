@@ -14,19 +14,29 @@ import shutil
 import sys
 import time
 import traceback
+from dataclasses import (
+    dataclass,
+    field,
+)
 from json import loads
 from typing import (
     Any,
     Dict,
     Iterable,
     List,
+    Optional,
     TYPE_CHECKING,
 )
 
 import yaml
 from packaging.version import Version
 from pulsar.client.staging import COMMAND_VERSION_FILENAME
-from sqlalchemy import select
+from sqlalchemy import (
+    and_,
+    func,
+    select,
+    update,
+)
 
 from galaxy import (
     model,
@@ -70,6 +80,7 @@ from galaxy.model.base import transaction
 from galaxy.model.store import copy_dataset_instance_metadata_attributes
 from galaxy.model.store.discover import MaxDiscoveredFilesExceededError
 from galaxy.objectstore import (
+    is_user_object_store,
     ObjectStorePopulator,
     serialize_static_object_store_config,
 )
@@ -99,6 +110,7 @@ from galaxy.work.context import WorkRequestContext
 
 if TYPE_CHECKING:
     from galaxy.jobs.handler import JobHandlerQueue
+    from galaxy.tools import Tool
 
 log = logging.getLogger(__name__)
 
@@ -293,6 +305,18 @@ def job_config_xml_to_dict(config, root):
     return config_dict
 
 
+@dataclass
+class JobConfigurationLimits:
+    registered_user_concurrent_jobs: Optional[int] = None
+    anonymous_user_concurrent_jobs: Optional[int] = None
+    walltime: Optional[str] = None
+    walltime_delta: Optional[datetime.timedelta] = None
+    total_walltime: Dict[str, Any] = field(default_factory=dict)
+    output_size: Optional[int] = None
+    destination_user_concurrent_jobs: Dict[str, int] = field(default_factory=dict)
+    destination_total_concurrent_jobs: Dict[str, int] = field(default_factory=dict)
+
+
 class JobConfiguration(ConfiguresHandlers):
     """A parser and interface to advanced job management features.
 
@@ -326,7 +350,7 @@ class JobConfiguration(ConfiguresHandlers):
         """Parse the job configuration XML."""
         self.app = app
         self.runner_plugins = []
-        self.dynamic_params = None
+        self.dynamic_params: Optional[Dict[str, Any]] = None
         self.handlers = {}
         self.handler_runner_plugins = {}
         self.default_handler_id = None
@@ -341,16 +365,7 @@ class JobConfiguration(ConfiguresHandlers):
         self.resource_groups = {}
         self.default_resource_group = None
         self.resource_parameters = {}
-        self.limits = Bunch(
-            registered_user_concurrent_jobs=None,
-            anonymous_user_concurrent_jobs=None,
-            walltime=None,
-            walltime_delta=None,
-            total_walltime={},
-            output_size=None,
-            destination_user_concurrent_jobs={},
-            destination_total_concurrent_jobs={},
-        )
+        self.limits = JobConfigurationLimits()
 
         default_resubmits = []
         default_resubmit_condition = self.app.config.default_job_resubmission_condition
@@ -382,6 +397,8 @@ class JobConfiguration(ConfiguresHandlers):
                             f" release of Galaxy. Please convert to YAML at {self.app.config.job_config_file} or"
                             f" explicitly set `job_config_file` to {job_config_file} to remove this message"
                         )
+                if not job_config_file:
+                    raise OSError()
                 if ".xml" in job_config_file:
                     tree = load(job_config_file)
                     job_config_dict = self.__parse_job_conf_xml(tree)
@@ -430,7 +447,7 @@ class JobConfiguration(ConfiguresHandlers):
                 continue
             self.runner_plugins.append(runner_info)
         if "dynamic" in job_config_dict:
-            self.dynamic_params = job_config_dict.get("dynamic", None)
+            self.dynamic_params = job_config_dict["dynamic"]
 
         # Parse handlers
         handling_config_dict = job_config_dict.get("handling", {})
@@ -828,12 +845,12 @@ class JobConfiguration(ConfiguresHandlers):
         """
         return self.destinations.get(id_or_tag, [])
 
-    def get_job_runner_plugins(self, handler_id):
+    def get_job_runner_plugins(self, handler_id: str):
         """Load all configured job runner plugins
 
         :returns: list of job runner plugins
         """
-        rval = {}
+        rval: Dict[str, BaseJobRunner] = {}
         if handler_id in self.handler_runner_plugins:
             plugins_to_load = [rp for rp in self.runner_plugins if rp["id"] in self.handler_runner_plugins[handler_id]]
             log.info(
@@ -869,11 +886,9 @@ class JobConfiguration(ConfiguresHandlers):
                     # If the name included a '.' or loading from the static runners path failed, try the original name
                     module = __import__(load)
                     module_name = load
-            if module is None:
-                # Module couldn't be loaded, error should have already been displayed
-                continue
             for comp in module_name.split(".")[1:]:
                 module = getattr(module, comp)
+            assert module  # make mypy happy
             if not class_names:
                 # If there's not a ':', we check <module>.__all__ for class names
                 try:
@@ -984,11 +999,17 @@ class MinimalJobWrapper(HasResourceParameters):
 
     is_task = False
 
-    def __init__(self, job: model.Job, app: MinimalManagerApp, use_persisted_destination: bool = False, tool=None):
+    def __init__(
+        self,
+        job: model.Job,
+        app: MinimalManagerApp,
+        use_persisted_destination: bool = False,
+        tool: Optional["Tool"] = None,
+    ):
         self.job_id = job.id
         self.session_id = job.session_id
         self.user_id = job.user_id
-        self.app: MinimalManagerApp = app
+        self.app = app
         self.tool = tool
         self.sa_session = self.app.model.context
         self.extra_filenames: List[str] = []
@@ -1249,10 +1270,6 @@ class MinimalJobWrapper(HasResourceParameters):
             self.__prepare_upload_paramfile(job)
 
         tool_evaluator = self._get_tool_evaluator(job)
-        if hasattr(self.app, "interactivetool_manager"):
-            self.interactivetools = tool_evaluator.populate_interactivetools()
-            self.app.interactivetool_manager.create_interactivetool(job, self.tool, self.interactivetools)
-            job.interactive_url = self.app.interactivetool_manager.get_job_subdomain(job)
         compute_environment = compute_environment or self.default_compute_environment(job)
         tool_evaluator.set_compute_environment(compute_environment, get_special=get_special)
         (
@@ -1260,6 +1277,7 @@ class MinimalJobWrapper(HasResourceParameters):
             self.version_command_line,
             self.extra_filenames,
             self.environment_variables,
+            self.interactivetools,
         ) = tool_evaluator.build()
         job.command_line = self.command_line
 
@@ -1322,7 +1340,7 @@ class MinimalJobWrapper(HasResourceParameters):
             )
         return self.__working_directory
 
-    def working_directory_exists(self):
+    def working_directory_exists(self) -> bool:
         job = self.get_job()
         return self.app.object_store.exists(job, base_dir="job_work", dir_only=True, obj_dir=True)
 
@@ -1382,7 +1400,15 @@ class MinimalJobWrapper(HasResourceParameters):
                 util.umask_fix_perms(path, self.app.config.umask, 0o666, self.app.config.gid)
 
     def fail(
-        self, message, exception=False, tool_stdout="", tool_stderr="", exit_code=None, job_stdout=None, job_stderr=None
+        self,
+        message,
+        exception=False,
+        tool_stdout="",
+        tool_stderr="",
+        exit_code=None,
+        job_stdout=None,
+        job_stderr=None,
+        job_metrics_directory=None,
     ):
         """
         Indicate job failure by setting state and message on all output
@@ -1408,6 +1434,10 @@ class MinimalJobWrapper(HasResourceParameters):
         # Might be AssertionError or other exception
         message = str(message)
         working_directory_exists = self.working_directory_exists()
+
+        if not job.tasks and working_directory_exists:
+            # If job was composed of tasks, don't attempt to recollect statistics
+            self._collect_metrics(job, job_metrics_directory)
 
         # if the job was deleted, don't fail it
         if not job.state == job.states.DELETED:
@@ -1484,6 +1514,7 @@ class MinimalJobWrapper(HasResourceParameters):
             pjaa.post_job_action for pjaa in job.post_job_actions if pjaa.post_job_action.action_type == "EmailAction"
         ]:
             ActionBox.execute(self.app, self.sa_session, pja, job)
+
         # If the job was deleted, call tool specific fail actions (used for e.g. external metadata) and clean up
         if self.tool:
             try:
@@ -1499,7 +1530,7 @@ class MinimalJobWrapper(HasResourceParameters):
             job = self.get_job()
         if message is None:
             message = "Execution of this dataset's job is paused"
-        if job.state == job.states.NEW:
+        if job.state in (job.states.NEW, job.states.QUEUED):
             for dataset_assoc in job.output_datasets + job.output_library_datasets:
                 dataset_assoc.dataset.dataset.state = dataset_assoc.dataset.dataset.states.PAUSED
                 dataset_assoc.dataset.info = message
@@ -1591,17 +1622,156 @@ class MinimalJobWrapper(HasResourceParameters):
         dest_params = self.job_destination.params
         return self.get_job().get_destination_configuration(dest_params, self.app.config, key, default)
 
+    def queue_with_limit(self, job: Job, job_destination: JobDestination):
+        anonymous_user_concurrent_jobs = self.app.job_config.limits.anonymous_user_concurrent_jobs
+        registered_user_concurrent_jobs = self.app.job_config.limits.registered_user_concurrent_jobs
+        destination_total_concurrent_jobs = self.app.job_config.limits.destination_total_concurrent_jobs
+        destination_total_limit = self.app.job_config.limits.destination_total_concurrent_jobs.get(job_destination.id)
+        destination_user_limit = self.app.job_config.limits.destination_user_concurrent_jobs.get(job_destination.id)
+        destination_tag_limits = {}
+        if job_destination.tags:
+            for tag in job_destination.tags:
+                if tag_limit := destination_total_concurrent_jobs.get(tag):
+                    destination_tag_limits[tag] = tag_limit
+
+        conditions = [model.Job.table.c.id == job.id]
+
+        if job.user_id:
+            user_job_count = (
+                select(func.count(model.Job.table.c.id))
+                .where(
+                    and_(
+                        model.Job.table.c.state.in_(
+                            [
+                                model.Job.states.QUEUED,
+                                model.Job.states.RUNNING,
+                                model.Job.states.RESUBMITTED,
+                            ]
+                        ),
+                        model.Job.table.c.user_id == job.user_id,
+                    )
+                )
+                .scalar_subquery()
+            )
+
+            if registered_user_concurrent_jobs is not None:
+                conditions.append(user_job_count < registered_user_concurrent_jobs)
+            if destination_user_limit is not None:
+                destination_job_count = (
+                    select(func.count(model.Job.table.c.id))
+                    .where(
+                        and_(
+                            model.Job.table.c.state.in_(
+                                [
+                                    model.Job.states.QUEUED,
+                                    model.Job.states.RUNNING,
+                                    model.Job.states.RESUBMITTED,
+                                ]
+                            ),
+                            model.Job.table.c.destination_id == job_destination.id,
+                            model.Job.table.c.user_id == job.user_id,
+                        )
+                    )
+                    .scalar_subquery()
+                )
+                conditions.append(destination_job_count < destination_user_limit)
+
+        elif anonymous_user_concurrent_jobs and job.galaxy_session and job.galaxy_session.id:
+            anon_job_count = (
+                select(func.count(model.Job.table.c.id))
+                .where(
+                    and_(
+                        model.Job.table.c.state.in_(
+                            [
+                                model.Job.states.QUEUED,
+                                model.Job.states.RUNNING,
+                                model.Job.states.RESUBMITTED,
+                            ]
+                        ),
+                        model.Job.table.c.session_id == job.galaxy_session.id,
+                    )
+                )
+                .scalar_subquery()
+            )
+            conditions.append(anon_job_count < anonymous_user_concurrent_jobs)
+
+        if destination_total_limit is not None:
+            destination_total_count = (
+                select(func.count(model.Job.table.c.id))
+                .where(
+                    and_(
+                        model.Job.table.c.state.in_(
+                            [
+                                model.Job.states.QUEUED,
+                                model.Job.states.RUNNING,
+                                model.Job.states.RESUBMITTED,
+                            ]
+                        ),
+                        model.Job.table.c.destination_id == job_destination.id,
+                    )
+                )
+                .scalar_subquery()
+            )
+            conditions.append(destination_total_count < destination_total_limit)
+
+        if destination_tag_limits:
+            for tag, limit in destination_tag_limits.items():
+                destination_ids = {destination.id for destination in self.app.job_config.get_destinations(tag)}
+                tag_count = (
+                    select(func.count(model.Job.table.c.id))
+                    .where(
+                        and_(
+                            model.Job.table.c.state.in_(
+                                [
+                                    model.Job.states.QUEUED,
+                                    model.Job.states.RUNNING,
+                                    model.Job.states.RESUBMITTED,
+                                ]
+                            ),
+                            model.Job.table.c.destination_id.in_(destination_ids),
+                        )
+                    )
+                    .scalar_subquery()
+                )
+                conditions.append(tag_count < limit)
+
+        update_stmt = (
+            update(model.Job)
+            .where(*conditions)
+            .values(
+                state=model.Job.states.QUEUED,
+                destination_id=job_destination.id,
+                destination_params=job_destination.params,
+                job_runner_name=job_destination.runner,
+            )
+        )
+
+        result = self.sa_session.execute(update_stmt)
+        self.sa_session.commit()
+
+        return result.rowcount > 0
+
     def enqueue(self):
         job = self.get_job()
         # Change to queued state before handing to worker thread so the runner won't pick it up again
-        self.change_state(model.Job.states.QUEUED, flush=False, job=job)
-        # Persist the destination so that the job will be included in counts if using concurrency limits
-        self.set_job_destination(self.job_destination, None, flush=False, job=job)
+        if self.is_task:
+            self.change_state(model.Job.states.QUEUED, flush=False, job=job)
+        elif not self.queue_with_limit(job, self.job_destination):
+            return False
+        job.update_output_states(self.app.application_stack.supports_skip_locked())
         # Set object store after job destination so can leverage parameters...
         self._set_object_store_ids(job)
+        # Now that we have the object store id, check if we are over the limit
+        self._pause_job_if_over_quota(job)
         with transaction(self.sa_session):
             self.sa_session.commit()
         return True
+
+    def _pause_job_if_over_quota(self, job):
+        if self.app.quota_agent.is_over_quota(self.app, job, self.job_destination):
+            log.info("(%d) User (%s) is over quota: job paused" % (job.id, job.user_id))
+            message = "Execution of this dataset's job is paused because you were over your disk quota at the time it was ready to run"
+            self.pause(job, message)
 
     def set_job_destination(self, job_destination, external_id=None, flush=True, job=None):
         """Subclasses should implement this to persist a destination, if necessary."""
@@ -1844,6 +2014,7 @@ class MinimalJobWrapper(HasResourceParameters):
                 job_stdout=job_stdout,
                 job_stderr=job_stderr,
                 exception=exception,
+                job_metrics_directory=job_metrics_directory,
             )
 
         # TODO: After failing here, consider returning from the function.
@@ -2127,7 +2298,7 @@ class MinimalJobWrapper(HasResourceParameters):
 
         return state
 
-    def cleanup(self, delete_files=True):
+    def cleanup(self, delete_files: bool = True) -> None:
         # At least one of these tool cleanup actions (job import), is needed
         # for the tool to work properly, that is why one might want to run
         # cleanup but not delete files.
@@ -2148,7 +2319,13 @@ class MinimalJobWrapper(HasResourceParameters):
 
     def _collect_metrics(self, has_metrics, job_metrics_directory=None):
         job = has_metrics.get_job()
-        job_metrics_directory = job_metrics_directory or self.working_directory
+        if job_metrics_directory is None:
+            try:
+                # working directory might have been purged already
+                job_metrics_directory = self.working_directory
+            except Exception:
+                log.exception("Could not recover job metrics")
+                return
         per_plugin_properties = self.app.job_metrics.collect_properties(
             job.destination_id, self.job_id, job_metrics_directory
         )
@@ -2313,7 +2490,7 @@ class MinimalJobWrapper(HasResourceParameters):
         required_user_object_store_uris = set()
         for out_dataset_instance in out_data.values():
             object_store_id = out_dataset_instance.dataset.object_store_id
-            if object_store_id and object_store_id.startswith("user_objects://"):
+            if is_user_object_store(object_store_id):
                 required_user_object_store_uris.add(object_store_id)
 
         job_metadata = os.path.join(self.tool_working_directory, self.tool.provided_metadata_file)
@@ -2496,7 +2673,9 @@ class MinimalJobWrapper(HasResourceParameters):
     def user_system_pwent(self):
         if self.__user_system_pwent is None:
             job = self.get_job()
-            self.__user_system_pwent = job.user.system_user_pwent(self.app.config.real_system_username)
+            self.__user_system_pwent = job.user.system_user_pwent(
+                self.get_destination_configuration("real_system_username", self.app.config.real_system_username)
+            )
         return self.__user_system_pwent
 
     @property
@@ -2538,10 +2717,15 @@ class MinimalJobWrapper(HasResourceParameters):
 
 
 class JobWrapper(MinimalJobWrapper):
-    def __init__(self, job, queue: "JobHandlerQueue", use_persisted_destination=False, app=None):
-        super().__init__(job, app=queue.app, use_persisted_destination=use_persisted_destination)
+    def __init__(self, job, queue: "JobHandlerQueue", use_persisted_destination=False):
+        app = queue.app
+        super().__init__(
+            job,
+            app=app,
+            use_persisted_destination=use_persisted_destination,
+            tool=app.toolbox.get_tool(job.tool_id, job.tool_version, exact=True),
+        )
         self.queue = queue
-        self.tool = self.app.toolbox.get_tool(job.tool_id, job.tool_version, exact=True)
         self.job_runner_mapper = JobRunnerMapper(self, queue.dispatcher.url_to_destination, self.app.job_config)
         if use_persisted_destination:
             self.job_runner_mapper.cached_job_destination = JobDestination(from_job=job)

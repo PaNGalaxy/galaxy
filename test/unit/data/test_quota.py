@@ -1,6 +1,7 @@
 import uuid
 
 from galaxy import model
+from galaxy.model.unittest_utils.utils import random_email
 from galaxy.objectstore import (
     QuotaSourceInfo,
     QuotaSourceMap,
@@ -16,7 +17,7 @@ class TestPurgeUsage(BaseModelTestCase):
     def setUp(self):
         super().setUp()
         model = self.model
-        u = model.User(email="purge_usage@example.com", password="password")
+        u = model.User(email=random_email(), password="password")
         u.disk_usage = 25
         self.persist(u)
 
@@ -110,6 +111,21 @@ class TestCalculateUsage(BaseModelTestCase):
         self.persist(d3)
 
         assert u.calculate_disk_usage_default_source(object_store) == 10
+
+    def test_calculate_usage_with_user_provided_storage(self):
+        u = self.u
+
+        self._add_dataset(10)
+        # This dataset should not be counted towards the user's disk usage
+        self._add_dataset(30, object_store_id="user_objects://user/provided/storage")
+
+        object_store = MockObjectStore()
+        assert u.calculate_disk_usage_default_source(object_store) == 10
+        assert u.disk_usage is None
+        u.calculate_and_set_disk_usage(object_store)
+        assert u.calculate_disk_usage_default_source(object_store) == 10
+
+        self._refresh_user_and_assert_disk_usage_is(10)
 
     def test_calculate_usage_readjusts_incorrect_quota(self):
         u = self.u

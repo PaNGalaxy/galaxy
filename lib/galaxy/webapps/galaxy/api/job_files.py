@@ -133,9 +133,9 @@ class JobFilesAPIController(BaseGalaxyAPIController):
         target_dir = os.path.dirname(path)
         util.safe_makedirs(target_dir)
         try:
-            if os.path.exists(path):
-                with open(path, "ab") as dest:
-                    shutil.copyfileobj(open(input_file.name, "rb"), dest)
+            if os.path.exists(path) and (path.endswith("tool_stdout") or path.endswith("tool_stderr")):
+                with open(path, "ab") as destination:
+                    shutil.copyfileobj(open(input_file.name, "rb"), destination)
             else:
                 shutil.move(input_file.name, path)
         finally:

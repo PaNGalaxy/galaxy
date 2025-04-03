@@ -171,6 +171,20 @@ class TestToolForm(SeleniumTestCase, UsesHistoryItemAssertions):
         self._check_dataset_details_for_inttest_value(2)
 
     @selenium_test
+    def test_rerun_with_non_latest_version(self):
+        version = "0.1+galaxy6"
+        self._run_multiple_version_test_tool(version)
+        self.history_panel_wait_for_hid_ok(1)
+        self.hda_click_primary_action_button(1, "rerun")
+        self.components.tool_form.tool_version_button.wait_for_and_click()
+        menu_element = self.wait_for_selector_visible(".dropdown-menu.show")
+        menu_options = menu_element.find_elements(By.CSS_SELECTOR, "a.dropdown-item")
+        for menu_option in menu_options:
+            if f"Selected {version}" in menu_option.text:
+                return
+        raise Exception("Tool version does not match job version")
+
+    @selenium_test
     def test_rerun_deleted_dataset(self):
         # upload a first dataset that should not become selected on re-run
         test_path = self.get_filename("1.tabular")
@@ -191,9 +205,9 @@ class TestToolForm(SeleniumTestCase, UsesHistoryItemAssertions):
         error_col = self.components.tool_form.parameter_error(parameter="col").wait_for_visible()
         assert (
             error_input1.text
-            == "parameter 'input1': the previously selected dataset has been deleted. Using default: ''."
+            == "Parameter 'input1': the previously selected dataset has been deleted. Using default: ''."
         )
-        assert error_col.text == "parameter 'col': an invalid option ('3') was selected (valid options: 1)"
+        assert error_col.text == "Parameter 'col': an invalid option ('3') was selected (valid options: 1)"
         # validate errors when inputs are missing
         self.components.tool_form.parameter_data_input_collection(parameter="input1").wait_for_and_click()
         self.sleep_for(self.wait_types.UX_TRANSITION)
@@ -201,8 +215,8 @@ class TestToolForm(SeleniumTestCase, UsesHistoryItemAssertions):
         error_col = self.components.tool_form.parameter_error(parameter="col").wait_for_visible()
         error_col_names = self.components.tool_form.parameter_error(parameter="col_names").wait_for_visible()
         assert error_input1.text == "Please provide a value for this option."
-        assert error_col.text == "parameter 'col': requires a value, but no legal values defined"
-        assert error_col_names.text == "parameter 'col_names': requires a value, but no legal values defined"
+        assert error_col.text == "Parameter 'col': requires a value, but no legal values defined"
+        assert error_col_names.text == "Parameter 'col_names': requires a value, but no legal values defined"
         # validate warnings when inputs are restored
         self.components.tool_form.parameter_data_input_single(parameter="input1").wait_for_and_click()
         self.sleep_for(self.wait_types.UX_TRANSITION)
@@ -210,9 +224,9 @@ class TestToolForm(SeleniumTestCase, UsesHistoryItemAssertions):
         error_col = self.components.tool_form.parameter_error(parameter="col").wait_for_visible()
         assert (
             error_input1.text
-            == "parameter 'input1': the previously selected dataset has been deleted. Using default: ''."
+            == "Parameter 'input1': the previously selected dataset has been deleted. Using default: ''."
         )
-        assert error_col.text == "parameter 'col': an invalid option ('3') was selected (valid options: 1)"
+        assert error_col.text == "Parameter 'col': an invalid option ('3') was selected (valid options: 1)"
 
     @selenium_test
     def test_rerun_dataset_collection_element(self):
@@ -312,6 +326,13 @@ class TestToolForm(SeleniumTestCase, UsesHistoryItemAssertions):
         self.home()
         self.tool_open("environment_variables")
         self.tool_set_value("inttest", inttest_value)
+        self.tool_form_execute()
+
+    def _run_multiple_version_test_tool(self, version):
+        self.home()
+        self.tool_open("multiple_versions")
+        self.components.tool_form.tool_version_button.wait_for_and_click()
+        self.select_dropdown_item(f"Switch to {version}")
         self.tool_form_execute()
 
 
