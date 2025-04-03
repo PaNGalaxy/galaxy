@@ -82,6 +82,8 @@ class OIDC(JSAppLauncher):
             msg = "Login to Galaxy using third-party identities is not enabled on this Galaxy instance."
             log.debug(msg)
             return trans.show_error_message(msg)
+        if next == "/null":
+            next = None
         if next:
             trans.set_cookie(value=next, name=LOGIN_NEXT_COOKIE_NAME, age=1)
         else:

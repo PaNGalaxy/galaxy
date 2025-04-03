@@ -156,13 +156,6 @@
                                     </xs:documentation>
                                 </xs:annotation>
                             </xs:element>
-                            <xs:element name="alias" minOccurs="0" type="xs:string">
-                                <xs:annotation>
-                                    <xs:documentation>
-                                        Specifies alias to be used in web client.
-                                    </xs:documentation>
-                                </xs:annotation>
-                            </xs:element>
                             <xs:element name="required_scope" minOccurs="0" type="xs:string">
                                 <xs:annotation>
                                     <xs:documentation>

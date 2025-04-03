@@ -109,7 +109,7 @@ package:
     - >
       docker run
       $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
-      bash -c ". .venv/bin/activate . && pip install build twine && cd packages/objectstore &&
+      bash -c ". .venv/bin/activate . && pip install build twine pkginfo==1.12.1.2 && cd packages/objectstore &&
       sed -i -e '/version =/ s/= .*/= '$GALAXY_VERSION_PYTHON'/' setup.cfg &&
       make dist && 
       TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python3 -m twine upload --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
