@@ -636,6 +636,7 @@ class BaseObjectStore(ObjectStore):
         obj_dir: bool = False,
         sync_cache: bool = True,
         user: str = None,
+        auth_token=None,
     ) -> str:
         return self._invoke(
             "get_filename",
@@ -648,6 +649,7 @@ class BaseObjectStore(ObjectStore):
             obj_dir=obj_dir,
             sync_cache=sync_cache,
             user=user,
+            auth_token=auth_token,
         )
 
     def update_from_file(
@@ -963,7 +965,8 @@ class DiskObjectStore(ConcreteObjectStore):
         obj_dir: bool = False,
         in_cache: bool = False,
         old_style=False,
-        user=None
+        user=None,
+        auth_token=None
     ) -> str:
         """
         Construct the absolute path for accessing the object identified by `obj.id`.
