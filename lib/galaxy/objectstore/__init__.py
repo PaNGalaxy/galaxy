@@ -965,7 +965,8 @@ class DiskObjectStore(ConcreteObjectStore):
         obj_dir: bool = False,
         in_cache: bool = False,
         old_style=False,
-        user=None
+        user=None,
+        auth_token=None
     ) -> str:
         """
         Construct the absolute path for accessing the object identified by `obj.id`.
