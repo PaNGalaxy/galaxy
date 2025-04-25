@@ -4,9 +4,14 @@
             <b-button id="select-btn" @click="reset">
                 <FontAwesomeIcon icon="folder-open" /> {{ selectText }}
             </b-button>
-            <FilesDialog :key="modalKey" mode="directory" :callback="setUrl" :require-writable="true" />
+            <FilesDialog
+                :key="modalKey"
+                mode="directory"
+                :callback="setUrl"
+                :require-writable="true"
+                :is-open="isModalShown" />
         </div>
-        <b-breadcrumb v-if="url">
+        <b-breadcrumb v-if="url" class="mb-0">
             <b-breadcrumb-item title="Select another folder" class="align-items-center" @click="reset">
                 <b-button class="pathname" variant="primary">
                     <FontAwesomeIcon icon="folder-open" /> {{ url.protocol }}</b-button
@@ -17,8 +22,8 @@
                 :key="index"
                 class="existent-url-path align-items-center">
                 <b-button class="regular-path-chunk" :disabled="!editable" variant="dark" @click="removePath(index)">
-                    {{ pathChunk }}</b-button
-                >
+                    {{ decodeURIComponent(pathChunk) }}
+                </b-button>
             </b-breadcrumb-item>
             <b-breadcrumb-item class="directory-input-field align-items-center">
                 <b-input
@@ -33,6 +38,11 @@
                     @keydown.8.capture="removeLastPath" />
             </b-breadcrumb-item>
         </b-breadcrumb>
+
+        <div v-if="value" class="px-2" data-description="directory full path">
+            <span v-localize>Directory Path:</span>
+            <code>{{ value }}</code>
+        </div>
     </div>
 </template>
 
@@ -41,7 +51,10 @@ import { library } from "@fortawesome/fontawesome-svg-core";
 import { faFolder, faFolderOpen } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { FilesDialog } from "components/FilesDialog";
+import { Toast } from "composables/toast";
 import _l from "utils/localization";
+
+import { errorMessageAsString } from "@/utils/simple-error";
 
 library.add(faFolder, faFolderOpen);
 
@@ -57,6 +70,12 @@ export default {
         FontAwesomeIcon,
         FilesDialog,
     },
+    props: {
+        value: {
+            type: String,
+            default: null,
+        },
+    },
     data() {
         return { ...getDefaultValues(), modalKey: 0, selectText: _l("Select") };
     },
@@ -69,9 +88,13 @@ export default {
             return regex.test(this.currentDirectoryName);
         },
     },
+    mounted() {
+        this.updateURL(true);
+    },
     methods: {
         removePath(index) {
             this.pathChunks = this.pathChunks.slice(0, index);
+            this.updateURL();
         },
         reset() {
             const data = getDefaultValues();
@@ -83,6 +106,7 @@ export default {
         // https://michaelnthiessen.com/force-re-render/
         redrawModal() {
             this.modalKey += 1;
+            this.isModalShown = true;
         },
         removeLastPath(event) {
             // check whether the last item is editable
@@ -93,15 +117,19 @@ export default {
             }
         },
         setUrl({ url }) {
-            this.url = new URL(url);
-            // split path and keep only valid entries
-            this.pathChunks = this.url.href
-                .split(/[/\\]/)
-                .splice(2)
-                .map((x) => ({ pathChunk: x, editable: false }));
+            try {
+                this.url = new URL(encodeURI(url));
+                // split path and keep only valid entries
+                this.pathChunks = this.url.href
+                    .split(/[/\\]/)
+                    .splice(2)
+                    .map((x) => ({ pathChunk: x, editable: false }));
 
-            if (url) {
-                this.updateURL();
+                if (url) {
+                    this.updateURL();
+                }
+            } catch (error) {
+                Toast.error(errorMessageAsString(error), "Invalid directory path");
             }
         },
         addPath({ key }) {
@@ -116,7 +144,12 @@ export default {
             let url = undefined;
             if (!isReset) {
                 // create an string of path chunks separated by `/`
-                url = encodeURI(`${this.url.protocol}//${this.pathChunks.map(({ pathChunk }) => pathChunk).join("/")}`);
+                url = encodeURI(
+                    `${this.url.protocol}//${this.pathChunks
+                        .map(({ pathChunk }) => decodeURIComponent(pathChunk))
+                        .join("/")}`
+                );
+                url = decodeURI(url);
             }
             this.$emit("input", url);
         },

@@ -191,6 +191,7 @@ class EncodedJobDetails(JobSummary):
         title="Output collections",
         description="",
     )
+    user_id: Optional[EncodedDatabaseIdField] = Field(default=None, description="User ID of user that ran this job")
 
 
 class JobDestinationParams(Model):
@@ -213,9 +214,9 @@ class JobOutput(Model):
 
 
 class JobConsoleOutput(Model):
-    state: str = Field(None, title="Job State", description="The current job's state")
-    stdout: Optional[str] = Field(None, title="STDOUT", description="Job STDOUT text")
-    stderr: Optional[str] = Field(None, title="STDERR", description="Job STDERR text")
+    state: Optional[JobState] = Field(None, title="Job State", description="The current job's state")
+    stdout: Optional[str] = Field(None, title="STDOUT", description="Tool STDOUT from job.")
+    stderr: Optional[str] = Field(None, title="STDERR", description="Tool STDERR from job.")
 
 
 class JobParameter(Model):
@@ -229,7 +230,7 @@ class JobParameter(Model):
         title="Depth",
         description="The depth of the job parameter.",
     )
-    value: Optional[Union[List[EncodedJobParameterHistoryItem], float, int, bool, str]] = Field(
+    value: Optional[Union[List[Optional[EncodedJobParameterHistoryItem]], float, int, bool, str]] = Field(
         default=None, title="Value", description="The values of the job parameter", union_mode="left_to_right"
     )
     notes: Optional[str] = Field(default=None, title="Notes", description="Notes associated with the job parameter.")
