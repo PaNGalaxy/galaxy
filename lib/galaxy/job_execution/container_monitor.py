@@ -65,7 +65,7 @@ def main():
 
     ports_raw = None
     exc_traceback = ""
-    for i in range(10):
+    for i in range(60):
         try:
             ports_raw = parse_ports(container_name, connection_configuration)
             if ports_raw is not None:
