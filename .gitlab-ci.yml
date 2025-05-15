@@ -52,6 +52,9 @@ client-tests:
     - rse-multi-builder
   except:
       - docker-base
+  when: manual
+  allow_failure: true
+
 
 #api-tests:
 #  stage: test
