@@ -30,7 +30,8 @@ def parse_ports(container_name, connection_configuration):
                 stdout_file.seek(0)
                 ports_raw = stdout_file.read().decode("utf-8")
                 return ports_raw
-
+            else:
+                raise Exception("Could not find port.")
 
 def get_ip_command(cmd) -> str:
     return subprocess.check_output(shlex.split(cmd), text=True).strip()
@@ -64,7 +65,7 @@ def main():
 
     ports_raw = None
     exc_traceback = ""
-    for i in range(10):
+    for i in range(60):
         try:
             ports_raw = parse_ports(container_name, connection_configuration)
             if ports_raw is not None:

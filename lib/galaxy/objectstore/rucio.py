@@ -93,11 +93,13 @@ def parse_config_xml(config_xml):
             rucio_upload_scheme = e_xml[0].get("scheme", None)
             rucio_scope = e_xml[0].get("scope", None)
             rucio_register_only = string_as_bool(e_xml[0].get("register_only", "False"))
+            rucio_register_with_checksum = string_as_bool(e_xml[0].get("rucio_register_with_checksum", "True"))
         else:
             rucio_upload_rse_name = None
             rucio_upload_scheme = None
             rucio_scope = None
             rucio_register_only = False
+            rucio_register_with_checksum = True
 
         e_xml = config_xml.findall("rucio_auth")
         if not e_xml:
@@ -118,6 +120,7 @@ def parse_config_xml(config_xml):
             "upload_scheme": rucio_upload_scheme,
             "scope": rucio_scope,
             "register_only": rucio_register_only,
+            "rucio_register_with_checksum": rucio_register_with_checksum,
             "download_schemes": rucio_download_schemes,
             "account": rucio_account,
             "auth_host": rucio_auth_host,
@@ -148,6 +151,7 @@ class RucioBroker:
         self.upload_rse_name = rucio_config["upload_rse_name"]
         self.scope = rucio_config["scope"]
         self.register_only = rucio_config["register_only"]
+        self.register_with_checksum = rucio_config.get("register_with_checksum", True)
         self.download_schemes = rucio_config["download_schemes"]
         if Client is None:
             raise Exception(NO_RUCIO_ERROR_MESSAGE)
@@ -177,7 +181,7 @@ class RucioBroker:
 
     def get_rucio_ingest_client(self, auth_token=None):
         client = self.get_rucio_client()
-        ic = InPlaceIngestClient(_client=client)
+        ic = InPlaceIngestClient(client, self.register_with_checksum)
         ic.auth_token = auth_token
         return ic
 

@@ -501,7 +501,7 @@ class DockerContainer(Container, HasDockerLikeVolumes):
             auto_rm=asbool(self.prop("auto_rm", docker_util.DEFAULT_AUTO_REMOVE)),
             set_user=self.prop("set_user", docker_util.DEFAULT_SET_USER),
             set_user_from_host=host_user,
-            run_extra_arguments=self.prop("run_extra_arguments", docker_util.DEFAULT_RUN_EXTRA_ARGUMENTS),
+            run_extra_arguments=run_extra_arguments,
             guest_ports=self.tool_info.guest_ports,
             container_name=self.container_name,
             **docker_host_props,
