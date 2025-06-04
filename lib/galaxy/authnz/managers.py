@@ -290,7 +290,7 @@ class AuthnzManager:
             raise exceptions.ItemAccessibilityException(msg)
 
     def refresh_expiring_oidc_tokens_for_provider(self, trans, auth):
-        with open("/dev/null", "w") as lock:
+        with open("/tmp/galaxy_refresh_lock", "w") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 success, message, backend = self._get_authnz_backend(auth.provider)
