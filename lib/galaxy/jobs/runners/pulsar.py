@@ -9,7 +9,6 @@ import logging
 import os
 import re
 import subprocess
-from pathlib import Path
 from time import sleep
 from typing import (
     Any,
@@ -35,10 +34,10 @@ from pulsar.client import (
     submit_job as pulsar_submit_job,
     url_to_destination_params,
 )
-
 # TODO: Perform pulsar release with this included in the client package
 from pulsar.client.staging import DEFAULT_DYNAMIC_COLLECTION_PATTERN
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from galaxy import model
 from galaxy.job_execution.compute_environment import (
@@ -53,6 +52,7 @@ from galaxy.jobs.runners import (
     JobState,
 )
 from galaxy.model.base import check_database_connection
+from galaxy.model.base import transaction
 from galaxy.tool_util.deps import dependencies
 from galaxy.util import (
     galaxy_directory,
@@ -193,7 +193,6 @@ PULSAR_PARAM_SPECS = dict(
     ),
 )
 
-
 PARAMETER_SPECIFICATION_REQUIRED = object()
 PARAMETER_SPECIFICATION_IGNORED = object()
 
@@ -322,6 +321,21 @@ class PulsarJobRunner(AsynchronousJobRunner):
         job_state = self._update_job_state_for_status(job_state, status)
         return job_state
 
+    def _update_job_for_status_details(self, job, job_wrapper, status_details):
+        if not job.job_messages:
+            job.job_messages = [status_details]
+        else:
+            for message in job.job_messages:
+                if "status_details" in message:
+                    message.update(status_details)
+                    break
+            else:
+                job.job_messages.append(status_details)
+        flag_modified(job, "job_messages")
+        job_wrapper.sa_session.add(job)
+        with transaction(self.sa_session):
+            self.sa_session.commit()
+
     def _update_job_state_for_status(self, job_state, pulsar_status, full_status=None):
         log.debug("(%s) Received status update: %s", job_state.job_id, pulsar_status)
         if pulsar_status in ["complete", "cancelled"]:
@@ -372,7 +386,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
 
                 client_inputs_list = []
                 for input_dataset_wrapper in job_wrapper.job_io.get_input_paths(
-                    compute_environment.materialized_objects
+                        compute_environment.materialized_objects
                 ):
                     # str here to resolve false_path if set on a DatasetPath object.
                     path = str(input_dataset_wrapper)
@@ -721,7 +735,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
         if not PulsarJobRunner.__remote_metadata(client):
             # we need an actual exit code file in the job working directory to detect job errors in the metadata script
             with open(
-                os.path.join(job_wrapper.working_directory, f"galaxy_{job_wrapper.job_id}.ec"), "w"
+                    os.path.join(job_wrapper.working_directory, f"galaxy_{job_wrapper.job_id}.ec"), "w"
             ) as exit_code_file:
                 exit_code_file.write(str(exit_code))
             self._handle_metadata_externally(job_wrapper, resolve_requirements=True)
@@ -950,12 +964,12 @@ class PulsarJobRunner(AsynchronousJobRunner):
         return string_as_bool_or_none(pulsar_client.destination_params.get("rewrite_parameters", False)) or False
 
     def __build_metadata_configuration(
-        self,
-        client,
-        job_wrapper,
-        remote_metadata,
-        remote_job_config,
-        compute_environment: Optional["PulsarComputeEnvironment"] = None,
+            self,
+            client,
+            job_wrapper,
+            remote_metadata,
+            remote_job_config,
+            compute_environment: Optional["PulsarComputeEnvironment"] = None,
     ):
         metadata_kwds: Dict[str, Any] = {}
         if remote_metadata:
@@ -1028,7 +1042,11 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 galaxy_job_id = remote_job_id
             job, job_wrapper = self.app.job_manager.job_handler.job_queue.job_pair_for_id(galaxy_job_id)
             job_state = self._job_state(job, job_wrapper)
+
             self._update_job_state_for_status(job_state, full_status["status"], full_status=full_status)
+            if "status_details" in full_status:
+                self._update_job_for_status_details(job, job_wrapper, full_status["status_details"])
+
         except Exception:
             log.exception(f"Failed to update Pulsar job status for job_id ({galaxy_job_id}/{remote_job_id})")
             raise
