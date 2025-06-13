@@ -128,7 +128,7 @@ class OIDCAuthnzBase(IdentityProvider):
         # do not refresh tokens if last token is too old
         skip_old_tokens_threshold_seconds = skip_old_tokens_threshold_days * 86400  # 86400 seconds in a day
         if int(id_token_decoded["iat"]) + skip_old_tokens_threshold_seconds < int(time.time()):
-            return False
+            raise Exception("Expired Tokens. User needs to sign in.")
 
         oauth2_session = self._create_oauth2_session()
         token_endpoint = self.config.token_endpoint
@@ -590,6 +590,7 @@ class OIDCAuthnzBase(IdentityProvider):
 
         custos_authnz_token = self._get_custos_authnz_token(sa_session, user_id, self.config.provider)
         user = custos_authnz_token.user if custos_authnz_token else None
+        self.refresh(sa_session, custos_authnz_token, 90)
         return user, decoded_jwt
 
 
