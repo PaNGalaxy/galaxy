@@ -298,14 +298,14 @@ class AuthnzManager:
                     msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
                     log.error(msg)
                     return False
-                refreshed = backend.refresh(trans, auth, 30)
+                refreshed = backend.refresh(trans.sa_session, auth, 30)
                 if refreshed:
                     log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
                 return True
             except BlockingIOError:
                 log.debug("Another process is refreshing, skipping")
                 return True
-            except Exception:
+            except Exception as e:
                 log.exception("An error occurred when refreshing user token")
                 return False
 
