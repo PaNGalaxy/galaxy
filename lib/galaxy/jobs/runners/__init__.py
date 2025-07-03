@@ -541,6 +541,7 @@ class BaseJobRunner:
             return
 
         set_user = user_oidc_config.get("docker_set_user", False)
+        set_user_groups = user_oidc_config.get("docker_set_user_groups", False)
         env_var = user_oidc_config.get("docker_add_user_to_env", None)
 
         if not set_user and not env_var:
@@ -572,6 +573,8 @@ class BaseJobRunner:
 
         if set_user:
             destination_info["set_host_user"] = username
+        if set_user_groups:
+            destination_info["host_user_to_set_groups_from"] = username
         if env_var:
             destination_info["pass_host_user_to_env"] = env_var + "=" + username
         return
