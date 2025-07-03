@@ -481,8 +481,12 @@ class DockerContainer(Container, HasDockerLikeVolumes):
         run_extra_arguments = self.prop("run_extra_arguments", docker_util.DEFAULT_RUN_EXTRA_ARGUMENTS)
         group_command = ""
         host_user = self.destination_info.get("set_host_user", None)
+        user_with_groups = self.destination_info.get("host_user_to_set_groups_from", None)
         if host_user:
             group_command = string.Template(SET_USER_GROUPS_TEMPLATE).safe_substitute(username=host_user)
+        elif user_with_groups:
+            group_command = string.Template(SET_USER_GROUPS_TEMPLATE).safe_substitute(username=user_with_groups)
+        if group_command:
             if run_extra_arguments:
                 run_extra_arguments = run_extra_arguments + " $GROUPADD"
             else:
