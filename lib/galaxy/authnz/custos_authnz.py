@@ -590,7 +590,6 @@ class OIDCAuthnzBase(IdentityProvider):
 
         custos_authnz_token = self._get_custos_authnz_token(sa_session, user_id, self.config.provider)
         user = custos_authnz_token.user if custos_authnz_token else None
-        self.refresh(sa_session, custos_authnz_token, 90)
         return user, decoded_jwt
 
 

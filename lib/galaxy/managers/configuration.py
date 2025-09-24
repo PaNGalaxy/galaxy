@@ -233,6 +233,8 @@ class ConfigSerializer(base.ModelSerializer):
             "enable_help_forum_tool_panel_integration": _use_config,
             "disable_batch_input": _use_config,
             "llm_api_configured": lambda item, key, **context: bool(item.openai_api_key),
+            "ornl_nova_redirect_url": _defaults_to("https://nova-test.ornl.gov"),
+            "ornl_nova_login_origin_cookie": _defaults_to("galaxy-nova-login")
         }
 
 

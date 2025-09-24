@@ -91,6 +91,12 @@ class OIDC(JSAppLauncher):
             trans.set_cookie(value="/", name=LOGIN_NEXT_COOKIE_NAME)
         success, message, redirect_uri = trans.app.authnz_manager.authenticate(provider, trans, idphint)
         if success:
+
+            # ORNL ONLY logic
+            nova_login = trans.get_cookie(trans.app.config.ornl_nova_login_origin_cookie)
+            if nova_login == "true":
+                return trans.response.send_redirect(url_for(redirect_uri))
+
             return {"redirect_uri": redirect_uri}
         else:
             raise exceptions.AuthenticationFailed(message)
@@ -149,6 +155,11 @@ class OIDC(JSAppLauncher):
         trans.set_cookie(value=provider, name=PROVIDER_COOKIE_NAME)
         # Clear the login next cookie back to default.
         trans.set_cookie(value="/", name=LOGIN_NEXT_COOKIE_NAME)
+
+        # ORNL ONLY logic
+        nova_login = trans.get_cookie(trans.app.config.ornl_nova_login_origin_cookie)
+        if nova_login == "true":
+            return trans.response.send_redirect(url_for(trans.app.config.ornl_nova_redirect_url))
         return trans.response.send_redirect(url_for(redirect_url))
 
     @web.expose
