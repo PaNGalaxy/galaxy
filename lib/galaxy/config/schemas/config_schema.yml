@@ -4169,16 +4169,10 @@ mapping:
           queries while browsing a file sources. Longer times will result in fewer requests to file sources but
           outdated contents might be displayed to the user. Currently only affects s3fs file sources.
 
-      ornl_nova_redirect_url:
+      external_login_redirect_cookie:
         type: str
-        default: https://nova-test.ornl.gov
+        default: "galaxy-external-login-redirect"
         required: false
         desc: |
-          ORNL Only. The url to return to when logging in through Galaxy via NOVA.
-
-      ornl_nova_login_origin_cookie:
-        type: str
-        default: galaxy-nova-login
-        required: false
-        desc: |
-          ORNL Only. The name of the cookie to check whether the user was sent from NOVA to log in.
+          The name of a cookie to check after Galaxy has been logged into via an external third party. If present, Galaxy
+          will redirect to the url contained in the cookie.

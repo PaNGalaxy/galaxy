@@ -93,8 +93,8 @@ class OIDC(JSAppLauncher):
         if success:
 
             # ORNL ONLY logic
-            nova_login = trans.get_cookie(trans.app.config.ornl_nova_login_origin_cookie)
-            if nova_login == "true":
+            external_login = trans.get_cookie(trans.app.config.external_login_redirect_cookie)
+            if external_login:
                 return trans.response.send_redirect(url_for(redirect_uri))
 
             return {"redirect_uri": redirect_uri}
@@ -157,9 +157,9 @@ class OIDC(JSAppLauncher):
         trans.set_cookie(value="/", name=LOGIN_NEXT_COOKIE_NAME)
 
         # ORNL ONLY logic
-        nova_login = trans.get_cookie(trans.app.config.ornl_nova_login_origin_cookie)
-        if nova_login == "true":
-            return trans.response.send_redirect(url_for(trans.app.config.ornl_nova_redirect_url))
+        external_login = trans.get_cookie(trans.app.config.external_login_redirect_cookie)
+        if external_login and (external_login.find("https://") == 0 or external_login.find("http://") == 0):
+            return trans.response.send_redirect(url_for(external_login))
         return trans.response.send_redirect(url_for(redirect_url))
 
     @web.expose
