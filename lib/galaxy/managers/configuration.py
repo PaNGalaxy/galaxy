@@ -124,6 +124,7 @@ class ConfigSerializer(base.ModelSerializer):
             # TODO: this is available from user data, remove
             "is_admin_user": lambda *a, **c: False,
             "brand": _use_config,
+            "dashboard_url": _use_config,
             "logo_url": _use_config,
             "logo_src": _use_config,
             "logo_src_secondary": _use_config,
