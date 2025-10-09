@@ -233,6 +233,7 @@ class ConfigSerializer(base.ModelSerializer):
             "enable_help_forum_tool_panel_integration": _use_config,
             "disable_batch_input": _use_config,
             "llm_api_configured": lambda item, key, **context: bool(item.openai_api_key),
+            "external_login_redirect_cookie": _defaults_to("galaxy-external-login-redirect")
         }
 
 

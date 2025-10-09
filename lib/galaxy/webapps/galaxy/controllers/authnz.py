@@ -77,7 +77,7 @@ class OIDC(JSAppLauncher):
 
     @web.json
     @web.expose
-    def login(self, trans, provider, idphint=None, next=None):
+    def login(self, trans, provider, idphint=None, next=None, external_redirect=None):
         if not trans.app.config.enable_oidc:
             msg = "Login to Galaxy using third-party identities is not enabled on this Galaxy instance."
             log.debug(msg)
@@ -91,6 +91,10 @@ class OIDC(JSAppLauncher):
             trans.set_cookie(value="/", name=LOGIN_NEXT_COOKIE_NAME)
         success, message, redirect_uri = trans.app.authnz_manager.authenticate(provider, trans, idphint)
         if success:
+            if external_redirect:
+                trans.set_cookie(value=external_redirect, name=trans.app.config.external_login_redirect_cookie)
+                return trans.response.send_redirect(url_for(redirect_uri))
+
             return {"redirect_uri": redirect_uri}
         else:
             raise exceptions.AuthenticationFailed(message)
@@ -149,6 +153,11 @@ class OIDC(JSAppLauncher):
         trans.set_cookie(value=provider, name=PROVIDER_COOKIE_NAME)
         # Clear the login next cookie back to default.
         trans.set_cookie(value="/", name=LOGIN_NEXT_COOKIE_NAME)
+
+        external_login = trans.get_cookie(trans.app.config.external_login_redirect_cookie)
+        if external_login and (external_login.find("https://") == 0 or external_login.find("http://") == 0):
+            trans.set_cookie(value="", name=trans.app.config.external_login_redirect_cookie)
+            return trans.response.send_redirect(url_for(external_login))
         return trans.response.send_redirect(url_for(redirect_url))
 
     @web.expose
