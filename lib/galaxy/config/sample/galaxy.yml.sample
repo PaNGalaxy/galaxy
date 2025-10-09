@@ -1399,6 +1399,10 @@ galaxy:
   # change the default logo including the galaxy brand title.
   #display_galaxy_brand: true
 
+  # Add a link to the dashboard for managing interactive tools to the
+  # masthead.
+  #dashboard_url: ''
+
   # Format string used when showing date and time information. The
   # string may contain: - the directives used by Python time.strftime()
   # function (see
