@@ -634,6 +634,7 @@ class AbstractToolBox(ManagesIntegratedToolPanelMixin):
                 section_dict = {
                     "id": val.id or "",
                     "name": val.name or "",
+                    "description": val.description or "",
                     "version": val.version or "",
                 }
                 section = ToolSection(section_dict)
