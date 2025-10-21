@@ -7,9 +7,10 @@ import json
 import logging
 import re
 from typing import (
+    Annotated,
     Any,
-    List,
     Optional,
+    TYPE_CHECKING,
     Union,
 )
 
@@ -21,7 +22,6 @@ from fastapi import (
     status,
 )
 from markupsafe import escape
-from typing_extensions import Annotated
 
 from galaxy import (
     exceptions,
@@ -34,14 +34,16 @@ from galaxy.managers.context import (
     ProvidesUserContext,
 )
 from galaxy.model import (
+    Dataset,
     FormDefinition,
+    FormValues,
     HistoryDatasetAssociation,
     Role,
+    User,
     UserAddress,
     UserObjectstoreUsage,
     UserQuotaUsage,
 )
-from galaxy.model.base import transaction
 from galaxy.model.db.role import get_private_role_user_emails_dict
 from galaxy.schema import APIKeyModel
 from galaxy.schema.schema import (
@@ -90,6 +92,9 @@ from galaxy.webapps.galaxy.api import (
 )
 from galaxy.webapps.galaxy.api.common import UserIdPathParam
 from galaxy.webapps.galaxy.services.users import UsersService
+
+if TYPE_CHECKING:
+    from galaxy.work.context import SessionRequestContext
 
 log = logging.getLogger(__name__)
 
@@ -166,7 +171,7 @@ class FastAPIUsers:
     )
     def recalculate_disk_usage(
         self,
-        trans: ProvidesUserContext = DependsOnTrans,
+        trans: "SessionRequestContext" = DependsOnTrans,
     ):
         """This route will be removed in a future version.
 
@@ -188,7 +193,7 @@ class FastAPIUsers:
     def recalculate_disk_usage_by_user_id(
         self,
         user_id: UserIdPathParam,
-        trans: ProvidesUserContext = DependsOnTrans,
+        trans: "SessionRequestContext" = DependsOnTrans,
     ):
         result = self.service.recalculate_disk_usage(trans, user_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT) if result is None else result
@@ -204,7 +209,7 @@ class FastAPIUsers:
         f_email: Optional[str] = FilterEmailQueryParam,
         f_name: Optional[str] = FilterNameQueryParam,
         f_any: Optional[str] = FilterAnyQueryParam,
-    ) -> List[MaybeLimitedUserModel]:
+    ) -> list[MaybeLimitedUserModel]:
         return self.service.get_index(trans=trans, deleted=True, f_email=f_email, f_name=f_name, f_any=f_any)
 
     @router.post(
@@ -299,7 +304,7 @@ class FastAPIUsers:
         self,
         trans: ProvidesUserContext = DependsOnTrans,
         user_id: FlexibleUserIdType = FlexibleUserIdPathParam,
-    ) -> List[UserQuotaUsage]:
+    ) -> list[UserQuotaUsage]:
         if user := self.service.get_user_full(trans, user_id, False):
             rval = self.user_serializer.serialize_disk_usage(user)
             return rval
@@ -315,7 +320,7 @@ class FastAPIUsers:
         self,
         trans: ProvidesUserContext = DependsOnTrans,
         user_id: FlexibleUserIdType = FlexibleUserIdPathParam,
-    ) -> List[UserObjectstoreUsage]:
+    ) -> list[UserObjectstoreUsage]:
         if user := self.service.get_user_full(trans, user_id, False):
             return user.dictify_objectstore_usage()
         else:
@@ -377,8 +382,7 @@ class FastAPIUsers:
         user = self.service.get_user(trans, user_id)
 
         user.preferences["beacon_enabled"] = payload.enabled
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        trans.sa_session.commit()
 
         return payload
 
@@ -402,8 +406,7 @@ class FastAPIUsers:
                 del favorite_tools[favorite_tools.index(object_id)]
                 favorites["tools"] = favorite_tools
                 user.preferences["favorites"] = json.dumps(favorites)
-                with transaction(trans.sa_session):
-                    trans.sa_session.commit()
+                trans.sa_session.commit()
             else:
                 raise exceptions.ObjectNotFound("Given object is not in the list of favorites")
         return FavoriteObjectsSummary.model_validate(favorites)
@@ -434,8 +437,7 @@ class FastAPIUsers:
                 favorite_tools.append(tool_id)
                 favorites["tools"] = favorite_tools
                 user.preferences["favorites"] = json.dumps(favorites)
-                with transaction(trans.sa_session):
-                    trans.sa_session.commit()
+                trans.sa_session.commit()
         return FavoriteObjectsSummary.model_validate(favorites)
 
     @router.put(
@@ -451,8 +453,7 @@ class FastAPIUsers:
     ) -> str:
         user = self.service.get_user(trans, user_id)
         user.preferences["theme"] = theme
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        trans.sa_session.commit()
         return theme
 
     @router.put(
@@ -482,23 +483,20 @@ class FastAPIUsers:
             )
         else:
             # Have everything needed; create new build.
-            build_dict = {"name": name}
+            build_dict: dict[str, Any] = {"name": name}
             if len_type in ["text", "file"]:
                 # Create new len file
-                new_len = trans.app.model.HistoryDatasetAssociation(
-                    extension="len", create_dataset=True, sa_session=trans.sa_session
-                )
+                new_len = HistoryDatasetAssociation(extension="len", create_dataset=True, sa_session=trans.sa_session)
                 trans.sa_session.add(new_len)
                 new_len.name = name
                 new_len.visible = False
-                new_len.state = trans.app.model.Job.states.OK
+                new_len.state = Dataset.states.OK
                 new_len.info = "custom build .len file"
                 try:
                     trans.app.object_store.create(new_len.dataset)
                 except ObjectInvalid:
                     raise exceptions.InternalServerError("Unable to create output dataset: object store is full.")
-                with transaction(trans.sa_session):
-                    trans.sa_session.commit()
+                trans.sa_session.commit()
                 counter = 0
                 lines_skipped = 0
                 with open(new_len.get_file_name(), "w") as f:
@@ -538,8 +536,7 @@ class FastAPIUsers:
                     raise exceptions.ToolExecutionError("Failed to convert dataset.")
             dbkeys[key] = build_dict
             user.preferences["dbkeys"] = json.dumps(dbkeys)
-            with transaction(trans.sa_session):
-                trans.sa_session.commit()
+            trans.sa_session.commit()
             return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.get(
@@ -560,7 +557,7 @@ class FastAPIUsers:
                 if (
                     chrom_count_dataset
                     and not chrom_count_dataset.deleted
-                    and chrom_count_dataset.state == trans.app.model.HistoryDatasetAssociation.states.OK
+                    and chrom_count_dataset.state == HistoryDatasetAssociation.states.OK
                 ):
                     chrom_count = int(open(chrom_count_dataset.get_file_name()).readline())
                     dbkey["count"] = chrom_count
@@ -590,8 +587,7 @@ class FastAPIUsers:
         if key and key in dbkeys:
             del dbkeys[key]
             user.preferences["dbkeys"] = json.dumps(dbkeys)
-            with transaction(trans.sa_session):
-                trans.sa_session.commit()
+            trans.sa_session.commit()
             return DeletedCustomBuild(message=f"Deleted {key}.")
         else:
             raise exceptions.ObjectNotFound(f"Could not find and delete build ({key}).")
@@ -614,7 +610,7 @@ class FastAPIUsers:
             email = payload.remote_user_email
             username = ""
             password = ""
-        if not trans.app.config.allow_user_creation and not trans.user_is_admin:
+        if not trans.app.config.allow_local_account_creation and not trans.user_is_admin:
             raise exceptions.ConfigDoesNotAllowException("User creation is not allowed in this Galaxy instance")
         if trans.app.config.use_remote_user and trans.user_is_admin:
             user = self.service.user_manager.get_or_create_remote_user(remote_user_email=email)
@@ -648,7 +644,7 @@ class FastAPIUsers:
         f_email: Optional[str] = FilterEmailQueryParam,
         f_name: Optional[str] = FilterNameQueryParam,
         f_any: Optional[str] = FilterAnyQueryParam,
-    ) -> List[MaybeLimitedUserModel]:
+    ) -> list[MaybeLimitedUserModel]:
         return self.service.get_index(trans=trans, deleted=deleted, f_email=f_email, f_name=f_name, f_any=f_any)
 
     @router.get(
@@ -701,6 +697,7 @@ class FastAPIUsers:
         payload: Optional[UserDeletionPayload] = None,
     ) -> DetailedUserModel:
         user_to_update = self.service.user_manager.by_id(user_id)
+        assert user_to_update is not None
         purge = payload and payload.purge or purge
         if trans.user_is_admin:
             if purge:
@@ -726,7 +723,7 @@ class FastAPIUsers:
         user_id: UserIdPathParam,
         trans: ProvidesUserContext = DependsOnTrans,
     ):
-        user = trans.sa_session.query(trans.model.User).get(user_id)
+        user = trans.sa_session.query(User).get(user_id)
         if not user:
             raise exceptions.ObjectNotFound("User not found for given id.")
         if not self.service.user_manager.send_activation_email(trans, user.email, user.username):
@@ -833,7 +830,11 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                     "type": "text",
                     "label": "Email address",
                     "value": email,
-                    "help": "If you change your email address you will receive an activation link in the new mailbox and you have to activate your account by visiting it.",
+                    "help": (
+                        "If you change your email address you will receive an activation link in the new mailbox and you have to activate your account by visiting it."
+                        if trans.app.config.user_activation_on
+                        else ""
+                    ),
                 }
             )
         if is_galaxy_app:
@@ -955,8 +956,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                 user.email = email
                 trans.sa_session.add(user)
                 trans.sa_session.add(private_role)
-                with transaction(trans.sa_session):
-                    trans.sa_session.commit()
+                trans.sa_session.commit()
                 if trans.app.config.user_activation_on:
                     # Deactivate the user if email was changed and activation is on.
                     user.active = False
@@ -983,7 +983,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             for item in payload:
                 if item.startswith(prefix):
                     user_info_values[item[len(prefix) :]] = payload[item]
-            form_values = trans.model.FormValues(user_info_form, user_info_values)
+            form_values = FormValues(user_info_form, user_info_values)
             trans.sa_session.add(form_values)
             user.values = form_values
 
@@ -1055,8 +1055,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
             user.addresses.append(user_address)
             trans.sa_session.add(user_address)
         trans.sa_session.add(user)
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        trans.sa_session.commit()
         trans.log_event("User information added")
         return {"message": "User information has been saved."}
 
@@ -1103,7 +1102,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
 
         role_tuples = get_role_tuples()
         inputs = []
-        for index, action in trans.app.model.Dataset.permitted_actions.items():
+        for index, action in Dataset.permitted_actions.items():
             inputs.append(
                 {
                     "type": "select",
@@ -1126,7 +1125,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
         payload = payload or {}
         user = self._get_user(trans, id)
         permissions = {}
-        for index, action in trans.app.model.Dataset.permitted_actions.items():
+        for index, action in Dataset.permitted_actions.items():
             action_id = trans.app.security_agent.get_action(action.action).action
             permissions[action_id] = [trans.sa_session.get(Role, x) for x in (payload.get(index) or [])]
         trans.app.security_agent.user_set_default_permissions(user, permissions)
@@ -1180,8 +1179,7 @@ class UserAPIController(BaseGalaxyAPIController, UsesTagsMixin, BaseUIController
                         new_filters.append(prefixed_name[len(prefix) :])
             user.preferences[filter_type] = ",".join(new_filters)
         trans.sa_session.add(user)
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        trans.sa_session.commit()
         return {"message": "Toolbox filters have been saved."}
 
     def _add_filter_inputs(self, factory, filter_types, inputs, errors, filter_type, saved_values):

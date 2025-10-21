@@ -2,11 +2,12 @@ import logging
 from typing import Optional
 
 from galaxy.model import (
+    DataManagerJobAssociation,
     History,
     Job,
 )
-from galaxy.model.base import transaction
 from galaxy.model.dataset_collections.matching import MatchingCollections
+from galaxy.schema.credentials import CredentialsContext
 from galaxy.tools._types import ToolStateJobInstancePopulatedT
 from galaxy.tools.execute import (
     DatasetCollectionElementsSliceT,
@@ -43,6 +44,7 @@ class DataManagerToolAction(DefaultToolAction):
         collection_info: Optional[MatchingCollections] = None,
         job_callback: Optional[JobCallbackT] = DEFAULT_JOB_CALLBACK,
         preferred_object_store_id: Optional[str] = DEFAULT_PREFERRED_OBJECT_STORE_ID,
+        credentials_context: Optional[CredentialsContext] = None,
         set_output_hid: bool = DEFAULT_SET_OUTPUT_HID,
         flush_job: bool = True,
         skip: bool = False,
@@ -64,11 +66,7 @@ class DataManagerToolAction(DefaultToolAction):
             flush_job=flush_job,
             skip=skip,
         )
-        if isinstance(rval, tuple) and len(rval) >= 2 and isinstance(rval[0], trans.app.model.Job):
-            assoc = trans.app.model.DataManagerJobAssociation(job=rval[0], data_manager_id=tool.data_manager_id)
-            trans.sa_session.add(assoc)
-            with transaction(trans.sa_session):
-                trans.sa_session.commit()
-        else:
-            log.error(f"Got bad return value from DefaultToolAction.execute(): {rval}")
+        assoc = DataManagerJobAssociation(job=rval[0], data_manager_id=tool.data_manager_id)
+        trans.sa_session.add(assoc)
+        trans.sa_session.commit()
         return rval

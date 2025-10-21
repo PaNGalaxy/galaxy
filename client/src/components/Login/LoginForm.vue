@@ -2,7 +2,6 @@
 import axios from "axios";
 import {
     BAlert,
-    BButton,
     BCard,
     BCardBody,
     BCardFooter,
@@ -20,6 +19,9 @@ import localize from "@/utils/localization";
 import { withPrefix } from "@/utils/redirect";
 import { errorMessageAsString } from "@/utils/simple-error";
 
+import GButton from "../BaseComponents/GButton.vue";
+import GLink from "../BaseComponents/GLink.vue";
+import VerticalSeparator from "../Common/VerticalSeparator.vue";
 import NewUserConfirmation from "@/components/Login/NewUserConfirmation.vue";
 import ExternalLogin from "@/components/User/ExternalIdentities/ExternalLogin.vue";
 
@@ -33,7 +35,7 @@ interface Props {
     allowUserCreation?: boolean;
     showWelcomeWithLogin?: boolean;
     registrationWarningMessage?: string;
-    disableInternalLogin?: boolean;
+    disableLocalAccounts?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -42,13 +44,8 @@ const props = withDefaults(defineProps<Props>(), {
     termsUrl: undefined,
     welcomeUrl: undefined,
     registrationWarningMessage: undefined,
-    disableInternalLogin: false,
+    disableLocalAccounts: false,
 });
-
-const emit = defineEmits<{
-    (e: "toggle-login"): void;
-    (e: "set-redirect", url: string): void;
-}>();
 
 const router = useRouter();
 
@@ -67,9 +64,10 @@ const confirmURL = ref(urlParams.has("confirm") && urlParams.get("confirm") == "
 
 const excludeIdps = computed(() => (connectExternalProvider.value ? [connectExternalProvider.value] : undefined));
 
-function toggleLogin() {
-    emit("toggle-login");
-}
+/** This decides if all login options should be displayed in column style
+ * (one below the other) or horizontally.
+ */
+const loginColumnDisplay = computed(() => Boolean(props.showWelcomeWithLogin && props.welcomeUrl));
 
 async function submitLogin() {
     let redirect: string | null;
@@ -83,7 +81,7 @@ async function submitLogin() {
     if (localStorage.getItem("redirect_url")) {
         redirect = localStorage.getItem("redirect_url");
     } else {
-        redirect = props.redirect;
+        redirect = props.redirect ?? null;
     }
 
     try {
@@ -147,10 +145,10 @@ function returnToLogin() {
 </script>
 
 <template>
-    <div class="container">
-        <div class="row justify-content-md-center">
+    <div class="login-form">
+        <div class="d-flex justify-content-md-center">
             <template v-if="!confirmURL">
-                <div class="col col-lg-6">
+                <div>
                     <BAlert :show="!!messageText" :variant="messageVariant">
                         <!-- eslint-disable-next-line vue/no-v-html -->
                         <span v-html="messageText" />
@@ -161,14 +159,15 @@ function returnToLogin() {
                         >. In order to associate this account with <i>{{ connectExternalLabel }}</i
                         >, you must first login to your existing account.
                     </BAlert>
-                    <BForm id="login" @submit.prevent="submitLogin()">
-                        <BCard no-body>
+
+                    <div>
+                        <BCard no-body style="width: fit-content">
                             <BCardHeader v-if="!connectExternalProvider">
                                 <span>{{ localize("Welcome to Galaxy, please log in") }}</span>
                             </BCardHeader>
 
-                            <BCardBody>
-                                <div v-if="!disableInternalLogin">
+                            <BCardBody :class="{ 'd-flex w-100': !loginColumnDisplay }">
+                                <BForm v-if="!disableLocalAccounts" id="login" @submit.prevent="submitLogin()">
                                     <!-- standard internal galaxy login -->
                                     <BFormGroup
                                         :label="localize('Public Name or Email Address')"
@@ -199,7 +198,7 @@ function returnToLogin() {
                                             type="password"
                                             autocomplete="current-password" />
 
-                                        <BFormText v-if="showResetLink">
+                                        <BFormText v-if="showResetLink" class="text-nowrap">
                                             <span v-localize>Forgot password?</span>
 
                                             <a
@@ -212,30 +211,44 @@ function returnToLogin() {
                                         </BFormText>
                                     </BFormGroup>
 
-                                    <BButton v-localize name="login" type="submit" :disabled="loading">
+                                    <GButton
+                                        name="login"
+                                        type="submit"
+                                        :disabled="loading"
+                                        inline
+                                        class="w-100 mt-1 py-1">
                                         {{ localize("Login") }}
-                                    </BButton>
-                                </div>
-                                <div v-if="enableOidc">
-                                    <!-- OIDC login-->
-                                    <ExternalLogin login-page :exclude-idps="excludeIdps" />
-                                </div>
+                                    </GButton>
+                                </BForm>
+
+                                <template v-if="enableOidc">
+                                    <VerticalSeparator v-if="!loginColumnDisplay && !disableLocalAccounts">
+                                        <span v-localize>or</span>
+                                    </VerticalSeparator>
+
+                                    <hr v-else-if="!disableLocalAccounts" class="w-100" />
+
+                                    <div class="m-1 w-100">
+                                        <!-- OIDC login-->
+                                        <ExternalLogin
+                                            login-page
+                                            :exclude-idps="excludeIdps"
+                                            :column-display="loginColumnDisplay"
+                                            :disable-local-accounts="disableLocalAccounts" />
+                                    </div>
+                                </template>
                             </BCardBody>
 
                             <BCardFooter>
                                 <span v-if="!connectExternalProvider">
                                     Don't have an account?
-                                    <span v-if="allowUserCreation">
-                                        <a
-                                            id="register-toggle"
-                                            v-localize
-                                            href="javascript:void(0)"
-                                            role="button"
-                                            @click.prevent="toggleLogin">
-                                            Register here.
-                                        </a>
-                                    </span>
-                                    <span v-else>
+                                    <GLink
+                                        v-if="allowUserCreation || disableLocalAccounts"
+                                        id="register-toggle"
+                                        to="/register/start">
+                                        Register here.
+                                    </GLink>
+                                    <span v-else data-description="registration disabled message">
                                         Registration for this Galaxy instance is disabled. Please contact an
                                         administrator for assistance.
                                     </span>
@@ -248,7 +261,7 @@ function returnToLogin() {
                                 </span>
                             </BCardFooter>
                         </BCard>
-                    </BForm>
+                    </div>
                 </div>
             </template>
             <template v-else>
@@ -258,7 +271,7 @@ function returnToLogin() {
                     @setRedirect="setRedirect" />
             </template>
 
-            <div v-if="showWelcomeWithLogin && props.welcomeUrl" class="col">
+            <div v-if="showWelcomeWithLogin && props.welcomeUrl" class="w-100">
                 <BEmbed type="iframe" :src="withPrefix(props.welcomeUrl)" aspect="1by1" />
             </div>
         </div>
@@ -268,5 +281,8 @@ function returnToLogin() {
 <style scoped lang="scss">
 .card-body {
     overflow: visible;
+}
+.login-form {
+    margin: 0rem 10rem;
 }
 </style>

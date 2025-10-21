@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { BAlert, BButtonGroup, BCol, BContainer, BRow } from "bootstrap-vue";
+import { BAlert, BButtonGroup, BCol, BContainer, BDropdown, BDropdownItem, BRow } from "bootstrap-vue";
 import type { VisualizationSpec } from "vega-embed";
+import type { ComputedRef } from "vue";
 import { computed, ref, watch } from "vue";
-import { type ComputedRef } from "vue";
 
 import { type components, GalaxyApi } from "@/api";
 import { getAppRoot } from "@/onload/loadConfig";
@@ -12,7 +12,7 @@ import { capitalizeFirstLetter } from "@/utils/strings";
 import LoadingSpan from "../LoadingSpan.vue";
 import HelpText from "@/components/Help/HelpText.vue";
 
-const VegaWrapper = () => import("./VegaWrapper.vue");
+const VegaWrapper = () => import("@/components/Common/VegaWrapper.vue");
 
 interface Props {
     invocationId: string;
@@ -48,7 +48,7 @@ async function fetchMetrics() {
 watch(
     () => props.invocationId,
     () => fetchMetrics(),
-    { immediate: true }
+    { immediate: true },
 );
 
 function itemToX(item: components["schemas"]["WorkflowJobMetric"]) {
@@ -93,7 +93,7 @@ interface DerivedMetric {
 type AnyMetric = components["schemas"]["WorkflowJobMetric"] & DerivedMetric;
 
 function computeAllocatedCoreTime(
-    jobMetrics: components["schemas"]["WorkflowJobMetric"][] | undefined
+    jobMetrics: components["schemas"]["WorkflowJobMetric"][] | undefined,
 ): DerivedMetric[] {
     const walltimePerJob: Record<string, number> = {};
     const coresPerJob: Record<string, number> = {};
@@ -135,7 +135,7 @@ function metricToSpecData(
     metricName: string,
     yTitle: string,
     helpTerm?: string,
-    transform?: (param: number) => number
+    transform?: (param: number) => number,
 ): boxplotData {
     const thisMetric = jobMetrics?.filter((jobMetric) => jobMetric.name == metricName);
     const values = thisMetric?.map((item) => {
@@ -164,7 +164,7 @@ function metricToAggregateData(
     metricName: string,
     yTitle: string,
     helpTerm?: string,
-    transform?: (param: number) => number
+    transform?: (param: number) => number,
 ): barChartData {
     const thisMetric = jobMetrics?.filter((jobMetric) => jobMetric.name == metricName);
     const aggregateByX: Record<string, number> = {};
@@ -178,7 +178,8 @@ function metricToAggregateData(
             aggregateByX[x] = 0;
         }
         if (x in aggregateByX) {
-            aggregateByX[x] += y;
+            const newX = aggregateByX[x] || 0 + y;
+            aggregateByX[x] = newX;
         }
     });
     const values = Object.keys(aggregateByX).map((key) => {
@@ -222,7 +223,7 @@ const wallclockAggregate: ComputedRef<barChartData> = computed(() => {
         "runtime_seconds",
         title,
         "galaxy.jobs.metrics.walltime",
-        transformTime
+        transformTime,
     );
 });
 
@@ -233,7 +234,7 @@ const allocatedCoreTimeSpec: ComputedRef<boxplotData> = computed(() => {
         "allocated_core_time",
         title,
         "galaxy.jobs.metrics.allocated_core_time",
-        transformTime
+        transformTime,
     );
 });
 
@@ -244,7 +245,7 @@ const allocatedCoreTimeAggregate: ComputedRef<barChartData> = computed(() => {
         "allocated_core_time",
         title,
         "galaxy.jobs.metrics.allocated_core_time",
-        transformTime
+        transformTime,
     );
 });
 
@@ -262,7 +263,7 @@ const peakMemory: ComputedRef<boxplotData> = computed(() => {
         "memory.peak",
         "Max memory usage recorded (in MB)",
         undefined,
-        (v) => v / 1024 ** 2
+        (v) => v / 1024 ** 2,
     );
 });
 
@@ -398,54 +399,54 @@ const groupByInTitles = computed(() => {
         <BContainer>
             <BRow align-h="end" class="mb-2">
                 <BButtonGroup>
-                    <b-dropdown right :text="'Timing: ' + timingInTitles">
-                        <b-dropdown-item @click="timing = 'seconds'">
+                    <BDropdown variant="outline-primary" size="sm" right :text="'Timing: ' + timingInTitles">
+                        <BDropdownItem @click="timing = 'seconds'">
                             {{ capitalizeFirstLetter("seconds") }}
-                        </b-dropdown-item>
-                        <b-dropdown-item @click="timing = 'minutes'">
+                        </BDropdownItem>
+                        <BDropdownItem @click="timing = 'minutes'">
                             {{ capitalizeFirstLetter("minutes") }}
-                        </b-dropdown-item>
-                        <b-dropdown-item @click="timing = 'hours'">
+                        </BDropdownItem>
+                        <BDropdownItem @click="timing = 'hours'">
                             {{ capitalizeFirstLetter("hours") }}
-                        </b-dropdown-item>
-                    </b-dropdown>
-                    <b-dropdown right :text="'Group By: ' + groupByInTitles">
-                        <b-dropdown-item @click="groupBy = 'tool_id'">Tool</b-dropdown-item>
-                        <b-dropdown-item @click="groupBy = 'step_id'">Workflow Step</b-dropdown-item>
-                    </b-dropdown>
+                        </BDropdownItem>
+                    </BDropdown>
+                    <BDropdown variant="outline-primary" size="sm" right :text="'Group By: ' + groupByInTitles">
+                        <BDropdownItem @click="groupBy = 'tool_id'">Tool</BDropdownItem>
+                        <BDropdownItem @click="groupBy = 'step_id'">Workflow Step</BDropdownItem>
+                    </BDropdown>
                 </BButtonGroup>
             </BRow>
             <BRow>
                 <BCol v-if="wallclockAggregate && wallclockAggregate.values" class="text-center">
-                    <h2 class="h-l truncate text-center">
+                    <Heading class="h3 truncate text-center">
                         Aggregate
                         <HelpText :for-title="true" uri="galaxy.jobs.metrics.walltime" text="Runtime Time" /> (in
                         {{ timingInTitles }})
-                    </h2>
+                    </Heading>
                     <VegaWrapper :spec="itemToBarChartSpec(wallclockAggregate)" :fill-width="false" />
                 </BCol>
                 <BCol v-if="allocatedCoreTimeAggregate && allocatedCoreTimeAggregate.values" class="text-center">
-                    <h2 class="h-l truncate text-center">
+                    <Heading class="h3 truncate text-center">
                         Aggregate
                         <HelpText
                             :for-title="true"
                             uri="galaxy.jobs.metrics.allocated_core_time"
                             text="Allocated Core Time" />
                         (in {{ timingInTitles }})
-                    </h2>
+                    </Heading>
                     <VegaWrapper :spec="itemToBarChartSpec(allocatedCoreTimeAggregate)" :fill-width="false" />
                 </BCol>
             </BRow>
             <BRow v-for="({ spec, item }, key) in metrics" :key="key">
                 <BCol>
-                    <h2 class="h-l truncate text-center">
+                    <Heading class="h3 truncate text-center">
                         <span v-if="item.helpTerm">
                             <HelpText :for-title="true" :uri="item.helpTerm" :text="`${key}`" />
                         </span>
                         <span v-else>
                             {{ key }}
                         </span>
-                    </h2>
+                    </Heading>
                     <VegaWrapper :spec="spec" />
                 </BCol>
             </BRow>

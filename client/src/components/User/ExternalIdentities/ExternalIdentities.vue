@@ -86,6 +86,7 @@
 
         <div v-if="enable_oidc" class="external-subheading">
             <h2 class="h-md">Connect Other External Identities</h2>
+            <hr class="my-4" />
             <ExternalLogin />
         </div>
     </section>
@@ -182,13 +183,13 @@ export default {
                     this.$refs.deleteAndResetModal.show();
                     this.setError(
                         "Before disconnecting this identity, you need to set your account password, " +
-                            "in order to avoid being locked out of your account."
+                            "in order to avoid being locked out of your account.",
                     );
                 }
             } else {
                 this.setError(
                     "Before disconnecting this identity, you need to set your account password, " +
-                        "in order to avoid being locked out of your account."
+                        "in order to avoid being locked out of your account.",
                 );
             }
         },

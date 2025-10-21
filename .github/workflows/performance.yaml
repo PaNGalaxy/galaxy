@@ -26,10 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.8']
+        python-version: ['3.9']
     services:
       postgres:
-        image: postgres:13
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -41,15 +41,11 @@ jobs:
         run: |
           echo "GALAXY_CONFIG_OVERRIDE_METADATA_STRATEGY=extended" >> $GITHUB_ENV
           echo "GALAXY_CONFIG_OVERRIDE_OUTPUTS_TO_WORKING_DIRECTORY=true" >> $GITHUB_ENV
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: 'galaxy root'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '18.12.1'
-          cache: 'yarn'
-          cache-dependency-path: 'galaxy root/client/yarn.lock'
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'

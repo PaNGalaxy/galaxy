@@ -1,9 +1,10 @@
 import { createTestingPinia } from "@pinia/testing";
 import { mount, type Wrapper } from "@vue/test-utils";
 import flushPromises from "flush-promises";
-import { getLocalVue } from "tests/jest/helpers";
+import { getLocalVue, suppressDebugConsole } from "tests/jest/helpers";
 
 import { useServerMock } from "@/api/client/__mocks__";
+import type { FileSourceTemplateSummary } from "@/api/fileSources";
 import { SELECTION_STATES, type SelectionItem, type SelectionState } from "@/components/SelectionDialog/selectionTypes";
 
 /**
@@ -26,7 +27,7 @@ import { SELECTION_STATES, type SelectionItem, type SelectionState } from "@/com
  * |-- file1
  * |-- file2
  */
-import { type RemoteFilesList } from "./testingData";
+import type { RemoteFilesList } from "./testingData";
 import {
     directory1RecursiveResponse,
     directory1Response,
@@ -60,8 +61,12 @@ interface RowElement extends SelectionItem, Element {
     _rowVariant: SelectionState;
 }
 
-function paramsToKey(query: { target?: string | null; recursive?: string | null; writeable?: string | null }): string {
-    return `${query.target}?recursive=${query.recursive}&writeable=${query.writeable ?? "false"}`;
+function paramsToKey(query: {
+    target?: string | null;
+    recursive?: string | null;
+    write_intent?: string | null;
+}): string {
+    return `${query.target}?recursive=${query.recursive}&write_intent=${query.write_intent ?? "false"}`;
 }
 
 const mockedOkApiRoutesMap = new Map<string, RemoteFilesList>([
@@ -73,13 +78,14 @@ const mockedOkApiRoutesMap = new Map<string, RemoteFilesList>([
         paramsToKey({ target: "gxfiles://pdb-gzip/directory1/subdirectory1", recursive: "false" }),
         subsubdirectoryResponse,
     ],
+    [paramsToKey({ target: "gxftp://", recursive: "false" }), pdbResponse],
 ]);
 
 const mockedErrorApiRoutesMap = new Map<string, RemoteFilesList>([
     [paramsToKey({ target: "gxfiles://empty-dir", recursive: "false" }), []],
 ]);
 
-const initComponent = async (props: { multiple: boolean; mode?: string }) => {
+const initComponent = async (props: { multiple: boolean; mode?: string }, hasTemplates = false) => {
     const localVue = getLocalVue();
 
     server.use(
@@ -91,7 +97,7 @@ const initComponent = async (props: { multiple: boolean; mode?: string }) => {
             const responseKey = paramsToKey({
                 target: query.get("target"),
                 recursive: query.get("recursive"),
-                writeable: query.get("writeable"),
+                write_intent: query.get("write_intent"),
             });
             if (mockedErrorApiRoutesMap.has(responseKey)) {
                 return response("4XX").json({ err_msg: someErrorText, err_code: 400 }, { status: 400 });
@@ -102,11 +108,16 @@ const initComponent = async (props: { multiple: boolean; mode?: string }) => {
                 return response("5XX").json({ err_msg: "No mocked response found", err_code: 500 }, { status: 500 });
             }
             return response(200).json(mockedResponse, { headers: { total_matches: mockedTotalMatches } });
-        })
+        }),
+
+        http.get("/api/file_source_templates", ({ response }) => {
+            const fileSourceTemplates = hasTemplates ? [{ id: "test_template" } as FileSourceTemplateSummary] : [];
+            return response(200).json(fileSourceTemplates);
+        }),
     );
 
     const testingPinia = createTestingPinia({ stubActions: false });
-    const wrapper = mount(FilesDialog, {
+    const wrapper = mount(FilesDialog as object, {
         localVue,
         propsData: { ...props, modalStatic: true },
         pinia: testingPinia,
@@ -239,6 +250,8 @@ describe("FilesDialog, file mode", () => {
     it("should show loading error and can return back when there is an error", async () => {
         utils.expectNoErrorMessage();
 
+        suppressDebugConsole(); // expecting error message.
+
         // open directory with error
         await utils.openDirectoryById("empty-dir");
         utils.expectErrorMessage();
@@ -246,6 +259,46 @@ describe("FilesDialog, file mode", () => {
         // back to the root folder
         await utils.navigateBack();
         expect(utils.getRenderedRows().length).toBe(rootResponse.length);
+    });
+});
+
+describe("FilesDialog, create new file source button", () => {
+    let wrapper: Wrapper<any>;
+    let utils: Utils;
+
+    beforeEach(async () => {
+        const hasTemplates = true;
+        wrapper = await initComponent({ multiple: false }, hasTemplates);
+        utils = new Utils(wrapper);
+    });
+    it("should not render create new button since file source templates are not defined", async () => {
+        const hasTemplates = false;
+        wrapper = await initComponent({ multiple: true }, hasTemplates);
+        const createNewButton = wrapper.find("[data-description='create new file source button']");
+        expect(createNewButton.exists()).toBe(false);
+    });
+
+    it("should render create new button since file source templates are defined and is at root", async () => {
+        await utils.openRoot();
+        const createNewButton = wrapper.find("[data-description='create new file source button']");
+        expect(createNewButton.exists()).toBe(true);
+    });
+
+    it("should not render create new button inside folders", async () => {
+        await utils.openRootDirectory();
+        const createNewButton = wrapper.find("[data-description='create new file source button']");
+        expect(createNewButton.exists()).toBe(false);
+    });
+});
+
+describe("FilesDialog, file mode with templates", () => {
+    let wrapper: Wrapper<any>;
+    beforeEach(async () => {
+        wrapper = await initComponent({ multiple: true }, true);
+    });
+    it("should render create new button since file source templates are defined", async () => {
+        const createNewButton = wrapper.find("[data-description='create new file source button']");
+        expect(createNewButton.exists()).toBe(true);
     });
 });
 
@@ -281,6 +334,8 @@ describe("FilesDialog, directory mode", () => {
 
     it("should show loading error and can return back when there is an error", async () => {
         utils.expectNoErrorMessage();
+
+        suppressDebugConsole(); // expecting error message.
 
         // open directory with error
         await utils.openDirectoryById("empty-dir");

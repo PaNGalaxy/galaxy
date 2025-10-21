@@ -30,12 +30,12 @@ from galaxy.tool_util.parser.util import (
     parse_tool_version_with_defaults,
 )
 from galaxy.tool_util.parser.xml import __parse_assert_list_from_elem
-from galaxy.tool_util.verify.assertion_models import relaxed_assertion_list
 from galaxy.tool_util.verify.interactor import (
     InvalidToolTestDict,
     ToolTestDescription,
     ValidToolTestDict,
 )
+from galaxy.tool_util_models.assertions import relaxed_assertion_list
 from galaxy.util import (
     string_as_bool,
     string_as_bool_or_none,
@@ -344,7 +344,7 @@ class ParamContext:
         self.allow_unqualified_access = parent_context.allow_unqualified_access
 
     def for_state(self) -> str:
-        name = self.name if self.index is None else "%s_%d" % (self.name, self.index)
+        name = self.name if self.index is None else f"{self.name}_{self.index}"
         parent_for_state = self.parent_context.for_state()
         if parent_for_state:
             return f"{parent_for_state}|{name}"
@@ -360,11 +360,11 @@ class ParamContext:
         else:
             for parent_context_param in self.parent_context.param_names():
                 if self.index is not None:
-                    yield "%s|%s_%d" % (parent_context_param, self.name, self.index)
+                    yield f"{parent_context_param}|{self.name}_{self.index}"
                 else:
                     yield f"{parent_context_param}|{self.name}"
             if self.index is not None:
-                yield "%s_%d" % (self.name, self.index)
+                yield f"{self.name}_{self.index}"
             else:
                 yield self.name
 

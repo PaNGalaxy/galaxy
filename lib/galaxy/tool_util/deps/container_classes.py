@@ -307,7 +307,8 @@ def preprocess_volumes(volumes_raw_str: str, container_type: str) -> List[str]:
     if not volumes_raw_str:
         return []
 
-    volumes = [Volume(v, container_type) for v in volumes_raw_str.split(",")]
+    # filter out empty strings, this happens for tools without tool directories.
+    volumes = [Volume(v, container_type) for v in volumes_raw_str.split(",") if v]
     rw_paths = [v.target for v in volumes if v.mode == "rw"]
     for volume in volumes:
         mode = volume.mode
@@ -507,6 +508,7 @@ class DockerContainer(Container, HasDockerLikeVolumes):
             set_user_from_host=host_user,
             run_extra_arguments=run_extra_arguments,
             guest_ports=self.tool_info.guest_ports,
+            host_port_cmd=self.prop("host_port_cmd", None),
             container_name=self.container_name,
             **docker_host_props,
         )
@@ -616,6 +618,9 @@ class SingularityContainer(Container, HasDockerLikeVolumes):
             guest_ports=self.tool_info.guest_ports,
             container_name=self.container_name,
             cleanenv=asbool(self.prop("cleanenv", singularity_util.DEFAULT_CLEANENV)),
+            ipc=asbool(self.prop("ipc", singularity_util.DEFAULT_IPC)),
+            pid=asbool(self.prop("pid", singularity_util.DEFAULT_PID)),
+            contain=asbool(self.prop("contain", singularity_util.DEFAULT_CONTAIN)),
             no_mount=self.prop("no_mount", singularity_util.DEFAULT_NO_MOUNT),
             **self.get_singularity_target_kwds(),
         )

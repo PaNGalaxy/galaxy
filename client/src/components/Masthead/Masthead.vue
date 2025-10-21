@@ -1,5 +1,10 @@
 <script setup>
 import { BNavbar, BNavbarBrand, BNavbarNav } from "bootstrap-vue";
+import {
+    getOIDCIdpsWithRegistration,
+    isOnlyOneOIDCProviderConfigured,
+    redirectToSingleProvider,
+} from "components/User/ExternalIdentities/ExternalIDHelper";
 import { storeToRefs } from "pinia";
 import { userLogout } from "utils/logout";
 import { withPrefix } from "utils/redirect";
@@ -9,7 +14,7 @@ import { useRouter } from "vue-router/composables";
 import { useConfig } from "@/composables/config";
 import { useUserStore } from "@/stores/userStore";
 
-import { loadWebhookMenuItems } from "./_webhooks";
+import { loadMastheadWebhooks } from "./_webhooks";
 import MastheadDropdown from "./MastheadDropdown";
 import MastheadItem from "./MastheadItem";
 import QuotaMeter from "./QuotaMeter";
@@ -18,6 +23,47 @@ const { isAnonymous, currentUser } = storeToRefs(useUserStore());
 
 const router = useRouter();
 const { config, isConfigLoaded } = useConfig();
+
+const hasOIDCRegistration = computed(() => {
+    const oIDCIdps = isConfigLoaded.value ? config.value.oidc : {};
+    const oIDCIdpsWithRegistration = getOIDCIdpsWithRegistration(oIDCIdps);
+    if (oIDCIdpsWithRegistration) {
+        return Object.keys(oIDCIdpsWithRegistration).length > 0;
+    } else {
+        return false;
+    }
+});
+
+const hasExactlyOneOIDCRegistration = computed(() => {
+    const oIDCIdps = isConfigLoaded.value ? config.value.oidc : {};
+    const oIDCIdpsWithRegistration = getOIDCIdpsWithRegistration(oIDCIdps);
+    if (oIDCIdpsWithRegistration) {
+        return Object.keys(oIDCIdpsWithRegistration).length === 1;
+    } else {
+        return false;
+    }
+});
+
+async function performLogin() {
+    const oIDCIdps = isConfigLoaded.value ? config.value.oidc : {};
+    if (config.value.disable_local_accounts && isOnlyOneOIDCProviderConfigured(oIDCIdps)) {
+        const redirectUri = await redirectToSingleProvider(oIDCIdps);
+        window.location = redirectUri;
+    } else {
+        openUrl("/login/start");
+    }
+}
+
+function performRegistration() {
+    if (!config.value.allow_local_account_creation && hasExactlyOneOIDCRegistration.value) {
+        const oIDCIdps = isConfigLoaded.value ? config.value.oidc : {};
+        const oIDCIdpsWithRegistration = getOIDCIdpsWithRegistration(oIDCIdps);
+        window.location =
+            oIDCIdpsWithRegistration[Object.keys(oIDCIdpsWithRegistration)[0]].end_user_registration_endpoint;
+    } else {
+        openUrl("/register/start");
+    }
+}
 
 const props = defineProps({
     brand: {
@@ -80,7 +126,7 @@ function onWindowToggle() {
 }
 
 onMounted(() => {
-    loadWebhookMenuItems(extensionTabs.value);
+    loadMastheadWebhooks(extensionTabs.value);
 });
 </script>
 
@@ -134,17 +180,19 @@ onMounted(() => {
                 @click="openUrl('/about')" />
             <QuotaMeter />
             <MastheadItem
-                v-if="isAnonymous && config.allow_user_creation"
+                v-if="isAnonymous"
                 id="user"
                 class="loggedout-only"
-                title="Login or Register"
-                @click="openUrl('/login/start')" />
-            <MastheadItem
-                v-if="isAnonymous && !config.allow_user_creation"
-                id="user"
-                class="loggedout-only"
+                data-description="login masthead button"
                 title="Login"
-                @click="openUrl('/login/start')" />
+                @click="performLogin()" />
+            <MastheadItem
+                v-if="isAnonymous && (config.allow_local_account_creation || hasOIDCRegistration)"
+                id="user-register"
+                class="loggedout-only"
+                data-description="register masthead button"
+                title="Register"
+                @click="performRegistration()" />
             <MastheadDropdown
                 v-if="currentUser && !isAnonymous && !config.single_user"
                 id="user"
@@ -165,6 +213,21 @@ onMounted(() => {
                     },
                 ]"
                 @click="userLogout" />
+            <MastheadDropdown
+                v-if="currentUser && !isAnonymous && config.single_user"
+                id="user"
+                class="loggedin-only"
+                icon="fa-user"
+                :title="currentUser.username"
+                tooltip="User Preferences"
+                :menu="[
+                    {
+                        title: 'Preferences',
+                        icon: 'fa-gear',
+                        handler: () => openUrl('/user'),
+                    },
+                ]"
+                @click="user" />
         </BNavbarNav>
         <Icon v-else icon="spinner" class="fa-spin mr-2 text-light" />
     </BNavbar>
@@ -177,9 +240,9 @@ onMounted(() => {
     padding: 0;
     margin-bottom: 0;
     background: var(--masthead-color);
-    height: $masthead-height;
+    height: var(--masthead-height);
     &:deep(.navbar-nav) {
-        height: $masthead-height;
+        height: var(--masthead-height);
         & > li {
             // This allows the background color to fill the full height of the
             // masthead, while still keeping the contents centered (using flex)
@@ -225,12 +288,13 @@ onMounted(() => {
     }
     .navbar-brand {
         cursor: pointer;
-        line-height: $masthead-height;
+        line-height: var(--masthead-height);
         img {
             filter: $text-shadow;
             display: inline;
             border: none;
-            height: 2rem;
+            height: var(--masthead-logo-height);
+            padding: inherit;
         }
     }
     .navbar-text {
@@ -238,7 +302,7 @@ onMounted(() => {
         font-weight: bold;
         font-family: Verdana, sans-serif;
         font-size: 1rem;
-        line-height: $masthead-height;
+        line-height: var(--masthead-height);
         color: var(--masthead-text-color);
     }
 }

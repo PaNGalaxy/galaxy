@@ -25,12 +25,12 @@ jobs:
     strategy:
       matrix:
         db: ['postgresql', 'sqlite']
-        postgresql-version: ['13']
-        python-version: ['3.8']
+        postgresql-version: ['17']
+        python-version: ['3.9']
         include:
           - db: postgresql
             postgresql-version: '9.6'
-            python-version: '3.8'
+            python-version: '3.9'
     services:
       postgres:
         image: postgres:${{ matrix.postgresql-version }}
@@ -41,10 +41,11 @@ jobs:
         ports:
           - 5432:5432
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: 'galaxy root'
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'

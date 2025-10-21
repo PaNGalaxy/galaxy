@@ -26,12 +26,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.8']
+        python-version: ['3.9']
         marker: ['green', 'red and required', 'red and not required']
         conformance-version: ['cwl_conformance_v1_0'] #, 'cwl_conformance_v1_1', 'cwl_conformance_v1_2']
     services:
       postgres:
-        image: postgres:13
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -39,15 +39,11 @@ jobs:
         ports:
           - 5432:5432
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: 'galaxy root'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '18.12.1'
-          cache: 'yarn'
-          cache-dependency-path: 'galaxy root/client/yarn.lock'
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
@@ -64,7 +60,7 @@ jobs:
       - name: Run tests
         run: ./run_tests.sh --coverage --skip_flakey_fails -cwl lib/galaxy_test/api/cwl -- -m "${{ matrix.marker }} and ${{ matrix.conformance-version }}"
         working-directory: 'galaxy root'
-      - uses: codecov/codecov-action@v3
+      - uses: codecov/codecov-action@v5
         with:
           flags: cwl-conformance
           working-directory: 'galaxy root'

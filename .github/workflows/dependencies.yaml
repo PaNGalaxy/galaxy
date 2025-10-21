@@ -9,18 +9,16 @@ jobs:
     if: github.repository_owner == 'galaxyproject'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      # Install Python 3.8 for update_lint_requirements.sh
-      # Install Python 3.9 (as default) to allow `uv lock` to generate metadata for rucio-clients
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
         with:
-          python-version: |
-            3.8
-            3.9
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.9'
       - name: Update dependencies
         run: make update-dependencies
       - name: Create pull request
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         with:
           author: galaxybot <galaxybot@users.noreply.github.com>
           token: ${{ secrets.GALAXYBOT_PAT }}

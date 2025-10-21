@@ -3,24 +3,29 @@ from unittest.mock import Mock
 import pytest
 
 from galaxy import model
-from galaxy.model.base import transaction
 from galaxy.tools.parameters.options import ParameterOption
 from galaxy.tools.parameters.workflow_utils import RuntimeValue
 from .util import BaseParameterTestCase
 
 
 class TestSelectToolParameter(BaseParameterTestCase):
+
+    def new_hda(self):
+        hda = model.HistoryDatasetAssociation()
+        hda._state = model.Dataset.states.OK
+        return hda
+
     def test_validated_values(self):
         self.options_xml = """<options><filter type="data_meta" ref="input_bam" key="dbkey"/></options>"""
         with pytest.raises(ValueError) as exc_info:
-            self.param.from_json("42", self.trans, {"input_bam": model.HistoryDatasetAssociation()})
-            assert str(exc_info.value) == "parameter 'my_name': requires a value, but no legal values defined"
+            self.param.from_json("42", self.trans, {"input_bam": self.new_hda()})
+        assert str(exc_info.value) == "Parameter 'my_name': requires a value, but no legal values defined"
 
     def test_validated_values_missing_dependency(self):
         self.options_xml = """<options><filter type="data_meta" ref="input_bam" key="dbkey"/></options>"""
         with pytest.raises(ValueError) as exc_info:
             self.param.from_json("42", self.trans)
-            assert str(exc_info.value) == "parameter 'my_name': requires a value, but no legal values defined"
+        assert str(exc_info.value) == "Parameter 'my_name': requires a value, but no legal values defined"
 
     def test_unvalidated_values(self):
         self.options_xml = """<options><filter type="data_meta" ref="input_bam" key="dbkey"/></options>"""
@@ -30,14 +35,14 @@ class TestSelectToolParameter(BaseParameterTestCase):
     def test_validated_datasets(self):
         self.options_xml = """<options><filter type="data_meta" ref="input_bam" key="dbkey"/></options>"""
         with pytest.raises(ValueError) as exc_info:
-            self.param.from_json(model.HistoryDatasetAssociation(), self.trans, {"input_bam": None})
-            assert str(exc_info.value) == "parameter 'my_name': requires a value, but no legal values defined"
+            self.param.from_json(self.new_hda(), self.trans, {"input_bam": None})
+        assert str(exc_info.value) == "Parameter 'my_name': requires a value, but no legal values defined"
 
     def test_unvalidated_datasets(self):
         self.options_xml = """<options><filter type="data_meta" ref="input_bam" key="dbkey"/></options>"""
         self.trans.workflow_building_mode = True
         assert isinstance(
-            self.param.from_json(model.HistoryDatasetAssociation(), self.trans, {"input_bam": RuntimeValue()}),
+            self.param.from_json(self.new_hda(), self.trans, {"input_bam": RuntimeValue()}),
             model.HistoryDatasetAssociation,
         )
 
@@ -66,10 +71,9 @@ class TestSelectToolParameter(BaseParameterTestCase):
     def setUp(self):
         super().setUp()
         self.test_history = model.History()
-        self.app.model.context.add(self.test_history)
         session = self.app.model.context
-        with transaction(session):
-            session.commit()
+        session.add(self.test_history)
+        session.commit()
         self.app.tool_data_tables["test_table"] = MockToolDataTable()
         self.trans = Mock(
             app=self.app,

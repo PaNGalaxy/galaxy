@@ -3,10 +3,7 @@ import uuid
 from collections.abc import MutableMapping
 from typing import (
     Any,
-    Dict,
-    List,
     Optional,
-    Tuple,
     TYPE_CHECKING,
     Union,
 )
@@ -20,10 +17,7 @@ from galaxy.model import (
     WorkflowInvocation,
     WorkflowInvocationStep,
 )
-from galaxy.model.base import (
-    ensure_object_added_to_session,
-    transaction,
-)
+from galaxy.model.base import ensure_object_added_to_session
 from galaxy.schema.invocation import (
     CancelReason,
     FAILURE_REASONS_EXPECTED,
@@ -65,7 +59,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-WorkflowOutputsType = Dict[int, Any]
+WorkflowOutputsType = dict[int, Any]
 
 
 # Entry point for core workflow scheduler.
@@ -74,7 +68,7 @@ def schedule(
     workflow: "Workflow",
     workflow_run_config: WorkflowRunConfig,
     workflow_invocation: WorkflowInvocation,
-) -> Tuple[WorkflowOutputsType, WorkflowInvocation]:
+) -> tuple[WorkflowOutputsType, WorkflowInvocation]:
     return __invoke(trans, workflow, workflow_run_config, workflow_invocation)
 
 
@@ -84,7 +78,7 @@ def __invoke(
     workflow_run_config: WorkflowRunConfig,
     workflow_invocation: Optional[WorkflowInvocation] = None,
     populate_state: bool = False,
-) -> Tuple[WorkflowOutputsType, WorkflowInvocation]:
+) -> tuple[WorkflowOutputsType, WorkflowInvocation]:
     """Run the supplied workflow in the supplied target_history."""
     if populate_state:
         modules.populate_module_and_state(
@@ -126,8 +120,7 @@ def __invoke(
 
     # Be sure to update state of workflow_invocation.
     trans.sa_session.add(workflow_invocation)
-    with transaction(trans.sa_session):
-        trans.sa_session.commit()
+    trans.sa_session.commit()
 
     return outputs, workflow_invocation
 
@@ -136,7 +129,7 @@ def queue_invoke(
     trans: "GalaxyWebTransaction",
     workflow: "Workflow",
     workflow_run_config: WorkflowRunConfig,
-    request_params: Optional[Dict[str, Any]] = None,
+    request_params: Optional[dict[str, Any]] = None,
     populate_state: bool = True,
     flush: bool = True,
 ) -> WorkflowInvocation:
@@ -205,7 +198,7 @@ class WorkflowInvoker:
             )
         self.progress = progress
 
-    def invoke(self) -> Dict[int, Any]:
+    def invoke(self) -> dict[int, Any]:
         workflow_invocation = self.workflow_invocation
         config = self.trans.app.config
         maximum_duration = getattr(config, "maximum_workflow_invocation_duration", -1)
@@ -243,7 +236,6 @@ class WorkflowInvoker:
 
                 if not workflow_invocation_step:
                     workflow_invocation_step = WorkflowInvocationStep()
-                    assert workflow_invocation_step
                     workflow_invocation_step.workflow_invocation = workflow_invocation
                     ensure_object_added_to_session(workflow_invocation_step, object_in_session=workflow_invocation)
                     workflow_invocation_step.workflow_step = step
@@ -251,7 +243,6 @@ class WorkflowInvoker:
 
                     workflow_invocation.steps.append(workflow_invocation_step)
 
-                assert workflow_invocation_step
                 incomplete_or_none = self._invoke_step(workflow_invocation_step)
                 if incomplete_or_none is False:
                     step_delayed = delayed_steps = True
@@ -370,17 +361,17 @@ class WorkflowProgress:
     def __init__(
         self,
         workflow_invocation: WorkflowInvocation,
-        inputs_by_step_id: Dict[int, Any],
+        inputs_by_step_id: dict[int, Any],
         module_injector: ModuleInjector,
-        param_map: Dict[int, Dict[str, Any]],
+        param_map: dict[int, dict[str, Any]],
         jobs_per_scheduling_iteration: int = -1,
         copy_inputs_to_history: bool = False,
         use_cached_job: bool = False,
-        replacement_dict: Optional[Dict[str, str]] = None,
+        replacement_dict: Optional[dict[str, str]] = None,
         subworkflow_collection_info=None,
         when_values=None,
     ) -> None:
-        self.outputs: Dict[int, Any] = {}
+        self.outputs: dict[int, Any] = {}
         self.module_injector = module_injector
         self.workflow_invocation = workflow_invocation
         self.inputs_by_step_id = inputs_by_step_id
@@ -390,7 +381,7 @@ class WorkflowProgress:
         self.copy_inputs_to_history = copy_inputs_to_history
         self.use_cached_job = use_cached_job
         self.replacement_dict = replacement_dict or {}
-        self.runtime_replacements: Dict[str, str] = {}
+        self.runtime_replacements: dict[str, str] = {}
         self.subworkflow_collection_info = subworkflow_collection_info
         self.subworkflow_structure = subworkflow_collection_info.structure if subworkflow_collection_info else None
         self.when_values = when_values
@@ -407,7 +398,7 @@ class WorkflowProgress:
 
     def remaining_steps(
         self,
-    ) -> List[Tuple["WorkflowStep", Optional[WorkflowInvocationStep]]]:
+    ) -> list[tuple["WorkflowStep", Optional[WorkflowInvocationStep]]]:
         # Previously computed and persisted step states.
         step_states = self.workflow_invocation.step_states_by_step_id()
         steps = self.workflow_invocation.workflow.steps
@@ -437,11 +428,11 @@ class WorkflowProgress:
                 remaining_steps.append((step, invocation_step))
         return remaining_steps
 
-    def replacement_for_input(self, trans, step: "WorkflowStep", input_dict: Dict[str, Any]):
+    def replacement_for_input(self, trans, step: "WorkflowStep", input_dict: dict[str, Any]):
         replacement: Union[
             NoReplacement,
             model.DatasetCollectionInstance,
-            List[model.DatasetCollectionInstance],
+            list[model.DatasetCollectionInstance],
             HistoryItem,
         ] = NO_REPLACEMENT
         prefixed_name = input_dict["name"]
@@ -512,14 +503,18 @@ class WorkflowProgress:
                     # If we are not waiting for elements, there was some
                     # problem creating the collection. Collection will never
                     # be populated.
-                    raise modules.FailWorkflowEvaluation(
-                        why=InvocationFailureCollectionFailed(
-                            reason=FailureReason.collection_failed,
-                            hdca_id=replacement.id,
-                            workflow_step_id=connection.input_step_id,
-                            dependent_workflow_step_id=output_step_id,
+                    # We want to be certain of this however, so refresh attribute ...
+                    replacement.collection.expire_populated_state()
+                    # ... and repeat check to avoid race condition
+                    if not replacement.collection.populated:
+                        raise modules.FailWorkflowEvaluation(
+                            why=InvocationFailureCollectionFailed(
+                                reason=FailureReason.collection_failed,
+                                hdca_id=replacement.id,
+                                workflow_step_id=connection.input_step_id,
+                                dependent_workflow_step_id=output_step_id,
+                            )
                         )
-                    )
 
                 delayed_why = f"dependent collection [{replacement.id}] not yet populated with datasets"
                 raise modules.DelayedWorkflowEvaluation(why=delayed_why)
@@ -552,7 +547,7 @@ class WorkflowProgress:
                         raise modules.FailWorkflowEvaluation(
                             why=InvocationFailureDatasetFailed(
                                 reason=FailureReason.dataset_failed,
-                                hda_id=replacement.id,
+                                hda_id=dataset_instance.id,
                                 workflow_step_id=connection.input_step_id,
                                 dependent_workflow_step_id=output_step_id,
                             )
@@ -575,7 +570,7 @@ class WorkflowProgress:
     def set_outputs_for_input(
         self,
         invocation_step: WorkflowInvocationStep,
-        outputs: Optional[Dict[str, Any]] = None,
+        outputs: Optional[dict[str, Any]] = None,
         already_persisted: bool = False,
     ) -> None:
         step = invocation_step.workflow_step
@@ -606,24 +601,16 @@ class WorkflowProgress:
         return replacement_dict
 
     def set_step_outputs(
-        self, invocation_step: WorkflowInvocationStep, outputs: Dict[str, Any], already_persisted: bool = False
+        self, invocation_step: WorkflowInvocationStep, outputs: dict[str, Any], already_persisted: bool = False
     ) -> None:
         step = invocation_step.workflow_step
         if invocation_step.output_value:
             outputs[invocation_step.output_value.workflow_output.output_name] = invocation_step.output_value.value
         self.outputs[step.id] = outputs
         if not already_persisted:
-            workflow_outputs_by_name = {wo.output_name: wo for wo in step.workflow_outputs}
             for output_name, output_object in outputs.items():
                 if hasattr(output_object, "history_content_type"):
                     invocation_step.add_output(output_name, output_object)
-                else:
-                    # Add this non-data, non workflow-output output to the workflow outputs.
-                    # This is required for recovering the output in the next scheduling iteration,
-                    # and should be replaced with a WorkflowInvocationStepOutputValue ASAP.
-                    if not workflow_outputs_by_name.get(output_name) and output_object is not NO_REPLACEMENT:
-                        workflow_output = model.WorkflowOutput(step, output_name=output_name)
-                        step.workflow_outputs.append(workflow_output)
             for workflow_output in step.workflow_outputs:
                 assert workflow_output.output_name
                 output_name = workflow_output.output_name
@@ -695,7 +682,7 @@ class WorkflowProgress:
         self,
         subworkflow_invocation: WorkflowInvocation,
         step: "WorkflowStep",
-        param_map: Dict,
+        param_map: dict,
         subworkflow_collection_info=None,
         when_values=None,
     ) -> "WorkflowProgress":
