@@ -329,7 +329,6 @@ class PSAAuthnz(IdentityProvider):
         user_id = decoded_jwt["unique_name"]
         authnz_token = self._get_authnz_token(sa_session, user_id, self.config["provider"])
         user = authnz_token.user if authnz_token else None
-        self.refresh(sa_session, authnz_token, 90)
         return user, decoded_jwt
 
     @staticmethod

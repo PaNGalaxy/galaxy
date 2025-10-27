@@ -1656,6 +1656,13 @@ mapping:
           URL prefix for Galaxy application. If Galaxy should be served under a prefix set this to
           the desired prefix value.
 
+      dashboard_url:
+        type: str
+        default: ''
+        required: false
+        desc: |
+          URL of the dashboard for managing interactive tools.
+
       galaxy_infrastructure_url:
         type: str
         default: http://localhost:8080
@@ -4168,3 +4175,11 @@ mapping:
           Number of seconds before file source content listings are refreshed. Shorter times will result in more
           queries while browsing a file sources. Longer times will result in fewer requests to file sources but
           outdated contents might be displayed to the user. Currently only affects s3fs file sources.
+
+      external_login_redirect_cookie:
+        type: str
+        default: "galaxy-external-login-redirect"
+        required: false
+        desc: |
+          The name of a cookie to check after Galaxy has been logged into via an external third party. If present, Galaxy
+          will redirect to the url contained in the cookie.

@@ -96,9 +96,10 @@ $INTEGRATED_TOOL_PANEL
                 elif item_type == panel_item_types.SECTION:
                     section_id = item.id or ""
                     section_name = item.name or ""
+                    section_description = item.description or ""
                     section_version = item.version or ""
                     integrated_tool_panel.append(
-                        f'    <section id="{escape(section_id)}" name="{escape(section_name)}" version="{section_version}">\n'
+                        f'    <section id="{escape(section_id)}" name="{escape(section_name)}" description="{section_description}" version="{section_version}">\n'
                     )
                     for _section_key, section_item_type, section_item in item.panel_items_iter():
                         if section_item_type == panel_item_types.TOOL:

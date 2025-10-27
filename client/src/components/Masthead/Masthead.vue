@@ -3,7 +3,7 @@ import { BNavbar, BNavbarBrand, BNavbarNav } from "bootstrap-vue";
 import { storeToRefs } from "pinia";
 import { userLogout } from "utils/logout";
 import { withPrefix } from "utils/redirect";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router/composables";
 
 import { useConfig } from "@/composables/config";
@@ -44,6 +44,14 @@ const props = defineProps({
 
 const extensionTabs = ref([]);
 const windowToggle = ref(false);
+
+const novaUrl = computed(() => {
+    if (isConfigLoaded.value) {
+        return config.value.dashboard_url;
+    }
+
+    return "";
+});
 
 function openUrl(url, target = null) {
     if (!target) {
@@ -94,6 +102,12 @@ onMounted(() => {
             </span>
         </BNavbarNav>
         <BNavbarNav v-if="isConfigLoaded" class="mr-1">
+            <li v-if="novaUrl" class="cursor-pointer justify-content-center mx-2">
+                <a class="text-white" :href="novaUrl" target="_blank">
+                    <img :src="withPrefix('/static/nova_square.png')" alt="NOVA Square Logo" class="mr-1" width="24" />
+                    NOVA Dashboard
+                </a>
+            </li>
             <MastheadItem
                 v-if="windowTab"
                 :id="windowTab.id"
