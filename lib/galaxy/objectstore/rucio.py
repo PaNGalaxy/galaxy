@@ -154,7 +154,7 @@ class RucioBroker:
         self.register_with_checksum = rucio_config.get("register_with_checksum", True)
         self.download_schemes = rucio_config["download_schemes"]
         self.rucio_config_path: Optional[str] = None
-        self.extra_dirs = rucio_config.extra_dirs
+        self.extra_dirs = {e["type"]: e["path"] for e in rucio_config["extra_dirs"]}
 
         if Client is None:
             raise Exception(NO_RUCIO_ERROR_MESSAGE)
@@ -283,7 +283,7 @@ username = {self.config['username']}
         try:
             repl = next(self.get_rucio_client().list_replicas(dids))
             return "AVAILABLE" in repl["states"].values()
-        except Exception:
+        except Exception as e:
             return False
 
     def get_size(self, key) -> int:

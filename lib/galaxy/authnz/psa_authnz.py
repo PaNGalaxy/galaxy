@@ -201,19 +201,19 @@ class PSAAuthnz(IdentityProvider):
         if not user_authnz_token or not user_authnz_token.extra_data:
             return False
         # refresh tokens if they reached their half lifetime
+        skip_old_tokens_threshold_seconds = skip_old_tokens_threshold_days * 86400  # 86400 seconds in a day
         expires = self._try_to_locate_refresh_token_expiration(user_authnz_token.extra_data)
-        if not expires:
+        if not expires and skip_old_tokens_threshold_seconds==0:
             log.debug("No `expires` or `expires_in` key found in token extra data, cannot refresh")
             return False
+
         # do not refresh tokens if last token is too old
-        skip_old_tokens_threshold_seconds = skip_old_tokens_threshold_days * 86400  # 86400 seconds in a day
         if int(user_authnz_token.extra_data["auth_time"]) + skip_old_tokens_threshold_seconds < int(time.time()):
             raise Exception("Expired Tokens. User needs to sign in.")
 
         if (
             int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2
             <= int(time.time())
-            < int(user_authnz_token.extra_data["auth_time"]) + int(expires)
         ):
             on_the_fly_config(sa_session)
             if self.config["provider"] == "azure":
@@ -634,7 +634,7 @@ def decode_access_token(social: UserAuthnzToken, backend: OpenIdConnectAuth, **k
         return {"access_token": None}
     try:
         access_token_data = _decode_access_token_helper(token_str=access_token_encoded, backend=backend)
-    except InvalidTokenError as e:
+    except (InvalidTokenError, AttributeError) as e:
         log.warning(f"Access token couldn't be decoded: {e}")
         return {"access_token": None}
     return {"access_token": access_token_data}

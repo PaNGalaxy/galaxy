@@ -54,7 +54,6 @@ from galaxy.jobs.runners import (
     JobState,
 )
 from galaxy.model.base import check_database_connection
-from galaxy.model.base import transaction
 from galaxy.tool_util.deps import dependencies
 from galaxy.util import (
     galaxy_directory,
@@ -347,8 +346,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 job.job_messages.append(status_details)
         flag_modified(job, "job_messages")
         job_wrapper.sa_session.add(job)
-        with transaction(self.sa_session):
-            self.sa_session.commit()
+        self.sa_session.commit()
 
     def _update_job_state_for_status(
         self,
