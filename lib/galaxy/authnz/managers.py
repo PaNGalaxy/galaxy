@@ -348,6 +348,8 @@ class AuthnzManager:
             success, message, backend = self._get_authnz_backend(provider, idphint=idphint)
             if success is False:
                 return False, message, None
+            if trans.user:
+                trans.handle_user_logout(logout_all=True)
             elif provider in KEYCLOAK_BACKENDS:
                 if self.allowed_idps and (idphint not in self.allowed_idps):
                     msg = f"An error occurred when authenticating a user. Invalid EntityID: `{idphint}`"
