@@ -26,7 +26,9 @@
                 <UtcDate :date="data.value" mode="elapsed" />
             </template>
             <template v-slot:row-details="row">
-                <JobDetails :job="row.item" />
+                <b-card>
+                    <JobDetails :job="row.item" />
+                </b-card>
             </template>
             <template v-slot:cell(user_email)="data">
                 <a class="job-filter-link-user" :data-user="data.value" @click="$emit('user-clicked', data.value)">{{
@@ -157,5 +159,8 @@ export default {
     position: absolute;
     top: 0;
     width: 100%;
+}
+.jobs-table-wrapper {
+    padding-bottom: 1em;
 }
 </style>

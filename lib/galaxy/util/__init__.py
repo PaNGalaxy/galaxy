@@ -24,6 +24,7 @@ import textwrap
 import threading
 import time
 import unicodedata
+import uuid
 import xml.dom.minidom
 from datetime import (
     datetime,
@@ -98,6 +99,9 @@ try:
 
         def findall(self, path: str, namespaces: Optional[Mapping[str, str]] = None) -> List[Self]:  # type: ignore[override]
             return cast(List[Self], super().findall(path, namespaces))
+
+        def iterfind(self, path: str, namespaces: Optional[Mapping[str, str]] = None) -> Iterator[Self]:
+            return cast(Iterator[Self], super().iterfind(path, namespaces))
 
     def SubElement(parent: Element, tag: str, attrib: Optional[Dict[str, str]] = None, **extra) -> Element:
         return cast(Element, etree.SubElement(parent, tag, attrib, **extra))
@@ -181,6 +185,8 @@ defaultdict = collections.defaultdict
 
 UNKNOWN = "unknown"
 
+DOI_MAX_LENGTH = 200  # This is a reasonable limit. The DOI spec does not set a limit.
+
 
 def str_removeprefix(s: str, prefix: str):
     """
@@ -192,6 +198,14 @@ def str_removeprefix(s: str, prefix: str):
         return s[len(prefix) :]
     else:
         return s
+
+
+@overload
+def remove_protocol_from_url(url: None) -> None: ...
+
+
+@overload
+def remove_protocol_from_url(url: str) -> str: ...
 
 
 def remove_protocol_from_url(url):
@@ -239,6 +253,15 @@ def is_uuid(value):
     if re.match(uuid_re, str(value)):
         return True
     else:
+        return False
+
+
+def is_valid_uuid_v4(uuid_str: str) -> bool:
+    """Check if a string is a valid UUID v4."""
+    try:
+        u = uuid.UUID(uuid_str)
+        return u.version == 4
+    except ValueError:
         return False
 
 
@@ -314,7 +337,10 @@ def file_reader(fp, chunk_size=CHUNK_SIZE):
         yield data
 
 
-def chunk_iterable(it: Iterable, size: int = 1000) -> Iterator[tuple]:
+ItemType = TypeVar("ItemType")
+
+
+def chunk_iterable(it: Iterable[ItemType], size: int = 1000) -> Iterator[Tuple[ItemType, ...]]:
     """
     Break an iterable into chunks of ``size`` elements.
 
@@ -534,9 +560,7 @@ def shrink_stream_by_size(
                 rval = value.read(size)
                 value.seek(start)
                 return rval
-            raise ValueError(
-                "With the provided join_by value (%s), the minimum size value is %i." % (join_by, min_size)
-            )
+            raise ValueError(f"With the provided join_by value ({join_by}), the minimum size value is {min_size}.")
         left_index = right_index = int((size - len_join_by) / 2)
         if left_index + right_index + len_join_by < size:
             if left_larger:
@@ -575,9 +599,7 @@ def shrink_string_by_size(
                 return value[:size]
             elif end_on_size_error:
                 return value[-size:]
-            raise ValueError(
-                "With the provided join_by value (%s), the minimum size value is %i." % (join_by, min_size)
-            )
+            raise ValueError(f"With the provided join_by value ({join_by}), the minimum size value is {min_size}.")
         left_index = right_index = int((size - len_join_by) / 2)
         if left_index + right_index + len_join_by < size:
             if left_larger:
@@ -1082,9 +1104,6 @@ def string_as_bool_or_none(string):
         return False
 
 
-ItemType = TypeVar("ItemType")
-
-
 @overload
 def listify(item: Union[None, Literal[False]], do_strip: bool = False) -> List: ...
 
@@ -1122,7 +1141,9 @@ def listify(item: Any, do_strip: bool = False) -> List:
     """
     if not item:
         return []
-    elif isinstance(item, (list, tuple)):
+    elif isinstance(item, list):
+        return item
+    elif isinstance(item, tuple):
         return list(item)
     elif isinstance(item, str) and item.count(","):
         if do_strip:
@@ -1549,7 +1570,7 @@ def nice_size(size: Union[float, int, str, Decimal]) -> str:
         return "??? bytes"
     size, prefix = metric_prefix(size, 1024)
     if prefix == "":
-        return "%d bytes" % size
+        return f"{int(size)} bytes"
     else:
         return f"{size:.1f} {prefix}B"
 
@@ -1850,7 +1871,7 @@ def build_url(base_url, port=80, scheme="http", pathspec=None, params=None, dose
         parsed_url.scheme = scheme
     assert parsed_url.scheme in ("http", "https", "ftp"), f"Invalid URL scheme: {parsed_url.scheme}"
     if port != 80:
-        url = "%s://%s:%d/%s" % (parsed_url.scheme, parsed_url.netloc.rstrip("/"), int(port), parsed_url.path)
+        url = "{}://{}:{}/{}".format(parsed_url.scheme, parsed_url.netloc.rstrip("/"), int(port), parsed_url.path)
     else:
         url = f"{parsed_url.scheme}://{parsed_url.netloc.rstrip('/')}/{parsed_url.path.lstrip('/')}"
     if len(pathspec) > 0:
@@ -1956,14 +1977,14 @@ class classproperty:
 
 
 class ExecutionTimer:
-    def __init__(self):
+    def __init__(self) -> None:
         self.begin = time.time()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"({self.elapsed * 1000:0.3f} ms)"
 
     @property
-    def elapsed(self):
+    def elapsed(self) -> float:
         return time.time() - self.begin
 
 
@@ -2024,3 +2045,13 @@ def to_content_disposition(target: str) -> str:
     sanitized_filename = "".join(c in FILENAME_VALID_CHARS and c or "_" for c in filename)[0:character_limit] + ext
     utf8_encoded_filename = quote(re.sub(r'[\/\\\?%*:|"<>]', "_", filename), safe="")[0:character_limit] + ext
     return f"attachment; filename=\"{sanitized_filename}\"; filename*=UTF-8''{utf8_encoded_filename}"
+
+
+def validate_doi(doi: str) -> bool:
+    if len(doi) > DOI_MAX_LENGTH:
+        return False
+    prefix = "https://doi.org/|doi.org/|doi:"
+    doi_prefix = r"10\.\d+"
+    doi_suffix = r"\S+"
+    doi_re = re.compile(f"^{prefix}{doi_prefix}/{doi_suffix}$")
+    return bool(doi_re.match(doi))

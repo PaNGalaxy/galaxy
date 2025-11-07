@@ -1,17 +1,15 @@
 import galaxyOptions from "@tests/test-data/bootstrapped";
 import { getGalaxyInstance, setGalaxyInstance } from "app";
-import Backbone from "backbone";
+import { suppressDebugConsole } from "tests/jest/helpers";
 
 export function setupTestGalaxy(galaxyOptions_ = null) {
     galaxyOptions_ = galaxyOptions_ || galaxyOptions;
-    setGalaxyInstance((GalaxyApp) => {
-        const galaxy = new GalaxyApp(galaxyOptions_);
-        galaxy.currHistoryPanel = {
-            model: new Backbone.Model(),
-        };
-        return galaxy;
-    });
+    setGalaxyInstance((GalaxyApp) => new GalaxyApp(galaxyOptions_));
 }
+
+// the app console debugs make sense but we just don't want to see them in test
+// output.
+suppressDebugConsole();
 
 describe("App base construction/initializiation defaults", () => {
     beforeEach(() => {
@@ -33,13 +31,6 @@ describe("App base construction/initializiation defaults", () => {
         expect(app.options.patchExisting).toBe(true);
     });
 
-    test("App base extends from Backbone.Events", function () {
-        const app = getGalaxyInstance();
-        ["on", "off", "trigger", "listenTo", "stopListening"].forEach(function (fn) {
-            expect(Object.prototype.hasOwnProperty.call(app, fn) && typeof app[fn] === "function").toBeTruthy();
-        });
-    });
-
     // // We no longer want this behavior, but leaving the test to express that
     test("App base will patch in attributes from existing Galaxy objects", function () {
         const existingApp = getGalaxyInstance();
@@ -56,7 +47,7 @@ describe("App base construction/initializiation defaults", () => {
         const app = getGalaxyInstance();
         expect(app.config && typeof app.config === "object").toBeTruthy();
         expect(app.config.allow_user_deletion).toBe(false);
-        expect(app.config.allow_user_creation).toBe(true);
+        expect(app.config.allow_local_account_creation).toBe(true);
         expect(app.config.wiki_url).toBe("https://galaxyproject.org/");
         expect(app.config.ftp_upload_site).toBe(null);
     });

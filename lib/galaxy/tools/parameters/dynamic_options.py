@@ -8,17 +8,14 @@ import json
 import logging
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from io import StringIO
 from typing import (
     Any,
     cast,
-    Dict,
     get_args,
-    List,
     Optional,
-    Sequence,
-    Set,
 )
 
 from typing_extensions import Literal
@@ -42,6 +39,7 @@ from galaxy.util import (
     string_as_bool,
 )
 from galaxy.util.template import fill_template
+from galaxy.work.context import WorkRequestContext
 from . import validation
 from .cancelable_request import request
 
@@ -188,9 +186,9 @@ class DataMetaFilter(Filter):
     def get_dependency_name(self):
         return self.ref_name
 
-    def filter_options(self, options: Sequence[ParameterOption], trans, other_values):
+    def filter_options(self, options: Sequence[ParameterOption], trans: Optional[WorkRequestContext], other_values):
         options = list(options)
-        if trans.workflow_building_mode is workflow_building_modes.USE_HISTORY:
+        if trans and trans.workflow_building_mode is workflow_building_modes.USE_HISTORY:
             # We're in the run form, can't possibly apply a data_meta filter.
             return options
 
@@ -233,7 +231,7 @@ class DataMetaFilter(Filter):
         # - for data sets: the meta data value
         # in both cases only meta data that is set (i.e. differs from the no_value)
         # is considered
-        meta_value: Set[Any] = set()
+        meta_value: set[Any] = set()
         for r in ref:
             if not r.metadata.element_is_set(self.key):
                 continue
@@ -245,7 +243,7 @@ class DataMetaFilter(Filter):
             return copy.deepcopy(options)
 
         if self.column is not None:
-            rval: List[ParameterOption] = []
+            rval: list[ParameterOption] = []
             for fields in options:
                 if compare_meta_value(fields[self.column], meta_value):
                     rval.append(fields)
@@ -297,8 +295,11 @@ class ParamValueFilter(Filter):
 
     def filter_options(self, options: Sequence[ParameterOption], trans, other_values):
         ref = other_values.get(self.ref_name, None)
-        if ref is None or is_runtime_value(ref):
+        if ref is None:
             ref = []
+        elif is_runtime_value(ref) and trans and trans.workflow_building_mode is workflow_building_modes.USE_HISTORY:
+            # We're in the run form, can't possibly apply a param_value filter.
+            return options
 
         # - for HDCAs the list of contained HDAs is extracted
         # - single values are transformed in a single element list
@@ -552,6 +553,61 @@ class SortByColumnFilter(Filter):
         return sorted(options, key=lambda x: x[self.column], reverse=self.reverse)
 
 
+class DataTableFilter(Filter):
+    """
+    Filters a list of options by entries present in a data table, i.e.
+    option[column] needs to be in the specified data table column
+
+    Type: data_table
+
+    Required Attributes:
+
+        - column: column in options to compare with
+        - table_name: data table to use
+        - data_table_column: data table column to use
+
+    Optional Attributes:
+
+        - keep: Keep options where option[column] is in the data table column (True)
+                Discard columns matching value (False)
+
+    """
+
+    def __init__(self, d_option, elem):
+        Filter.__init__(self, d_option, elem)
+        self.table_name = elem.get("table_name", None)
+        assert self.table_name is not None, "Required 'table_name' attribute missing from filter"
+        column = elem.get("column", None)
+        assert column is not None, "Required 'column' attribute missing from filter"
+        self.column = d_option.column_spec_to_index(column)
+        self.data_table_column = elem.get("data_table_column", None)
+        assert self.data_table_column is not None, "Required 'data_table_column' attribute missing from filter"
+        self.keep = string_as_bool(elem.get("keep", "True"))
+
+    def filter_options(self, options, trans, other_values):
+        # get column from data table, by index or column name
+        entries = None
+        try:
+            entries = {f[int(self.data_table_column)] for f in trans.app.tool_data_tables[self.table_name].get_fields()}
+        except ValueError:
+            pass
+        try:
+            entries = {
+                f[self.data_table_column] for f in trans.app.tool_data_tables[self.table_name].get_named_fields_list()
+            }
+        except KeyError:
+            pass
+        if entries is None:
+            log.error(f"could not get data from column {self.data_table_column} from data_table {self.table_name}")
+            return options
+
+        rval = []
+        for o in options:
+            if self.keep == (o[self.column] in entries):
+                rval.append(o)
+        return rval
+
+
 filter_types = dict(
     data_meta=DataMetaFilter,
     param_value=ParamValueFilter,
@@ -563,6 +619,7 @@ filter_types = dict(
     add_value=AdditionalValueFilter,
     remove_value=RemoveValueFilter,
     sort_by=SortByColumnFilter,
+    data_table=DataTableFilter,
 )
 
 
@@ -579,7 +636,7 @@ class DynamicOptions:
             return self.parse_file_fields(obj)
 
         self.tool_param = tool_param
-        self.columns: Dict[str, int] = {}
+        self.columns: dict[str, int] = {}
         self.filters = []
         self.file_fields = None
         self.largest_index = 0
@@ -703,8 +760,12 @@ class DynamicOptions:
                             name = "a configuration file"
                         # Perhaps this should be an error, but even a warning is useful.
                         log.warning(
-                            "Inconsistent number of fields (%i vs %i) in %s using separator %r, check line: %r"
-                            % (field_count, len(fields), name, self.separator, line)
+                            "Inconsistent number of fields (%i vs %i) in %s using separator %r, check line: %r",
+                            field_count,
+                            len(fields),
+                            name,
+                            self.separator,
+                            line,
                         )
                     rval.append(fields)
         return rval
@@ -782,7 +843,7 @@ class DynamicOptions:
 
     @staticmethod
     def to_parameter_options(options):
-        rval: List[ParameterOption] = []
+        rval: list[ParameterOption] = []
         for option in options:
             if isinstance(option, ParameterOption):
                 rval.append(option)
@@ -873,7 +934,7 @@ class DynamicOptions:
 
     def get_options(self, trans, other_values) -> Sequence[ParameterOption]:
 
-        rval: List[ParameterOption] = []
+        rval: list[ParameterOption] = []
 
         def to_option(values):
             if len(values) == 2:
@@ -984,7 +1045,7 @@ def parse_from_url_options(elem: Element) -> Optional[FromUrlOptions]:
     return None
 
 
-def template_or_none(template: Optional[str], context: Dict[str, Any]) -> Optional[str]:
+def template_or_none(template: Optional[str], context: dict[str, Any]) -> Optional[str]:
     if template:
         return fill_template(template, context=context)
     return None

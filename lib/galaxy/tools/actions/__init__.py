@@ -3,20 +3,21 @@ import logging
 import os
 import re
 from abc import abstractmethod
+from collections.abc import (
+    Mapping,
+    MutableMapping,
+)
 from json import dumps
 from typing import (
     Any,
     cast,
-    Dict,
-    List,
     Optional,
-    Set,
-    Tuple,
     TYPE_CHECKING,
     Union,
 )
 
 from packaging.version import Version
+from pydantic import BaseModel
 
 from galaxy import model
 from galaxy.exceptions import (
@@ -29,15 +30,20 @@ from galaxy.managers.context import ProvidesHistoryContext
 from galaxy.model import (
     History,
     HistoryDatasetAssociation,
+    HistoryDatasetCollectionAssociation,
     Job,
+    JobCredentialsContextAssociation,
     LibraryDatasetDatasetAssociation,
     WorkflowRequestInputParameter,
 )
-from galaxy.model.base import transaction
+from galaxy.model.dataset_collections.adapters import CollectionAdapter
 from galaxy.model.dataset_collections.builder import CollectionBuilder
 from galaxy.model.dataset_collections.matching import MatchingCollections
 from galaxy.model.none_like import NoneDataset
+from galaxy.model.scoped_session import galaxy_scoped_session
 from galaxy.objectstore import ObjectStorePopulator
+from galaxy.schema.credentials import CredentialsContext
+from galaxy.tool_util.parser.output_objects import tool_output_is_collection
 from galaxy.tools._types import ToolStateJobInstancePopulatedT
 from galaxy.tools.execute import (
     DatasetCollectionElementsSliceT,
@@ -50,7 +56,7 @@ from galaxy.tools.execute import (
 )
 from galaxy.tools.execution_helpers import (
     filter_output,
-    on_text_for_names,
+    on_text_for_dataset_and_collections,
     ToolExecutionCache,
 )
 from galaxy.tools.parameters import update_dataset_ids
@@ -68,14 +74,18 @@ from galaxy.util import ExecutionTimer
 from galaxy.util.template import fill_template
 
 if TYPE_CHECKING:
-    from galaxy.model import DatasetInstance
+    from galaxy.model import (
+        DatasetCollection,
+        DatasetInstance,
+    )
     from galaxy.tool_util.parser.output_objects import ToolOutput
+    from galaxy.tools import Tool
 
 log = logging.getLogger(__name__)
 
 
-OutputDatasetsT = Dict[str, "DatasetInstance"]
-ToolActionExecuteResult = Union[Tuple[Job, OutputDatasetsT, Optional[History]], Tuple[Job, OutputDatasetsT]]
+OutputDatasetsT = dict[str, "DatasetInstance"]
+ToolActionExecuteResult = Union[tuple[Job, OutputDatasetsT, Optional[History]], tuple[Job, OutputDatasetsT]]
 
 
 class ToolAction:
@@ -87,7 +97,7 @@ class ToolAction:
     @abstractmethod
     def execute(
         self,
-        tool,
+        tool: "Tool",
         trans,
         incoming: Optional[ToolStateJobInstancePopulatedT] = None,
         history: Optional[History] = None,
@@ -99,6 +109,7 @@ class ToolAction:
         collection_info: Optional[MatchingCollections] = None,
         job_callback: Optional[JobCallbackT] = DEFAULT_JOB_CALLBACK,
         preferred_object_store_id: Optional[str] = DEFAULT_PREFERRED_OBJECT_STORE_ID,
+        credentials_context: Optional[CredentialsContext] = None,
         set_output_hid: bool = DEFAULT_SET_OUTPUT_HID,
         flush_job: bool = True,
         skip: bool = False,
@@ -144,7 +155,7 @@ class DefaultToolAction(ToolAction):
         if current_user_roles is None:
             current_user_roles = trans.get_current_user_roles()
         input_datasets = LegacyUnprefixedDict()
-        all_permissions: Dict[str, Set[str]] = {}
+        all_permissions: dict[str, set[str]] = {}
 
         def record_permission(action, role_id):
             if action not in all_permissions:
@@ -263,16 +274,20 @@ class DefaultToolAction(ToolAction):
                 if not value:
                     return
 
-                collection = None
                 child_collection = False
-                if hasattr(value, "child_collection"):
-                    # if we are mapping a collection over a tool, we only require the child_collection
+                if isinstance(value, CollectionAdapter):
+                    # collection was created for this execution, use it as is
+                    collection: Union[CollectionAdapter, DatasetCollection] = value
+                elif hasattr(value, "child_collection"):
+                    # if we are mapping a collection over a tool, so value is a DCE and
+                    # we only require the child_collection
                     child_collection = True
                     collection = value.child_collection
                 else:
-                    # else the tool takes a collection as input so we need everything
+                    # else the tool takes the collection as input so we need everything
                     collection = value.collection
 
+                assert collection
                 action_tuples = collection.dataset_action_tuples
                 if not trans.user_is_admin and not trans.app.security_agent.can_access_datasets(
                     current_user_roles, action_tuples
@@ -283,7 +298,8 @@ class DefaultToolAction(ToolAction):
                 for action, role_id in action_tuples:
                     record_permission(action, role_id)
 
-                _, extensions = collection.dataset_states_and_extensions_summary
+                summary = collection.dataset_states_and_extensions_summary
+                extensions = summary.extensions
                 conversion_required = False
                 for ext in extensions:
                     if ext:
@@ -295,7 +311,7 @@ class DefaultToolAction(ToolAction):
                         if not datatype.matches_any(input.formats):
                             conversion_required = True
                             break
-                processed_dataset_dict = {}
+                processed_dataset_dict: dict[DatasetInstance, DatasetInstance] = {}
                 for i, v in enumerate(collection.dataset_instances):
                     processed_dataset = None
                     if conversion_required:
@@ -415,18 +431,19 @@ class DefaultToolAction(ToolAction):
 
     def execute(
         self,
-        tool,
+        tool: "Tool",
         trans,
         incoming: Optional[ToolStateJobInstancePopulatedT] = None,
         history: Optional[History] = None,
         job_params=None,
         rerun_remap_job_id: Optional[int] = DEFAULT_RERUN_REMAP_JOB_ID,
         execution_cache: Optional[ToolExecutionCache] = None,
-        dataset_collection_elements=None,
+        dataset_collection_elements: Optional[DatasetCollectionElementsSliceT] = DEFAULT_DATASET_COLLECTION_ELEMENTS,
         completed_job: Optional[Job] = None,
         collection_info: Optional[MatchingCollections] = None,
         job_callback: Optional[JobCallbackT] = DEFAULT_JOB_CALLBACK,
         preferred_object_store_id: Optional[str] = DEFAULT_PREFERRED_OBJECT_STORE_ID,
+        credentials_context: Optional[CredentialsContext] = None,
         set_output_hid: bool = DEFAULT_SET_OUTPUT_HID,
         flush_job: bool = True,
         skip: bool = False,
@@ -453,7 +470,7 @@ class DefaultToolAction(ToolAction):
         ) = self._collect_inputs(tool, trans, incoming, history, current_user_roles, collection_info)
         assert history  # tell type system we've set history and it is no longer optional
         # Build name for output datasets based on tool name and input names
-        on_text = self._get_on_text(inp_data)
+        on_text = self._get_on_text(inp_data, inp_dataset_collections)
 
         # format='input" previously would give you a random extension from
         # the input extensions, now it should just give "input" as the output
@@ -501,7 +518,7 @@ class DefaultToolAction(ToolAction):
         # wrapped params are used by change_format action and by output.label; only perform this wrapping once, as needed
         wrapped_params = self._wrapped_params(trans, tool, incoming, inp_data)
 
-        out_data: Dict[str, DatasetInstance] = {}
+        out_data: dict[str, DatasetInstance] = {}
         input_collections = LegacyUnprefixedDict({k: v[0][0] for k, v in inp_dataset_collections.items()})
         input_collections._legacy_mapping = inp_dataset_collections._legacy_mapping
         output_collections = OutputCollections(
@@ -522,6 +539,7 @@ class DefaultToolAction(ToolAction):
         async_tool = tool.tool_type == "data_source_async"
 
         def handle_output(name, output, hidden=None):
+            assert incoming is not None
             if async_tool and name in incoming:
                 # HACK: output data has already been created as a result of the async controller
                 dataid = incoming[name]
@@ -546,10 +564,11 @@ class DefaultToolAction(ToolAction):
                         if output_dataset.name == name:
                             create_datasets = False
                             completed_data = output_dataset.dataset
+                            ext = completed_data.extension
                             dataset = output_dataset.dataset.dataset
                             break
 
-                data = app.model.HistoryDatasetAssociation(
+                data = HistoryDatasetAssociation(
                     extension=ext, dataset=dataset, create_dataset=create_datasets, flush=False
                 )
                 if create_datasets:
@@ -603,24 +622,24 @@ class DefaultToolAction(ToolAction):
             out_data[name] = data
             if output.actions:
                 # Apply pre-job tool-output-dataset actions; e.g. setting metadata, changing format
-                output_action_params = dict(out_data)
+                output_action_params: dict[str, Any] = dict(out_data)
                 output_action_params.update(wrapped_params.params)
                 output_action_params["__python_template_version__"] = tool.python_template_version
                 output.actions.apply_action(data, output_action_params)
             # Flush all datasets at once.
             return data
 
-        child_dataset_names = set()
+        child_dataset_names: set[str] = set()
 
         for name, output in tool.outputs.items():
             if not filter_output(tool, output, incoming):
                 handle_output_timer = ExecutionTimer()
-                if output.collection:
+                if tool_output_is_collection(output):  # Only XML tools include collections in tool.outputs
                     if completed_job and dataset_collection_elements and name in dataset_collection_elements:
                         # Output collection is mapped over and has already been copied from original job
                         continue
                     collections_manager = app.dataset_collection_manager
-                    element_identifiers: List[Dict[str, Union[str, List[Dict[str, Union[str, List[Any]]]]]]] = []
+                    element_identifiers: list[dict[str, Union[str, list[dict[str, Union[str, list[Any]]]]]]] = []
                     # mypy doesn't yet support recursive type definitions
                     known_outputs = output.known_outputs(input_collections, collections_manager.type_registry)
                     # Just to echo TODO elsewhere - this should be restructured to allow
@@ -629,10 +648,12 @@ class DefaultToolAction(ToolAction):
                         # Add elements to top-level collection, unless nested...
                         current_element_identifiers = element_identifiers
                         current_collection_type = output.structure.collection_type
+                        assert current_collection_type
 
                         for parent_id in output_part_def.parent_ids or []:
+                            # Get subcollection type
                             # TODO: replace following line with formal abstractions for doing this.
-                            current_collection_type = ":".join(current_collection_type.split(":")[1:])
+                            current_collection_type = current_collection_type.partition(":")[2]
                             name_to_index = {
                                 value["name"]: index for (index, value) in enumerate(current_element_identifiers)
                             }
@@ -650,10 +671,10 @@ class DefaultToolAction(ToolAction):
                                 else:
                                     index = name_to_index[parent_id]
                             current_element_identifiers = cast(
-                                List[
-                                    Dict[
+                                list[
+                                    dict[
                                         str,
-                                        Union[str, List[Dict[str, Union[str, List[Any]]]]],
+                                        Union[str, list[dict[str, Union[str, list[Any]]]]],
                                     ]
                                 ],
                                 current_element_identifiers[index]["element_identifiers"],
@@ -679,7 +700,10 @@ class DefaultToolAction(ToolAction):
                         assert not element_identifiers  # known_outputs must have been empty
                         element_kwds = dict(elements=collections_manager.ELEMENTS_UNINITIALIZED)
                     else:
-                        element_kwds = dict(element_identifiers=element_identifiers)
+                        element_kwds = dict(
+                            element_identifiers=element_identifiers,
+                            fields=output.structure.fields,
+                        )
                     output_collections.create_collection(
                         output=output, name=name, completed_job=completed_job, **element_kwds
                     )
@@ -714,6 +738,7 @@ class DefaultToolAction(ToolAction):
             for data in out_data.values():
                 data.set_skipped(object_store_populator)
         job.preferred_object_store_id = preferred_object_store_id
+        self._handle_credentials_context(trans.sa_session, job, credentials_context)
         self._record_inputs(trans, tool, job, incoming, inp_data, inp_dataset_collections)
         self._record_outputs(job, out_data, output_collections)
         # execute immediate post job actions and associate post job actions that are to be executed after the job is complete
@@ -751,18 +776,16 @@ class DefaultToolAction(ToolAction):
             assert GALAXY_URL is not None, "GALAXY_URL parameter missing in tool config."
             redirect_url += f"&GALAXY_URL={GALAXY_URL}"
             # Job should not be queued, so set state to ok
-            job.set_state(app.model.Job.states.OK)
+            job.set_state(Job.states.OK)
             job.info = f"Redirected to: {redirect_url}"
             trans.sa_session.add(job)
-            with transaction(trans.sa_session):
-                trans.sa_session.commit()
+            trans.sa_session.commit()
             trans.response.send_redirect(redirect_url)
         else:
             if flush_job:
                 # Set HID and add to history.
                 job_flush_timer = ExecutionTimer()
-                with transaction(trans.sa_session):
-                    trans.sa_session.commit()
+                trans.sa_session.commit()
                 log.info(f"Flushed transaction for job {job.log_str()} {job_flush_timer}")
 
         return job, out_data, history
@@ -810,8 +833,7 @@ class DefaultToolAction(ToolAction):
         session = trans.sa_session()
         try:
             session.expire_on_commit = False
-            with transaction(session):
-                session.commit()
+            session.commit()
         finally:
             session.expire_on_commit = True
         try:
@@ -879,27 +901,44 @@ class DefaultToolAction(ToolAction):
         jtid.dataset.hid = jtod.dataset.hid
         log.info(f"Job {job_to_remap.id} input HDA {jtod.dataset.id} remapped to new HDA {jtid.dataset.id}")
 
-    def _wrapped_params(self, trans, tool, incoming, input_datasets=None):
+    def _wrapped_params(
+        self,
+        trans,
+        tool: "Tool",
+        incoming: "ToolStateJobInstancePopulatedT",
+        input_datasets: Optional[LegacyUnprefixedDict] = None,
+    ) -> WrappedParameters:
         wrapped_params = WrappedParameters(trans, tool, incoming, input_datasets=input_datasets)
         return wrapped_params
 
-    def _get_on_text(self, inp_data):
-        input_names = []
-        for data in reversed(list(inp_data.values())):
+    def _get_on_text(self, inp_data, inp_dataset_collections):
+        input_hids = []
+        collection_hids = []
+        for collections in inp_dataset_collections.values():
+            for dataset_collection, _ in collections:
+                if isinstance(dataset_collection, HistoryDatasetCollectionAssociation):
+                    assert dataset_collection.hid
+                    collection_hids.append(dataset_collection.hid)
+
+        for input_name in inp_data:
+            data = inp_data[input_name]
+            if input_name in inp_dataset_collections:
+                continue
             if getattr(data, "hid", None):
-                input_names.append(f"data {data.hid}")
+                input_hids.append(data.hid)
+        return on_text_for_dataset_and_collections(dataset_hids=input_hids, collection_hids=collection_hids)
 
-        return on_text_for_names(input_names)
-
-    def _new_job_for_session(self, trans, tool, history) -> Tuple[model.Job, Optional[model.GalaxySession]]:
-        job = trans.app.model.Job()
+    def _new_job_for_session(
+        self, trans, tool: "Tool", history: Optional[History]
+    ) -> tuple[Job, Optional[model.GalaxySession]]:
+        job = Job()
         job.galaxy_version = trans.app.config.version_major
         galaxy_session = None
 
         if hasattr(trans, "get_galaxy_session"):
             galaxy_session = trans.get_galaxy_session()
             # If we're submitting from the API, there won't be a session.
-            if isinstance(galaxy_session, trans.model.GalaxySession):
+            if isinstance(galaxy_session, model.GalaxySession):
                 job.session_id = model.cached_id(galaxy_session)
         if trans.user is not None:
             job.user_id = model.cached_id(trans.user)
@@ -912,14 +951,32 @@ class DefaultToolAction(ToolAction):
             job.tool_version = tool.version
         except AttributeError:
             job.tool_version = "1.0.0"
-        job.dynamic_tool = tool.dynamic_tool
+        if tool.dynamic_tool:
+            job.dynamic_tool_id = model.cached_id(tool.dynamic_tool)
         return job, galaxy_session
+
+    def _handle_credentials_context(
+        self, sa_session: galaxy_scoped_session, job: Job, credentials_context: Optional[CredentialsContext]
+    ) -> None:
+        if credentials_context is None:
+            return
+
+        for service_context in credentials_context.root:
+            association = JobCredentialsContextAssociation(
+                job=job,
+                user_credentials_id=service_context.user_credentials_id,
+                service_name=service_context.name,
+                service_version=service_context.version,
+                selected_group_id=service_context.selected_group.id,
+                selected_group_name=service_context.selected_group.name,
+            )
+            sa_session.add(association)
 
     def _record_inputs(self, trans, tool, job, incoming, inp_data, inp_dataset_collections):
         # FIXME: Don't need all of incoming here, just the defined parameters
         #        from the tool. We need to deal with tools that pass all post
         #        parameters to the command as a special case.
-        reductions: Dict[str, List[str]] = {}
+        reductions: dict[str, list[str]] = {}
         for name, dataset_collection_info_pairs in inp_dataset_collections.items():
             for dataset_collection, reduced in dataset_collection_info_pairs:
                 if reduced:
@@ -932,6 +989,26 @@ class DefaultToolAction(ToolAction):
                     job.add_input_dataset_collection(name, dataset_collection)
                 elif isinstance(dataset_collection, model.DatasetCollectionElement):
                     job.add_input_dataset_collection_element(name, dataset_collection)
+                elif isinstance(dataset_collection, CollectionAdapter):
+                    adapter = dataset_collection
+                    # we are recording the adapter json in the database for tracking but it isn't
+                    # actually used in the code and we don't track the adapter json for like list
+                    # of datasets -> collection adaption because it isn't clear where to track that
+                    # (see elif isinstance(adapting, list) branch below).
+                    adapting = adapter.adapting
+                    adapter_model = cast(BaseModel, adapter.to_adapter_model())
+                    if isinstance(adapting, model.DatasetCollectionElement):
+                        job.add_input_dataset_collection_element(
+                            name, adapting, adapter_json=adapter_model.model_dump()
+                        )
+                    elif isinstance(adapting, model.HistoryDatasetAssociation):
+                        job.add_input_dataset(name, dataset=adapting, adapter_json=adapter_model.model_dump())
+                    elif isinstance(adapting, list):
+                        for element in adapting:
+                            input_key = f"{name}|__adapter_part__|{element.element_identifier}"
+                            job.add_input_dataset(input_key, dataset=element.hda)
+                else:
+                    log.info(f"not recording something as a collection in here... for name {name}")
 
         # If this an input collection is a reduction, we expanded it for dataset security, type
         # checking, and such, but the persisted input must be the original collection
@@ -956,10 +1033,13 @@ class DefaultToolAction(ToolAction):
             job.add_parameter(name, value)
         self._record_input_datasets(trans, job, inp_data)
 
-    def _record_outputs(self, job, out_data, output_collections):
+    def _record_outputs(
+        self, job: Job, out_data: Mapping[str, "DatasetInstance"], output_collections: "OutputCollections"
+    ):
         out_collections = output_collections.out_collections
         out_collection_instances = output_collections.out_collection_instances
         for name, dataset in out_data.items():
+            assert isinstance(dataset, HistoryDatasetAssociation)
             job.add_output_dataset(name, dataset)
         for name, dataset_collection in out_collections.items():
             job.add_implicit_output_dataset_collection(name, dataset_collection)
@@ -1156,7 +1236,7 @@ def determine_output_format(
     output: "ToolOutput",
     parameter_context,
     input_datasets,
-    input_dataset_collections,
+    input_dataset_collections: MutableMapping[str, model.HistoryDatasetCollectionAssociation],
     random_input_ext,
     python_template_version="3",
     execution_cache=None,

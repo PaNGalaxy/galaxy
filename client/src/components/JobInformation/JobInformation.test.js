@@ -1,3 +1,5 @@
+import "tests/jest/mockHelpPopovers";
+
 import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
 import { getLocalVue } from "tests/jest/helpers";
@@ -39,7 +41,7 @@ describe("JobInformation/JobInformation.vue", () => {
                     stdout: "stdout",
                     stderr: "stderr",
                 });
-            })
+            }),
         );
     });
 
@@ -56,7 +58,7 @@ describe("JobInformation/JobInformation.vue", () => {
 
     beforeEach(async () => {
         const propsData = {
-            job_id: JOB_ID,
+            jobId: JOB_ID,
             stdout_position: STDOUT_POSITION,
             stdout_length: STDOUT_LENGTH,
             stdout_text: STDOUT_TEXT,

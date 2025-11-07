@@ -1,3 +1,5 @@
+from typing import Optional
+
 from galaxy.managers.markdown_parse import validate_galaxy_markdown
 
 
@@ -5,14 +7,14 @@ def assert_markdown_valid(markdown):
     validate_galaxy_markdown(markdown)
 
 
-def assert_markdown_invalid(markdown, at_line=None):
+def assert_markdown_invalid(markdown, at_line: Optional[int] = None):
     failed = False
     try:
         validate_galaxy_markdown(markdown)
     except ValueError as e:
         failed = True
         if at_line is not None:
-            assert "Invalid line %d" % (at_line + 1) in str(e)
+            assert f"Invalid line {at_line + 1}" in str(e)
     assert failed, f"Expected markdown [{markdown}] to fail validation but it did not."
 
 
@@ -301,4 +303,46 @@ visualization(id=1)
 visualization(foo|bar=hello)
 ```
 """
+    )
+
+
+def test_markdown_validation_embed():
+    assert_markdown_valid(
+        """
+| moo | cow |
+| 1 | 2 |
+"""
+    )
+    assert_markdown_valid(
+        """
+| moo | cow |
+| 1 | ${galaxy generate_galaxy_version()} |
+"""
+    )
+    assert_markdown_valid(
+        """
+| moo | cow |
+| 1 | ${galaxy history_dataset_name(input=foobar)} |
+"""
+    )
+    assert_markdown_invalid(
+        """
+| moo | cow |
+| 1 | ${galaxy history_dataset_name(foo=bar)} |
+""",
+        at_line=2,
+    )
+    assert_markdown_invalid(
+        """
+| moo | cow |
+| 1 | ${galaxy generate_galaxy_version(moo=cow)} |
+""",
+        at_line=2,
+    )
+    assert_markdown_invalid(
+        """
+| moo | cow |
+| 1 | ${galaxy invalid()} |
+""",
+        at_line=2,
     )

@@ -11,29 +11,27 @@ from abc import abstractmethod
 from typing import (
     Any,
     Callable,
-    Dict,
-    List,
     NamedTuple,
     Optional,
-    Tuple,
     Union,
 )
 
 from boltons.iterutils import remap
 from packaging.version import Version
+from typing_extensions import TypeAlias
 
 from galaxy import model
 from galaxy.exceptions import ToolInputsNotOKException
-from galaxy.model.base import transaction
 from galaxy.model.dataset_collections.matching import MatchingCollections
 from galaxy.model.dataset_collections.structure import (
     get_structure,
     tool_output_to_structure,
 )
+from galaxy.schema.credentials import CredentialsContext
 from galaxy.tool_util.parser import ToolOutputCollectionPart
 from galaxy.tools.execution_helpers import (
     filter_output,
-    on_text_for_names,
+    on_text_for_dataset_and_collections,
     ToolExecutionCache,
 )
 from galaxy.tools.parameters.workflow_utils import is_runtime_value
@@ -51,10 +49,10 @@ SINGLE_EXECUTION_SUCCESS_MESSAGE = "Tool ${tool_id} created job ${job_id}"
 BATCH_EXECUTION_MESSAGE = "Created ${job_count} job(s) for tool ${tool_id} request"
 
 
-CompletedJobsT = Dict[int, Optional[model.Job]]
-JobCallbackT = Callable
-WorkflowResourceParametersT = Dict[str, Any]
-DatasetCollectionElementsSliceT = Dict[str, model.DatasetCollectionElement]
+CompletedJobsT = dict[int, Optional[model.Job]]
+JobCallbackT: TypeAlias = Callable
+WorkflowResourceParametersT = dict[str, Any]
+DatasetCollectionElementsSliceT = dict[str, model.DatasetCollectionElement]
 DEFAULT_USE_CACHED_JOB = False
 DEFAULT_PREFERRED_OBJECT_STORE_ID: Optional[str] = None
 DEFAULT_RERUN_REMAP_JOB_ID: Optional[int] = None
@@ -70,7 +68,7 @@ class PartialJobExecution(Exception):
 
 class MappingParameters(NamedTuple):
     param_template: ToolRequestT
-    param_combinations: List[ToolStateJobInstancePopulatedT]
+    param_combinations: list[ToolStateJobInstancePopulatedT]
 
 
 def execute(
@@ -80,6 +78,7 @@ def execute(
     history: model.History,
     rerun_remap_job_id: Optional[int] = DEFAULT_RERUN_REMAP_JOB_ID,
     preferred_object_store_id: Optional[str] = DEFAULT_PREFERRED_OBJECT_STORE_ID,
+    credentials_context: Optional[CredentialsContext] = None,
     collection_info: Optional[MatchingCollections] = None,
     workflow_invocation_uuid: Optional[str] = None,
     invocation_step: Optional[model.WorkflowInvocationStep] = None,
@@ -120,6 +119,8 @@ def execute(
         params = execution_slice.param_combination
         if "__data_manager_mode" in mapping_params.param_template:
             params["__data_manager_mode"] = mapping_params.param_template["__data_manager_mode"]
+        if "__use_cached_job__" in mapping_params.param_template:
+            params["__use_cached_job__"] = mapping_params.param_template["__use_cached_job__"]
         if workflow_invocation_uuid:
             params["__workflow_invocation_uuid__"] = workflow_invocation_uuid
         elif "__workflow_invocation_uuid__" in params:
@@ -144,6 +145,7 @@ def execute(
             collection_info,
             job_callback,
             preferred_object_store_id,
+            credentials_context=credentials_context,
             flush_job=False,
             skip=skip,
         )
@@ -181,7 +183,7 @@ def execute(
     jobs_executed = 0
     has_remaining_jobs = False
     execution_slice = None
-    job_datasets: Dict[str, List[model.DatasetInstance]] = {}  # job: list of dataset instances created by job
+    job_datasets: dict[str, list[model.DatasetInstance]] = {}  # job: list of dataset instances created by job
 
     for i, execution_slice in enumerate(execution_tracker.new_execution_slices()):
         if max_num_jobs is not None and jobs_executed >= max_num_jobs:
@@ -196,8 +198,7 @@ def execute(
     if execution_slice:
         history.add_pending_items()
     # Make sure collections, implicit jobs etc are flushed even if there are no precreated output datasets
-    with transaction(trans.sa_session):
-        trans.sa_session.commit()
+    trans.sa_session.commit()
 
     tool_id = tool.id
     for job2 in execution_tracker.successful_jobs:
@@ -230,8 +231,7 @@ def execute(
             continue
         tool.app.job_manager.enqueue(job2, tool=tool, flush=False)
         trans.log_event(f"Added job to the job queue, id: {str(job2.id)}", tool_id=tool_id)
-    with transaction(trans.sa_session):
-        trans.sa_session.commit()
+    trans.sa_session.commit()
 
     if has_remaining_jobs:
         raise PartialJobExecution(execution_tracker)
@@ -264,11 +264,11 @@ ExecutionErrorsT = Union[str, Exception]
 
 
 class ExecutionTracker:
-    execution_errors: List[ExecutionErrorsT]
-    successful_jobs: List[model.Job]
-    output_datasets: List[Tuple[str, model.HistoryDatasetAssociation]]
-    output_collections: List[Tuple[str, model.HistoryDatasetCollectionAssociation]]
-    implicit_collections: Dict[str, model.HistoryDatasetCollectionAssociation]
+    execution_errors: list[ExecutionErrorsT]
+    successful_jobs: list[model.Job]
+    output_datasets: list[tuple[str, model.HistoryDatasetAssociation]]
+    output_collections: list[tuple[str, model.HistoryDatasetCollectionAssociation]]
+    implicit_collections: dict[str, model.HistoryDatasetCollectionAssociation]
 
     def __init__(
         self,
@@ -321,13 +321,31 @@ class ExecutionTracker:
         log.warning(message, self.tool.id, error)
         self.execution_errors.append(error)
 
+    @staticmethod
+    def _collection_info_to_collection_hids_element_ids(
+        items: list[Union[model.DatasetCollectionElement, model.HistoryDatasetCollectionAssociation]],
+    ) -> tuple[list[int], list[str]]:
+        element_ids = []
+        collection_hids = []
+        for item in items:
+            if isinstance(item, model.DatasetCollectionElement):
+                assert item.element_identifier is not None
+                element_ids.append(item.element_identifier)
+            else:
+                assert item.hid is not None
+                collection_hids.append(item.hid)
+        return collection_hids, element_ids
+
     @property
     def on_text(self) -> Optional[str]:
         collection_info = self.collection_info
         if self._on_text is None and collection_info is not None:
-            collection_names = ["collection %d" % c.hid for c in collection_info.collections.values()]
-            self._on_text = on_text_for_names(collection_names)
-
+            collection_hids, element_ids = self._collection_info_to_collection_hids_element_ids(
+                collection_info.collections.values()
+            )
+            self._on_text = on_text_for_dataset_and_collections(
+                collection_hids=collection_hids, element_ids=element_ids
+            )
         return self._on_text
 
     def output_name(self, trans, history, params, output):
@@ -482,8 +500,7 @@ class ExecutionTracker:
             trans.sa_session.add(collection_instance)
         # Needed to flush the association created just above with
         # job.add_output_dataset_collection.
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        trans.sa_session.commit()
         self.implicit_collections = collection_instances
 
     @property
@@ -553,8 +570,7 @@ class ExecutionTracker:
 
                 trans.sa_session.add(implicit_collection.collection)
 
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        trans.sa_session.commit()
 
     @property
     def implicit_inputs(self):
@@ -620,7 +636,7 @@ class ToolExecutionTracker(ExecutionTracker):
         # New to track these things for tool output API response in the tool case,
         # in the workflow case we just write stuff to the database and forget about
         # it.
-        self.outputs_by_output_name: Dict[str, List[Union[model.DatasetInstance, model.DatasetCollection]]] = (
+        self.outputs_by_output_name: dict[str, list[Union[model.DatasetInstance, model.DatasetCollection]]] = (
             collections.defaultdict(list)
         )
 

@@ -5,7 +5,6 @@ import os
 import re
 import shutil
 import sys
-import tarfile
 import tempfile
 import time
 import traceback
@@ -48,6 +47,7 @@ from galaxy.tool_util.parser.interface import (
 from galaxy.tool_util.verify.test_data import TestDataResolver
 from galaxy.util import requests
 from galaxy.util.bunch import Bunch
+from galaxy.util.compression_utils import CompressedFile
 from galaxy.util.hash_util import (
     memory_bound_hexdigest,
     parse_checksum_hash,
@@ -492,7 +492,7 @@ class GalaxyInteractorApi:
                             contents.extractall(path=path)
                     else:
                         # Galaxy < 21.01
-                        with tarfile.open(fileobj=fileobj) as tar_contents:
+                        with CompressedFile.open_tar(fileobj) as tar_contents:
                             tar_contents.extractall(path=path)
                     result = path
                     if path_only:
@@ -674,11 +674,14 @@ class GalaxyInteractorApi:
                 break
         submit_response_object = ensure_tool_run_response_okay(submit_response, "execute tool", inputs_tree)
         try:
+            outputs = self.__dictify_outputs(submit_response_object)
+            output_collections = self.__dictify_output_collections(submit_response_object)
+            jobs = submit_response_object["jobs"]
             return RunToolResponse(
                 inputs=inputs_tree,
-                outputs=self.__dictify_outputs(submit_response_object),
-                output_collections=self.__dictify_output_collections(submit_response_object),
-                jobs=submit_response_object["jobs"],
+                outputs=outputs,
+                output_collections=output_collections,
+                jobs=jobs,
             )
         except KeyError:
             message = (
@@ -693,6 +696,8 @@ class GalaxyInteractorApi:
             collection_type=collection_def.collection_type,
             history_id=history_id,
         )
+        if collection_def.fields:
+            create_payload["fields"] = collection_def.fields
         return self._post("dataset_collections", data=create_payload, json=True).json()["id"]
 
     def _element_identifiers(self, collection_def):
@@ -764,7 +769,11 @@ class GalaxyInteractorApi:
             dataset = history_content
 
             print(ERROR_MESSAGE_DATASET_SEP)
-            dataset_id = dataset.get("id", None)
+            dataset_id: Optional[str] = dataset.get("id")
+            if dataset_id is None:
+                print("| *TEST FRAMEWORK ERROR - NO DATASET ID*")
+                continue
+
             print(f"| {dataset['hid']} - {dataset['name']} (HID - NAME) ")
             if history_content["history_content_type"] == "dataset_collection":
                 history_contents_json = self._get(
@@ -817,15 +826,15 @@ class GalaxyInteractorApi:
         contents = "\n".join(f"{prefix}{line.strip()}" for line in io.StringIO(blob).readlines() if line.rstrip("\n\r"))
         return contents or f"{prefix}*{empty_message}*"
 
-    def _dataset_provenance(self, history_id, id):
+    def _dataset_provenance(self, history_id: str, id: str) -> Dict[str, Any]:
         provenance = self._get(f"histories/{history_id}/contents/{id}/provenance").json()
         return provenance
 
-    def _dataset_info(self, history_id, id):
+    def _dataset_info(self, history_id: str, id: str) -> Dict[str, Any]:
         dataset_json = self._get(f"histories/{history_id}/contents/{id}").json()
         return dataset_json
 
-    def __contents(self, history_id):
+    def __contents(self, history_id: str) -> List[Dict[str, Any]]:
         history_contents_response = self._get(f"histories/{history_id}/contents")
         history_contents_response.raise_for_status()
         return history_contents_response.json()
@@ -841,7 +850,15 @@ class GalaxyInteractorApi:
             )
         return None
 
-    def __submit_tool(self, history_id, tool_id, tool_input, extra_data=None, files=None, tool_version=None):
+    def __submit_tool(
+        self,
+        history_id: str,
+        tool_id: str,
+        tool_input: Optional[dict],
+        extra_data: Optional[dict] = None,
+        files: Optional[dict] = None,
+        tool_version: Optional[str] = None,
+    ):
         extra_data = extra_data or {}
         data = dict(
             history_id=history_id, tool_id=tool_id, inputs=dumps(tool_input), tool_version=tool_version, **extra_data
@@ -1071,7 +1088,7 @@ def prepare_request_params(
                 new_items[key] = dumps(val)
         data.update(new_items)
 
-    kwd = {
+    kwd: Dict[str, Any] = {
         "files": files,
     }
     if headers:

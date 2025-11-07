@@ -54,7 +54,10 @@ class ConditionalDependencies:
                     self.job_runners.append(runner.get("load"))
             environments = job_conf_dict.get("execution", {}).get("environments", {})
             for env in environments.values():
-                if "rules_module" in env:
+                runner = env.get("runner")
+                if runner == "dynamic_tpv":
+                    self.job_rule_modules.append("tpv.rules")
+                elif "rules_module" in env:
                     self.job_rule_modules.append(env.get("rules_module"))
 
         if "job_config" in self.config:
@@ -249,6 +252,10 @@ class ConditionalDependencies:
     def check_fs_webdavfs(self):
         return "webdav" in self.file_sources
 
+    def check_webdavclient3(self):
+        # fs.webdavfs dependency for which we need an unreleased version
+        return self.check_fs_webdavfs()
+
     def check_fs_anvilfs(self):
         # pyfilesystem plugin access to terra on anvil
         return "anvil" in self.file_sources
@@ -273,6 +280,9 @@ class ConditionalDependencies:
 
     def check_fs_basespace(self):
         return "basespace" in self.file_sources
+
+    def check_rspace_client(self):
+        return "rspace" in self.file_sources
 
     def check_watchdog(self):
         install_set = {"auto", "True", "true", "polling", True}
@@ -311,7 +321,23 @@ class ConditionalDependencies:
         return self.pkce_support
 
     def check_rucio_clients(self):
-        return "rucio" in self.object_stores and sys.version_info >= (3, 9)
+        return "rucio" in self.object_stores
+
+    def check_redis(self):
+        celery_enabled = self.config.get("enable_celery_tasks", False)
+        celery_conf = self.config.get("celery_conf") or {}
+        celery_result_backend = celery_conf.get("result_backend") or ""
+        celery_broker_url = celery_conf.get("broker_url") or ""
+
+        def is_redis_url(url: str) -> bool:
+            # https://docs.celeryq.dev/en/stable/userguide/configuration.html#conf-redis-result-backend
+            protocol = url.split("://")[0]
+            return protocol in {"redis", "rediss", "redis+socket", "socket"}
+
+        return celery_enabled and is_redis_url(celery_result_backend) or is_redis_url(celery_broker_url)
+
+    def check_huggingface_hub(self):
+        return "huggingface" in self.file_sources
 
 
 def optional(config_file=None):

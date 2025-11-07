@@ -18,17 +18,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.8', '3.13']
+        python-version: ['3.9', '3.13']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: 'galaxy root'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '18.12.1'
-          cache: 'yarn'
-          cache-dependency-path: 'galaxy root/client/yarn.lock'
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'

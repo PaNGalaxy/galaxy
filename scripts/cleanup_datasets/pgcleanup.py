@@ -410,7 +410,7 @@ class RequiresDiskUsageRecalculation:
                     new_args[key] = val
                 self._update(sql, new_args, add_event=False)
 
-            self.log.info("recalculate_disk_usage user_id %i" % user_id)
+            self.log.info("recalculate_disk_usage user_id %i", user_id)
 
 
 class RemovesMetadataFiles(RemovesObjects):
@@ -1318,7 +1318,8 @@ class Cleanup:
         else:
             log.info(
                 "Not executing event creation (increments sequence even when rolling back), using an old "
-                "event ID (%i) for dry run" % max_id
+                "event ID (%i) for dry run",
+                max_id,
             )
         return max_id
 

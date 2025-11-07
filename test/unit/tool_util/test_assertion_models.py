@@ -1,13 +1,12 @@
-import sys
 from string import Template
 
 import lxml.etree as ET
 import pytest
 from pydantic import ValidationError
 
-from galaxy.tool_util.verify.assertion_models import assertion_list
 from galaxy.tool_util.verify.codegen import galaxy_xsd_path
 from galaxy.tool_util.verify.parse import assertion_xml_els_to_models
+from galaxy.tool_util_models.assertions import assertion_list
 from galaxy.util.commands import shell
 from galaxy.util.unittest_utils import skip_unless_executable
 
@@ -205,10 +204,6 @@ echo '$parameter' >> '$output'
 </tool>
 """
 )
-
-
-if sys.version_info < (3, 8):  # noqa: UP036
-    pytest.skip(reason="Pydantic assertion models require python3.8 or higher", allow_module_level=True)
 
 
 def test_valid_json_models_validate():

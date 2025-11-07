@@ -2,6 +2,7 @@ import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
 import { createPinia } from "pinia";
 import { getLocalVue } from "tests/jest/helpers";
+import { setupMockConfig } from "tests/jest/mockConfig";
 
 import { useServerMock } from "@/api/client/__mocks__";
 import { rootResponse } from "@/components/FilesDialog/testingData";
@@ -13,6 +14,7 @@ const localVue = getLocalVue();
 jest.mock("app");
 
 const { server, http } = useServerMock();
+setupMockConfig({});
 
 async function init(wrapper, data) {
     // the file dialog modal should exist
@@ -75,10 +77,6 @@ describe("DirectoryPathEditableBreadcrumb", () => {
             http.get("/api/remote_files/plugins", ({ response }) => {
                 return response(200).json(rootResponse);
             }),
-
-            http.get("/api/configuration", ({ response }) => {
-                return response(200).json({});
-            })
         );
 
         const pinia = createPinia();
@@ -112,7 +110,7 @@ describe("DirectoryPathEditableBreadcrumb", () => {
         const breadcrumbPaths = wrapper.findAll("li.breadcrumb-item");
         expect(breadcrumbPaths.length).toBe(testingData.expectedNumberOfPaths);
         expect(wrapper.find(".pathname").text()).toBe(testingData.protocol);
-        const regularPathElements = wrapper.findAll("li.breadcrumb-item button[disabled='disabled']");
+        const regularPathElements = wrapper.findAll("li.breadcrumb-item button[aria-disabled='true']");
 
         expect(regularPathElements.length).toBe(testingData.pathChunks.length);
 

@@ -75,7 +75,7 @@ def parse_config_xml(config_xml):
         extra_dirs = [{k: e.get(k) for k in attrs} for e in e_xml]
 
         attrs_schemes = ("rse", "scheme", "ignore_checksum")
-        e_xml = config_xml.findall("rucio_download_scheme")
+        e_xml = config_xml.findall("download_scheme")
         rucio_download_schemes = []
         if e_xml:
             rucio_download_schemes = [{k: e.get(k) for k in attrs_schemes} for e in e_xml]
@@ -87,7 +87,7 @@ def parse_config_xml(config_xml):
 
         enable_cache_mon = string_as_bool(config_xml.findtext("enable_cache_monitor", "False"))
 
-        e_xml = config_xml.findall("rucio_upload_scheme")
+        e_xml = config_xml.findall("upload_scheme")
         if e_xml:
             rucio_upload_rse_name = e_xml[0].get("rse", None)
             rucio_upload_scheme = e_xml[0].get("scheme", None)
@@ -101,18 +101,18 @@ def parse_config_xml(config_xml):
             rucio_register_only = False
             rucio_register_with_checksum = True
 
-        e_xml = config_xml.findall("rucio_auth")
+        e_xml = config_xml.findall("auth")
         if not e_xml:
-            _config_xml_error("rucio_auth")
+            _config_xml_error("auth")
         rucio_account = e_xml[0].get("account", None)
         rucio_auth_host = e_xml[0].get("host", None)
         rucio_username = e_xml[0].get("username", None)
         rucio_password = e_xml[0].get("password", None)
         rucio_auth_type = e_xml[0].get("type", "userpass")
 
-        e_xml = config_xml.findall("rucio_connection")
+        e_xml = config_xml.findall("connection")
         if not e_xml:
-            _config_xml_error("rucio_connection")
+            _config_xml_error("connection")
         rucio_host = e_xml[0].get("host", None)
 
         rucio_dict = {
@@ -132,7 +132,7 @@ def parse_config_xml(config_xml):
 
         return {
             "cache": cache_dict,
-            "rucio": rucio_dict,
+            **rucio_dict,
             "extra_dirs": extra_dirs,
             "oidc_providers": oidc_providers,
             "enable_cache_monitor": enable_cache_mon,
@@ -153,11 +153,32 @@ class RucioBroker:
         self.register_only = rucio_config["register_only"]
         self.register_with_checksum = rucio_config.get("register_with_checksum", True)
         self.download_schemes = rucio_config["download_schemes"]
+        self.rucio_config_path: Optional[str] = None
+        self.extra_dirs = {e["type"]: e["path"] for e in rucio_config["extra_dirs"]}
+
         if Client is None:
             raise Exception(NO_RUCIO_ERROR_MESSAGE)
         rucio.common.utils.PREFERRED_CHECKSUM = "md5"
 
     def get_rucio_client(self):
+        if not self.rucio_config_path:
+            temp_directory = self.extra_dirs["temp"]
+            self.rucio_config_path = os.path.join(temp_directory, "rucio.cfg")
+            key_for_pass = "password"
+            with open(self.rucio_config_path, "w") as f:
+                f.write(
+                    f"""[client]
+rucio_host = {self.config['host']}
+auth_host = {self.config['auth_host']}
+account = {self.config['account']}
+auth_type = {self.config['auth_type']}
+username = {self.config['username']}
+{key_for_pass} = {self.config[key_for_pass]}
+"""
+                )
+        # We may have crossed a forkpool boundary. No harm setting the env var again.
+        # Fixes rucio integration tests
+        os.environ["RUCIO_CONFIG"] = self.rucio_config_path
         client = Client(
             rucio_host=self.config["host"],
             auth_host=self.config["auth_host"],
@@ -262,7 +283,7 @@ class RucioBroker:
         try:
             repl = next(self.get_rucio_client().list_replicas(dids))
             return "AVAILABLE" in repl["states"].values()
-        except Exception:
+        except Exception as e:
             return False
 
     def get_size(self, key) -> int:
@@ -297,7 +318,7 @@ class RucioObjectStore(CachingConcreteObjectStore):
 
     def to_dict(self):
         rval = super().to_dict()
-        rval["rucio"] = self.rucio_config
+        rval.update(self.rucio_config)
         rval["cache"] = self.cache_config
         rval["oidc_providers"] = self.oidc_providers
         rval["enable_cache_monitor"] = self.enable_cache_monitor
@@ -305,7 +326,7 @@ class RucioObjectStore(CachingConcreteObjectStore):
 
     def __init__(self, config, config_dict):
         super().__init__(config, config_dict)
-        self.rucio_config = config_dict.get("rucio") or {}
+        self.rucio_config = config_dict or {}
 
         self.oidc_providers = config_dict.get("oidc_providers", None)
         self.rucio_broker = RucioBroker(self.rucio_config)
@@ -462,7 +483,8 @@ class RucioObjectStore(CachingConcreteObjectStore):
         arg_user = kwargs.get("user", None)
         try:
             if not arg_user:
-                trans = kwargs.get("trans", None)
+                trans = kwargs.get("trans")
+                assert trans
                 user = trans.user
             else:
                 user = arg_user
@@ -471,7 +493,7 @@ class RucioObjectStore(CachingConcreteObjectStore):
                 tokens = user.get_oidc_tokens(backend)
                 if tokens["id"]:
                     return tokens["id"]
-        except Exception:
+        except Exception as _:
             return None
 
     def _get_filename(self, obj, sync_cache: bool = True, **kwargs) -> str:

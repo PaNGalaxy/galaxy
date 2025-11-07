@@ -1,4 +1,8 @@
 import os
+from typing import (
+    cast,
+    TYPE_CHECKING,
+)
 
 from galaxy.app_unittest_utils.tools_support import UsesApp
 from galaxy.job_execution.compute_environment import SimpleComputeEnvironment
@@ -13,6 +17,7 @@ from galaxy.model import (
     JobToOutputDatasetAssociation,
 )
 from galaxy.tool_util.parser.output_objects import ToolOutput
+from galaxy.tool_util_models.tool_source import XmlTemplateConfigFile
 from galaxy.tools.evaluation import ToolEvaluator
 
 # For MockTool
@@ -32,6 +37,9 @@ from galaxy.util import XML
 from galaxy.util.bunch import Bunch
 from galaxy.util.unittest import TestCase
 
+if TYPE_CHECKING:
+    from galaxy.tools import Tool
+
 # To Test:
 # - param_file handling.
 TEST_TOOL_DIRECTORY = "/path/to/the/tool"
@@ -46,7 +54,7 @@ class TestToolEvaluator(TestCase, UsesApp):
         self.job.history = History()
         self.job.history.id = 42
         self.job.parameters = [JobParameter(name="thresh", value="4")]
-        self.evaluator = ToolEvaluator(self.app, self.tool, self.job, self.test_directory)
+        self.evaluator = ToolEvaluator(self.app, self.tool, self.job, self.test_directory)  # type: ignore[arg-type]
 
     def tearDown(self):
         self.tear_down_app()
@@ -83,7 +91,7 @@ class TestToolEvaluator(TestCase, UsesApp):
 
     def test_conditional_evaluation(self):
         select_xml = XML("""<param name="always_true" type="select"><option value="true">True</option></param>""")
-        parameter = SelectToolParameter(self.tool, select_xml)
+        parameter = SelectToolParameter(cast("Tool", self.tool), select_xml)
 
         conditional = Conditional("c")
         conditional.test_param = parameter
@@ -104,7 +112,7 @@ class TestToolEvaluator(TestCase, UsesApp):
         # Make sure optional dataset don't cause evaluation to break and
         # evaluate in cheetah templates as 'None'.
         select_xml = XML("""<param name="input1" type="data" optional="true"></param>""")
-        parameter = DataToolParameter(self.tool, select_xml)
+        parameter = DataToolParameter(cast("Tool", self.tool), select_xml)
         self.job.parameters = [JobParameter(name="input1", value="null")]
         self.tool.set_params({"input1": parameter})
         self.tool._command_line = "prog1 --opt_input='${input1}'"
@@ -135,7 +143,8 @@ class TestToolEvaluator(TestCase, UsesApp):
         assert command_line == f"bwa --thresh=4 --in={job_path_1} --out={job_path_2}"
 
     def test_configfiles_evaluation(self):
-        self.tool.config_files.append(("conf1", None, "$thresh"))
+        config_file = XmlTemplateConfigFile(name="conf1", content="$thresh")
+        self.tool.config_files.append(config_file)
         self.tool._command_line = "prog1 $conf1"
         self._set_compute_environment()
         command_line, _, extra_filenames, *_ = self.evaluator.build()
@@ -164,7 +173,7 @@ class TestToolEvaluator(TestCase, UsesApp):
             <option value="/old/path/mouse">Mouse</option>
         </param>"""
         )
-        parameter = SelectToolParameter(self.tool, xml)
+        parameter = SelectToolParameter(cast("Tool", self.tool), xml)
 
         def get_field_by_name_for_value(name, value, trans, other_values):
             assert value == "/old/path/human"
@@ -202,7 +211,8 @@ class TestToolEvaluator(TestCase, UsesApp):
 
     def _assert_template_property_is(self, expression, value):
         self.tool._command_line = "test.exe"
-        self.tool.config_files.append(("conf1", None, f"""{expression}"""))
+        config_file = XmlTemplateConfigFile(name="conf1", content=f"""{expression}""")
+        self.tool.config_files.append(config_file)
         self._set_compute_environment()
         extra_filenames = self.evaluator.build()[2]
         config_filename = extra_filenames[0]
@@ -296,6 +306,9 @@ class ComputeEnvironment(SimpleComputeEnvironment):
 
 class MockTool:
     def __init__(self, app):
+        self.id = "mock_tool"
+        self.version = "1.0.0"
+        self.is_latest_version = True
         self.profile = 16.01
         self.python_template_version = "2.7"
         self.app = app
@@ -307,13 +320,15 @@ class MockTool:
         self.options = Bunch(sanitize=False)
         self.check_values = True
         self.version_string_cmd = ""
+        self.credentials = []
+        self.id = "tool_id"
 
     def test_thresh_param(self):
         elem = XML('<param name="thresh" type="integer" value="5" />')
-        return IntegerToolParameter(self, elem)
+        return IntegerToolParameter(cast("Tool", self), elem)
 
-    def params_from_strings(self, params, app, ignore_errors=False):
-        return params_from_strings(self.inputs, params, app, ignore_errors)
+    def params_from_strings(self, params, ignore_errors=False):
+        return params_from_strings(self.inputs, params, self.app, ignore_errors)
 
     @property
     def config_file(self):

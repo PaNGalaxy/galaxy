@@ -5,10 +5,8 @@ Manager and Serializer for Library Folders.
 import logging
 from dataclasses import dataclass
 from typing import (
-    List,
     Optional,
-    Set,
-    Tuple,
+    TYPE_CHECKING,
     Union,
 )
 
@@ -49,11 +47,13 @@ from galaxy.model import (
     LibraryFolder,
     LibraryFolderPermissions,
 )
-from galaxy.model.base import transaction
 from galaxy.model.db.role import get_private_role_user_emails_dict
 from galaxy.model.scoped_session import galaxy_scoped_session
 from galaxy.schema.schema import LibraryFolderContentsIndexQueryPayload
 from galaxy.security import RBACAgent
+
+if TYPE_CHECKING:
+    from galaxy.managers.context import ProvidesUserContext
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ log = logging.getLogger(__name__)
 class SecurityParams:
     """Contains security data bundled for reusability."""
 
-    user_role_ids: List[model.Role]
+    user_role_ids: list[model.Role]
     security_agent: RBACAgent
     is_admin: bool
 
@@ -88,7 +88,13 @@ class FolderManager:
     Interface/service object for interacting with folders.
     """
 
-    def get(self, trans, decoded_folder_id: int, check_manageable: bool = False, check_accessible: bool = True):
+    def get(
+        self,
+        trans: "ProvidesUserContext",
+        decoded_folder_id: int,
+        check_manageable: bool = False,
+        check_accessible: bool = True,
+    ):
         """
         Get the folder from the DB.
 
@@ -112,7 +118,13 @@ class FolderManager:
         folder = self.secure(trans, folder, check_manageable, check_accessible)
         return folder
 
-    def secure(self, trans, folder, check_manageable=True, check_accessible=True):
+    def secure(
+        self,
+        trans: "ProvidesUserContext",
+        folder: LibraryFolder,
+        check_manageable: bool = True,
+        check_accessible: bool = True,
+    ):
         """
         Check if (a) user can manage folder or (b) folder is accessible to user.
 
@@ -191,7 +203,7 @@ class FolderManager:
         folder_dict["update_time"] = folder.update_time
         return folder_dict
 
-    def create(self, trans, parent_folder_id, new_folder_name, new_folder_description=""):
+    def create(self, trans, parent_folder_id: int, new_folder_name: str, new_folder_description: Optional[str] = None):
         """
         Create a new folder under the given folder.
 
@@ -222,8 +234,7 @@ class FolderManager:
         new_folder.genome_build = trans.app.genome_builds.default_value
         parent_folder.add_folder(new_folder)
         trans.sa_session.add(new_folder)
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        trans.sa_session.commit()
         # New folders default to having the same permissions as their parent folder
         trans.app.security_agent.copy_library_permissions(trans, parent_folder, new_folder)
         return new_folder
@@ -257,8 +268,7 @@ class FolderManager:
             changed = True
         if changed:
             trans.sa_session.add(folder)
-            with transaction(trans.sa_session):
-                trans.sa_session.commit()
+            trans.sa_session.commit()
         return folder
 
     def delete(self, trans, folder, undelete=False):
@@ -282,8 +292,7 @@ class FolderManager:
         else:
             folder.deleted = True
         trans.sa_session.add(folder)
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        trans.sa_session.commit()
         return folder
 
     def get_current_roles(self, trans, folder):
@@ -316,7 +325,7 @@ class FolderManager:
             )
         )
 
-        def make_tuples(roles: Set):
+        def make_tuples(roles: set):
             tuples = []
             for role in roles:
                 # use role name for non-private roles, and user.email from private rules
@@ -397,7 +406,7 @@ class FolderManager:
         trans,
         folder: LibraryFolder,
         payload: LibraryFolderContentsIndexQueryPayload,
-    ) -> Tuple[List[Union[LibraryFolder, LibraryDataset]], int]:
+    ) -> tuple[list[Union[LibraryFolder, LibraryDataset]], int]:
         """Retrieves the contents of the given folder that match the provided filters and pagination parameters.
         Returns a tuple with the list of paginated contents and the total number of items contained in the folder."""
         limit = payload.limit
@@ -409,7 +418,7 @@ class FolderManager:
             is_admin=trans.user_is_admin,
         )
 
-        content_items: List[Union[LibraryFolder, LibraryDataset]] = []
+        content_items: list[Union[LibraryFolder, LibraryDataset]] = []
         sub_folders_stmt = self._get_sub_folders_statement(sa_session, folder, security_params, payload)
         total_sub_folders = get_count(sa_session, sub_folders_stmt)
         if payload.order_by in FOLDER_SORT_COLUMN_MAP:
@@ -542,7 +551,7 @@ class FolderManager:
 
     def build_folder_path(
         self, sa_session: galaxy_scoped_session, folder: model.LibraryFolder
-    ) -> List[Tuple[int, Optional[str]]]:
+    ) -> list[tuple[int, Optional[str]]]:
         """
         Returns the folder path from root to the given folder.
 
