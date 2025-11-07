@@ -7,7 +7,6 @@ import { sanitize } from "dompurify";
 import type { ComputedRef } from "vue";
 import { computed, ref, useAttrs } from "vue";
 
-import { getGalaxyInstance } from "@/app";
 import { linkify } from "@/utils/utils";
 
 import { type ExtendedCollectionType, isDataUri } from "./Elements/FormData/types";
@@ -126,8 +125,6 @@ const collapsed = ref(false);
 
 const collapsible = computed(() => !props.disabled && collapsibleValue.value !== undefined);
 const connectable = computed(() => collapsible.value && Boolean(attrs.value["connectable"]));
-
-const disableBatchInput = computed(() => getGalaxyInstance().config.disable_batch_input);
 
 // Determines whether to expand or collapse the input
 {
@@ -350,9 +347,6 @@ const extendedCollectionType = computed<ExtendedCollectionType>(() => {
                 v-if="props.workflowRun"
                 :id="props.id"
                 :type="props.type"
-                :collection-types="attrs.collection_types"
-                :disable-batch-input="disableBatchInput"
-                @alert="onAlert"
                 :has-alert="hasAlert"
                 :is-empty="isEmpty"
                 :is-optional="isOptional"
@@ -364,26 +358,6 @@ const extendedCollectionType = computed<ExtendedCollectionType>(() => {
                     <slot name="workflow-run-form-title-items" />
                 </template>
             </FormElementHeader>
-            <FormDrilldown
-                v-else-if="props.type === 'drill_down'"
-                :id="id"
-                v-model="currentValue"
-                :options="attrs.options"
-                :multiple="attrs.multiple" />
-            <FormDataDialog
-                v-else-if="props.type === 'data_dialog'"
-                :id="id"
-                v-model="currentValue"
-                :multiple="attrs.multiple === 'true'" />
-            <FormColor v-else-if="props.type === 'color'" :id="props.id" v-model="currentValue" />
-            <FormDirectory v-else-if="props.type === 'directory_uri'" v-model="currentValue" />
-            <FormUpload v-else-if="props.type === 'upload'" v-model="currentValue" />
-            <FormRulesEdit v-else-if="props.type == 'rules'" v-model="currentValue" :target="attrs.target" />
-            <FormTags
-                v-else-if="props.type === 'tags'"
-                v-model="currentValue"
-                :placeholder="props.attributes?.placeholder" />
-            <FormInput v-else :id="props.id" v-model="currentValue" :area="attrs['area']" />
         </div>
 
         <div v-if="rendersContent" :class="{ 'form-element-content px-3 py-1 mb-2': props.workflowRun }">

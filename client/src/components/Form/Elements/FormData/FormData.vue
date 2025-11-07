@@ -58,7 +58,6 @@ const props = withDefaults(
         collectionTypes?: Array<CollectionType>;
         flavor?: string;
         tag?: string;
-        disableBatchInput?: boolean;
         userDefinedTitle?: string;
         workflowRun?: boolean;
         extendedCollectionType?: ExtendedCollectionType;
@@ -73,7 +72,6 @@ const props = withDefaults(
         collectionTypes: () => [],
         flavor: undefined,
         tag: undefined,
-        disableBatchInput: false,
         userDefinedTitle: undefined,
         extendedCollectionType: () => ({}) as ExtendedCollectionType,
     },
@@ -257,11 +255,6 @@ const variant = computed(() => {
     const flavorKey = props.flavor ? `${props.flavor}_` : "";
     const multipleKey = props.multiple ? `_multiple` : "";
     const variantKey = `${flavorKey}${props.type}${multipleKey}`;
-    if (props.disableBatchInput && VARIANTS[variantKey]) {
-        return VARIANTS[variantKey]!.filter((v) => {
-            return v.batch === BATCH.DISABLED;
-        });
-    }
     return VARIANTS[variantKey];
 });
 
@@ -832,51 +825,6 @@ const noOptionsWarningMessage = computed(() => {
         @dragleave.prevent="onDragLeave"
         @dragover.prevent
         @drop.prevent="onDrop">
-<!--<<<<<<< HEAD
-        <div class="d-flex flex-column">
-            <BButtonGroup v-if="variant && variant.length > 0" buttons class="align-self-start">
-                <BButton
-                    v-for="(v, index) in variant"
-                    :key="index"
-                    v-b-tooltip.hover.bottom
-                    :pressed="currentField === index"
-                    :title="v.tooltip"
-                    @click="currentField = index">
-                    <FontAwesomeIcon :icon="['far', v.icon]" />
-                </BButton>
-                <BButton v-if="canBrowse" v-b-tooltip.hover.bottom title="Browse or Upload Datasets" @click="onBrowse">
-                    <FontAwesomeIcon v-if="loading" :icon="faSpinner" spin />
-                    <span v-else class="font-weight-bold">...</span>
-                </BButton>
-                <BButtonGroup v-if="effectiveCollectionTypes?.length > 0" size="sm" buttons>
-                    <BButton
-                        v-for="collectionType in effectiveCollectionTypes"
-                        :key="collectionType"
-                        v-b-tooltip.hover.bottom
-                        :title="`Create a new ${COLLECTION_TYPE_TO_LABEL[collectionType]}`"
-                        :variant="formattedOptions.length === 0 ? 'warning' : 'secondary'"
-                        @click="buildNewCollection(collectionType)">
-                        <FontAwesomeIcon :icon="faPlus" fixed-width />
-                    </BButton>
-                </BButtonGroup>
-            </BButtonGroup>
-            <div v-if="restrictsExtensions">
-                <BButton :id="formatsButtonId" class="ui-link" @click="formatsVisible = !formatsVisible">
-                    accepted formats
-                    <FontAwesomeIcon v-if="formatsVisible" :icon="faCaretUp" />
-                    <FontAwesomeIcon v-else :icon="faCaretDown" />
-                </BButton>
-                <BCollapse v-model="formatsVisible">
-                    <ul class="pl-3 m-0">
-                        <li v-for="extension in extensions" :key="extension">{{ extension }}</li>
-                    </ul>
-                </BCollapse>
-                <BTooltip :target="formatsButtonId" noninteractive placement="bottom" triggers="hover">
-                    <div class="form-data-extensions-tooltip">
-                        <span v-for="extension in extensions" :key="extension">{{ extension }}</span>
-                    </div>
-                </BTooltip>
-=======-->
         <div class="d-flex flex-gapx-1">
             <div class="d-flex flex-column">
                 <FormDataContextButtons
@@ -979,7 +927,6 @@ const noOptionsWarningMessage = computed(() => {
                         This is a batch mode input field. Individual jobs will be triggered for each dataset.
                     </span>
                 </div>
-<!--&gt;>>>>>> upstream-->
             </div>
         </div>
 
