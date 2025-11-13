@@ -431,6 +431,7 @@ def set_metadata_portable(
                         # purged output ?
                         dataset.purged = True
                         dataset.dataset.purged = True
+                        set_meta_ok = False
                     else:
                         raise Exception(f"Output file '{external_filename}' not found")
 
