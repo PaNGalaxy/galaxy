@@ -10,11 +10,9 @@ CREATE_VENV=1
 COPY_SAMPLE_FILES=1
 SET_VENV=1
 SKIP_CLIENT_BUILD=${GALAXY_SKIP_CLIENT_BUILD:-0}
-SKIP_NODE=${GALAXY_SKIP_NODE:-0}
 INSTALL_PREBUILT_CLIENT=${GALAXY_INSTALL_PREBUILT_CLIENT:-0}
-NODE_VERSION=${GALAXY_NODE_VERSION:-"$(cat client/.node_version)"}
 : "${YARN_INSTALL_OPTS:=--network-timeout 300000 --check-files}"
-: "${GALAXY_CONDA_PYTHON_VERSION:=3.8}"
+: "${GALAXY_CONDA_PYTHON_VERSION:=3.9}"
 
 for arg in "$@"; do
     if [ "$arg" = "--skip-venv" ]; then
@@ -28,7 +26,6 @@ for arg in "$@"; do
     [ "$arg" = "--stop-daemon" ] && FETCH_WHEELS=0
     [ "$arg" = "--skip-samples" ] && COPY_SAMPLE_FILES=0
     [ "$arg" = "--skip-client-build" ] && SKIP_CLIENT_BUILD=1
-    [ "$arg" = "--skip-node" ] && SKIP_NODE=1
 done
 
 SAMPLES="
@@ -40,7 +37,7 @@ RMFILES="
     lib/pkg_resources.pyc
 "
 
-MIN_PYTHON_VERSION=3.8
+MIN_PYTHON_VERSION=3.9
 MIN_PIP_VERSION=20.3
 
 # return true if $1 is in $2 else false
@@ -195,23 +192,6 @@ if [ $FETCH_WHEELS -eq 1 ]; then
             pip uninstall -y psycopg2 psycopg2-binary
         fi
         echo "$GALAXY_CONDITIONAL_DEPENDENCIES" | pip install -r /dev/stdin --index-url "${GALAXY_WHEELS_INDEX_URL}" --extra-index-url "${PYPI_INDEX_URL}"
-    fi
-fi
-
-# Install node if not installed
-if [ $SKIP_NODE -eq 0 ]; then
-    if ! command -v node >/dev/null || [ "$(node --version)" != "v${NODE_VERSION}" ]; then
-        if [ -n "$CONDA_DEFAULT_ENV" ] && [ -n "$CONDA_EXE" ]; then
-            echo "Installing node into '$CONDA_DEFAULT_ENV' Conda environment with conda."
-            $CONDA_EXE install --yes --override-channels --channel conda-forge --name "$CONDA_DEFAULT_ENV" nodejs="$NODE_VERSION"
-        elif [ -n "$VIRTUAL_ENV" ]; then
-            echo "Installing node into $VIRTUAL_ENV with nodeenv."
-            if [ -d "${VIRTUAL_ENV}/lib/node_modules" ]; then
-                echo "Removing old ${VIRTUAL_ENV}/lib/node_modules directory."
-                rm -rf "${VIRTUAL_ENV}/lib/node_modules"
-            fi
-            nodeenv -n "$NODE_VERSION" -p
-        fi
     fi
 fi
 

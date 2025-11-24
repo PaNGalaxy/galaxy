@@ -9,8 +9,6 @@ import logging
 import sys
 from typing import (
     Any,
-    Dict,
-    List,
 )
 
 from galaxy.managers import base
@@ -30,14 +28,14 @@ class ConfigurationManager:
 
     def get_configuration(
         self, trans: ProvidesUserContext, serialization_params: SerializationParams
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         is_admin = trans.user_is_admin
         host = getattr(trans, "host", None)
         serializer_class = AdminConfigSerializer if is_admin else ConfigSerializer
         serializer = serializer_class(self._app)
         return serializer.serialize_to_view(self._app.config, host=host, **serialization_params.model_dump())
 
-    def version(self) -> Dict[str, Any]:
+    def version(self) -> dict[str, Any]:
         version_info = {
             "version_major": self._app.config.version_major,
             "version_minor": self._app.config.version_minor,
@@ -49,7 +47,7 @@ class ConfigurationManager:
     def decode_id(
         self,
         encoded_id: str,
-    ) -> Dict[str, int]:
+    ) -> dict[str, int]:
         # Handle the special case for library folders
         if (len(encoded_id) % 16 == 1) and encoded_id.startswith("F"):
             encoded_id = encoded_id[1:]
@@ -59,11 +57,11 @@ class ConfigurationManager:
     def encode_id(
         self,
         decoded_id: int,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         encoded_id = self._app.security.encode_id(decoded_id)
         return {"encoded_id": encoded_id}
 
-    def tool_lineages(self) -> List[Dict[str, Dict]]:
+    def tool_lineages(self) -> list[dict[str, dict]]:
         rval = []
         for id, tool in self._app.toolbox.tools():
             try:
@@ -75,7 +73,7 @@ class ConfigurationManager:
                 rval.append(entry)
         return rval
 
-    def dynamic_tool_confs(self) -> List[Dict[str, str]]:
+    def dynamic_tool_confs(self) -> list[dict[str, str]]:
         # WARNING: If this method is ever changed so as not to require admin privileges, update the nginx proxy
         # documentation, since this path is used as an authentication-by-proxy method for securing other paths on the
         # server. A dedicated endpoint should probably be added to do that instead.
@@ -96,7 +94,7 @@ class ConfigurationManager:
 #   but doesn't have a model like them. It might be better in config.py or a
 #   totally new area, but I'm leaving it in managers for now for class consistency.
 class ConfigSerializer(base.ModelSerializer):
-    """Configuration (galaxy.ini) settings viewable by all users"""
+    """Configuration (galaxy.yml) settings viewable by all users"""
 
     def __init__(self, app):
         super().__init__(app)
@@ -120,7 +118,7 @@ class ConfigSerializer(base.ModelSerializer):
             return True if item.get(key) else False
 
         object_store = self.app.object_store
-        self.serializers: Dict[str, base.Serializer] = {
+        self.serializers: dict[str, base.Serializer] = {
             # TODO: this is available from user data, remove
             "is_admin_user": lambda *a, **c: False,
             "brand": _use_config,
@@ -132,6 +130,7 @@ class ConfigSerializer(base.ModelSerializer):
             "wiki_url": _use_config,
             "screencasts_url": _use_config,
             "citation_url": _use_config,
+            "citation_bibtex": _use_config,
             "citations_export_message_html": _use_config,
             "support_url": _use_config,
             "quota_url": _use_config,
@@ -145,7 +144,8 @@ class ConfigSerializer(base.ModelSerializer):
             "overwrite_model_recommendations": _use_config,
             "topk_recommendations": _use_config,
             "allow_user_impersonation": _use_config,
-            "allow_user_creation": _defaults_to(False),  # schema default is True
+            "allow_local_account_creation": _defaults_to(False),  # schema default is True
+            "disable_local_accounts": _defaults_to(False),  # schema default is False
             "use_remote_user": _defaults_to(None),  # schema default is False; or config.single_user
             "single_user": _config_is_truthy,
             "disable_internal_login": _use_config,
@@ -233,8 +233,12 @@ class ConfigSerializer(base.ModelSerializer):
             "help_forum_api_url": _use_config,
             "enable_help_forum_tool_panel_integration": _use_config,
             "disable_batch_input": _use_config,
-            "llm_api_configured": lambda item, key, **context: bool(item.openai_api_key),
-            "external_login_redirect_cookie": _defaults_to("galaxy-external-login-redirect")
+            "llm_api_configured": lambda item, key, **context: bool(item.ai_api_key),
+            "external_login_redirect_cookie": _defaults_to("galaxy-external-login-redirect"),
+            "install_tool_dependencies": _use_config,
+            "install_repository_dependencies": _use_config,
+            "install_resolver_dependencies": _use_config,
+            "enable_tool_generated_tours": _use_config,
         }
 
 
@@ -259,5 +263,5 @@ class AdminConfigSerializer(ConfigSerializer):
             }
         )
 
-    def _serialize_tool_shed_urls(self, item: Any, key: str, **context) -> List[str]:
+    def _serialize_tool_shed_urls(self, item: Any, key: str, **context) -> list[str]:
         return list(self.app.tool_shed_registry.tool_sheds.values()) if self.app.tool_shed_registry else []

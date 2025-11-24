@@ -1,12 +1,11 @@
 import logging
 from typing import (
     Any,
-    Dict,
-    List,
     Optional,
-    Tuple,
     Union,
 )
+
+from pydantic import UUID4
 
 from galaxy import (
     exceptions,
@@ -19,8 +18,12 @@ from galaxy.managers.workflows import (
     WorkflowSerializer,
     WorkflowsManager,
 )
-from galaxy.model import StoredWorkflow
-from galaxy.model.base import transaction
+from galaxy.model import (
+    LandingRequestToWorkflowInvocationAssociation,
+    StoredWorkflow,
+    WorkflowInvocation,
+    WorkflowLandingRequest,
+)
 from galaxy.schema.invocation import WorkflowInvocationResponse
 from galaxy.schema.schema import (
     InvocationsStateCounts,
@@ -64,7 +67,7 @@ class WorkflowsService(ServiceBase):
         trans: ProvidesUserContext,
         payload: WorkflowIndexPayload,
         include_total_count: bool = False,
-    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    ) -> tuple[list[dict[str, Any]], Optional[int]]:
         user = trans.user
         missing_tools = payload.missing_tools
         query, total_matches = self._workflows_manager.index_query(trans, payload, include_total_count)
@@ -125,7 +128,7 @@ class WorkflowsService(ServiceBase):
         trans,
         workflow_id,
         payload: InvokeWorkflowPayload,
-    ) -> Union[WorkflowInvocationResponse, List[WorkflowInvocationResponse]]:
+    ) -> Union[WorkflowInvocationResponse, list[WorkflowInvocationResponse]]:
         if trans.anonymous:
             raise exceptions.AuthenticationRequired("You need to be logged in to run workflows.")
         trans.check_user_activation()
@@ -148,7 +151,11 @@ class WorkflowsService(ServiceBase):
             tool
             for tool in tools
             if not trans.app.toolbox.has_tool(
-                tool["tool_id"], tool_version=tool["tool_version"], exact=require_exact_tool_versions
+                tool["tool_id"],
+                tool_version=tool["tool_version"],
+                tool_uuid=tool["tool_uuid"],
+                exact=require_exact_tool_versions,
+                user=trans.user,
             )
         ]
         if missing_tools:
@@ -175,8 +182,11 @@ class WorkflowsService(ServiceBase):
             )
             invocations.append(workflow_invocation)
 
-        with transaction(trans.sa_session):
-            trans.sa_session.commit()
+        # Create landing request association if provided
+        if payload.landing_uuid:
+            self._create_landing_request_association(trans, payload.landing_uuid, invocations)
+
+        trans.sa_session.commit()
         encoded_invocations = [WorkflowInvocationResponse(**invocation.to_dict()) for invocation in invocations]
         if is_batch:
             return encoded_invocations
@@ -262,3 +272,22 @@ class WorkflowsService(ServiceBase):
             if url in shed_url:
                 return shed_url
         return None
+
+    def _create_landing_request_association(
+        self, trans: ProvidesUserContext, landing_uuid: Optional[UUID4], invocations: list[WorkflowInvocation]
+    ):
+        """Create association between landing request and workflow invocations."""
+        # Look up the workflow landing request by UUID
+        workflow_landing_request = (
+            trans.sa_session.query(WorkflowLandingRequest).where(WorkflowLandingRequest.uuid == landing_uuid).first()
+        )
+
+        if not workflow_landing_request:
+            raise exceptions.ObjectNotFound(f"WorkflowLandingRequest with UUID {landing_uuid} not found")
+
+        # Create associations for each invocation
+        for invocation in invocations:
+            association = LandingRequestToWorkflowInvocationAssociation(
+                landing_request=workflow_landing_request, workflow_invocation=invocation
+            )
+            trans.sa_session.add(association)

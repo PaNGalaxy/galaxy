@@ -10,6 +10,7 @@ from galaxy.model import (
 )
 from galaxy.model.dataset_collections.matching import MatchingCollections
 from galaxy.objectstore import ObjectStorePopulator
+from galaxy.schema.credentials import CredentialsContext
 from galaxy.tools._types import ToolStateJobInstancePopulatedT
 from galaxy.tools.actions import (
     DefaultToolAction,
@@ -30,6 +31,10 @@ from galaxy.tools.execution_helpers import ToolExecutionCache
 
 if TYPE_CHECKING:
     from galaxy.managers.context import ProvidesUserContext
+    from galaxy.tools import (
+        DatabaseOperationTool,
+        Tool,
+    )
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +55,7 @@ class ModelOperationToolAction(DefaultToolAction):
 
     def execute(
         self,
-        tool,
+        tool: "Tool",
         trans,
         incoming: Optional[ToolStateJobInstancePopulatedT] = None,
         history: Optional[History] = None,
@@ -62,10 +67,14 @@ class ModelOperationToolAction(DefaultToolAction):
         collection_info: Optional[MatchingCollections] = None,
         job_callback: Optional[JobCallbackT] = DEFAULT_JOB_CALLBACK,
         preferred_object_store_id: Optional[str] = DEFAULT_PREFERRED_OBJECT_STORE_ID,
+        credentials_context: Optional[CredentialsContext] = None,
         set_output_hid: bool = DEFAULT_SET_OUTPUT_HID,
         flush_job: bool = True,
         skip: bool = False,
     ) -> ToolActionExecuteResult:
+        from galaxy.tools import DatabaseOperationTool
+
+        assert isinstance(tool, DatabaseOperationTool)
         incoming = incoming or {}
         trans.check_user_activation()
 
@@ -83,7 +92,7 @@ class ModelOperationToolAction(DefaultToolAction):
         ) = self._collect_inputs(tool, trans, incoming, history, current_user_roles, collection_info)
 
         # Build name for output datasets based on tool name and input names
-        on_text = self._get_on_text(inp_data)
+        on_text = self._get_on_text(inp_data, inp_dataset_collections)
 
         # wrapped params are used by change_format action and by output.label; only perform this wrapping once, as needed
         wrapped_params = self._wrapped_params(trans, tool, incoming)
@@ -108,7 +117,7 @@ class ModelOperationToolAction(DefaultToolAction):
         #
         # Create job.
         #
-        job, galaxy_session = self._new_job_for_session(trans, tool, history)
+        job, _ = self._new_job_for_session(trans, tool, history)
         self._produce_outputs(
             trans,
             tool,
@@ -137,7 +146,16 @@ class ModelOperationToolAction(DefaultToolAction):
         return job, out_data, history
 
     def _produce_outputs(
-        self, trans: "ProvidesUserContext", tool, out_data, output_collections, incoming, history, tags, hdca_tags, skip
+        self,
+        trans: "ProvidesUserContext",
+        tool: "DatabaseOperationTool",
+        out_data,
+        output_collections,
+        incoming,
+        history,
+        tags,
+        hdca_tags,
+        skip,
     ):
         tool.produce_outputs(
             trans,

@@ -18,7 +18,7 @@ from ..util import external_dependency_management
 @pytest.mark.parametrize(
     "target,version,base_image",
     [
-        ("maker", None, DEFAULT_EXTENDED_BASE_IMAGE),
+        ("mzmine", None, DEFAULT_EXTENDED_BASE_IMAGE),
         ("qiime", "1.9.1", DEFAULT_EXTENDED_BASE_IMAGE),
         ("samtools", None, DEFAULT_BASE_IMAGE),
     ],
@@ -38,6 +38,7 @@ def test_mulled_build_files_cli(use_mamba: bool, tmpdir) -> None:
     involucro_context = InvolucroContext(involucro_bin=os.path.join(tmpdir, "involucro"))
     exit_code = mull_targets(
         [target],
+        determine_base_image=False,
         involucro_context=involucro_context,
         command="build-and-test",
         singularity=True,

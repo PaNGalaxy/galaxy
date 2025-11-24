@@ -112,6 +112,7 @@ def build_docker_run_command(
     set_user_from_host: Optional[str] = None,
     host: Optional[str] = DEFAULT_HOST,
     guest_ports: Union[bool, str, List[str]] = False,
+    host_port_cmd: Optional[str] = None,
     container_name: Optional[str] = None,
 ) -> str:
     env_directives = env_directives or []
@@ -130,10 +131,14 @@ def build_docker_run_command(
         # When is True, expose all ports
         command_parts.append("-P")
     elif guest_ports:
+        if host_port_cmd:
+            host_port_cmd = f"$({host_port_cmd}):"
+        else:
+            host_port_cmd = ""
         if not isinstance(guest_ports, list):
             guest_ports = [guest_ports]
         for guest_port in guest_ports:
-            command_parts.extend(["-p", guest_port])
+            command_parts.extend(["-p", f"{host_port_cmd}{guest_port}"])
     if container_name:
         command_parts.extend(["--name", container_name])
     for volume in volumes:
@@ -161,7 +166,7 @@ def build_docker_run_command(
             euid = os.geteuid()
             egid = os.getgid()
 
-            user = "%d:%d" % (euid, egid)
+            user = f"{euid}:{egid}"
         command_parts.extend(["--user", user])
     elif set_user_from_host:
         user = f"`id -u {set_user_from_host}`:`id -g {set_user_from_host}`"

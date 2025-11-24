@@ -20,9 +20,6 @@ import traceback
 from functools import partial
 from pathlib import Path
 from typing import (
-    Any,
-    Dict,
-    List,
     Optional,
 )
 
@@ -56,12 +53,14 @@ from galaxy.model import (
 )
 from galaxy.model.custom_types import total_size
 from galaxy.model.metadata import MetadataTempFile
+from galaxy.model.store import SessionlessContext
 from galaxy.model.store.discover import MaxDiscoveredFilesExceededError
 from galaxy.objectstore import (
     build_object_store_from_config,
     ObjectStore,
 )
 from galaxy.tool_util.output_checker import (
+    AnyJobMessage,
     check_output,
     DETECTED_JOB_STATE,
 )
@@ -223,7 +222,7 @@ def set_metadata_portable(
 
     export_store = None
     final_job_state = Job.states.OK
-    job_messages: List[Dict[str, Any]] = []
+    job_messages: list[AnyJobMessage] = []
     if extended_metadata_collection:
         tool_dict = metadata_params["tool"]
         stdio_exit_code_dicts, stdio_regex_dicts = tool_dict["stdio_exit_codes"], tool_dict["stdio_regexes"]
@@ -303,6 +302,7 @@ def set_metadata_portable(
     import_model_store = store.imported_store_for_metadata(
         tool_job_working_directory / "metadata/outputs_new", object_store=object_store
     )
+    assert isinstance(import_model_store.sa_session, SessionlessContext)
 
     tool_script_file = tool_job_working_directory / "tool_script.sh"
     job: Optional[Job] = None
@@ -431,6 +431,7 @@ def set_metadata_portable(
                         # purged output ?
                         dataset.purged = True
                         dataset.dataset.purged = True
+                        set_meta_ok = False
                     else:
                         raise Exception(f"Output file '{external_filename}' not found")
 

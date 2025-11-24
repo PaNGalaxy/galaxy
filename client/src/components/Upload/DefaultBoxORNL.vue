@@ -10,7 +10,7 @@ import { createDatasetCollection } from "components/History/model/queries";
 
 import { UploadQueue } from "@/utils/upload-queue.js";
 
-import { defaultModel } from "./model.js";
+import { defaultModel } from "./model.ts";
 import { COLLECTION_TYPES, DEFAULT_FILE_NAME, hasBrowserSupport } from "./utils";
 
 import DefaultRow from "./DefaultRow.vue";

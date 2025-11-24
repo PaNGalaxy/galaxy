@@ -181,10 +181,10 @@ class StagingInterface(metaclass=abc.ABCMeta):
                 uri = path_or_uri_to_uri(uri)
                 is_path = uri.startswith("file://")
                 if not is_path or use_path_paste:
-                    upload_payload["inputs"]["files_%d|url_paste" % index] = uri
+                    upload_payload["inputs"][f"files_{index}|url_paste"] = uri
                 else:
                     path = uri[len("file://") :]
-                    upload_payload["__files"]["files_%d|file_data" % index] = self._attach_file(path)
+                    upload_payload["__files"][f"files_{index}|file_data"] = self._attach_file(path)
 
             if isinstance(upload_target, FileUploadTarget):
                 file_path = upload_target.path
@@ -245,7 +245,9 @@ class StagingInterface(metaclass=abc.ABCMeta):
             else:
                 raise ValueError(f"Unsupported type for upload_target: {type(upload_target)}")
 
-        def create_collection_func(element_identifiers: List[Dict[str, Any]], collection_type: str) -> Dict[str, Any]:
+        def create_collection_func(
+            element_identifiers: List[Dict[str, Any]], collection_type: str, rows: Optional[Dict[str, Any]] = None
+        ) -> Dict[str, Any]:
             payload = {
                 "name": "dataset collection",
                 "instance_type": "history",
@@ -253,6 +255,7 @@ class StagingInterface(metaclass=abc.ABCMeta):
                 "element_identifiers": element_identifiers,
                 "collection_type": collection_type,
                 "fields": None if collection_type != "record" else "auto",
+                "rows": rows,
             }
             return self._post("dataset_collections", payload)
 
