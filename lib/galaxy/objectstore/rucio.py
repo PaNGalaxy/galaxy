@@ -176,6 +176,10 @@ username = {self.config['username']}
 {key_for_pass} = {self.config[key_for_pass]}
 """
                 )
+            try:
+                os.chmod(self.rucio_config_path, 0o666)
+            except OSError:
+                pass
         # We may have crossed a forkpool boundary. No harm setting the env var again.
         # Fixes rucio integration tests
         os.environ["RUCIO_CONFIG"] = self.rucio_config_path
