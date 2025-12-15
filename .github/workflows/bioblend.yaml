@@ -47,7 +47,7 @@ jobs:
           path: bioblend
           persist-credentials: false
       - name: Cache pip dir
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: pip-cache-${{ matrix.tox_env }}
