@@ -184,19 +184,20 @@ username = {self.config['username']}
             auth_host=self.config["auth_host"],
             account=self.config["account"],
             auth_type=self.config["auth_type"],
+            logger=log,
             creds={"username": self.config["username"], "password": self.config["password"]},
         )
         return client
 
     def get_rucio_upload_client(self, auth_token=None):
         client = self.get_rucio_client()
-        uc = UploadClient(_client=client)
+        uc = UploadClient(_client=client,logger=log)
         uc.auth_token = auth_token
         return uc
 
     def get_rucio_download_client(self, auth_token=None):
         client = self.get_rucio_client()
-        dc = DownloadClient(client=client)
+        dc = DownloadClient(client=client,logger=log)
         dc.auth_token = auth_token
         return dc
 

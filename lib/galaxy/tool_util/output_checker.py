@@ -6,7 +6,7 @@ from typing import (
     Optional,
     Tuple,
     TYPE_CHECKING,
-    Union,
+    Union, Any,
 )
 
 from typing_extensions import (
@@ -59,7 +59,7 @@ class MaxDiscoveredFilesJobMessage(JobMessage):
     type: Literal["max_discovered_files"]
 
 
-AnyJobMessage = Union[ExitCodeJobMessage, RegexJobMessage, MaxDiscoveredFilesJobMessage]
+AnyJobMessage = Union[ExitCodeJobMessage, RegexJobMessage, MaxDiscoveredFilesJobMessage, Any]
 
 
 def check_output_regex(
