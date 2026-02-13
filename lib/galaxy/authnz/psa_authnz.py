@@ -230,12 +230,20 @@ class PSAAuthnz(IdentityProvider):
         return False
 
     def _try_to_locate_refresh_token_expiration(self, extra_data):
-        return (
-            extra_data.get("expires", None)
-            or extra_data.get("expires_in", None)
-            or extra_data["refresh_token"].get("expires", None)
-            or extra_data["refresh_token"].get("expires_in", None)
-        )
+        try:
+            # Azure provides the number of seconds to expiration in the extra_data
+            return (
+                extra_data.get("expires", None)
+                or extra_data.get("expires_in", None)
+                or extra_data["refresh_token"].get("expires", None)
+                or extra_data["refresh_token"].get("expires_in", None)
+            )
+        except Exception:
+            # Keycloak provides an expiration timestamp in the id token
+            decoded_id_token = jwt.decode(
+                extra_data["id_token"], options={"verify_signature": False}
+            )
+            return decoded_id_token.get("exp") - decoded_id_token.get("auth_time")
 
     def authenticate(self, trans, idphint=None):
         on_the_fly_config(trans.sa_session)
@@ -299,7 +307,6 @@ class PSAAuthnz(IdentityProvider):
             if self.config.get("well_known_oidc_config_uri", None)
             else self._get_well_known_uri_from_url(self.config["provider"])
         )
-        well_known_oidc_config = None
         try:
             well_known_oidc_config = requests.get(
                 well_known_oidc_config_uri,
