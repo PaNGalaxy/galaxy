@@ -168,8 +168,7 @@ class OIDCAuthnzBase(IdentityProvider):
         custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
 
         sa_session.add(custos_authnz_token)
-        with transaction(sa_session):
-            sa_session.commit()
+        sa_session.commit()
 
         log.debug(
             f"Refreshed user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
