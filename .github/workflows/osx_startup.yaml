@@ -33,7 +33,7 @@ jobs:
           path: 'galaxy root'
           persist-credentials: false
       - name: Cache pip dir
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/Library/Caches/pip
           key: pip-cache-${{ matrix.python-version }}-${{ hashFiles('galaxy root/requirements.txt') }}
@@ -43,7 +43,7 @@ jobs:
           miniforge-version: latest
           activate-environment: ''
       - name: Restore client cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: galaxy-static-${{ needs.build-client.outputs.commit-id }}
           path: 'galaxy root/static'
