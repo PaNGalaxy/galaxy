@@ -369,7 +369,7 @@ class TestCustosAuthnz(TestCase):
         assert self._create_oauth2_session_called
         assert self._fetch_token_called
         assert self._get_userinfo_called
-        assert login_redirect_url == "/"
+        assert login_redirect_url == "http://localhost:8000/"
         assert user is not None
 
     def test_callback_nonce_validation_with_bad_nonce(self):

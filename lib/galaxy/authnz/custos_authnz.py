@@ -343,7 +343,7 @@ class OIDCAuthnzBase(IdentityProvider):
             custos_authnz_token.refresh_token = refresh_token
             custos_authnz_token.expiration_time = expiration_time
             custos_authnz_token.refresh_expiration_time = refresh_expiration_time
-            redirect_url = "/"
+            redirect_url = login_redirect_url
 
         trans.sa_session.add(custos_authnz_token)
         trans.sa_session.commit()
