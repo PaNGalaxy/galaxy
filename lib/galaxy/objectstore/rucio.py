@@ -165,6 +165,7 @@ class RucioBroker:
             temp_directory = self.extra_dirs["temp"]
             self.rucio_config_path = os.path.join(temp_directory, "rucio.cfg")
             key_for_pass = "password"
+            os.makedirs(temp_directory, exist_ok=True)
             with open(self.rucio_config_path, "w") as f:
                 f.write(
                     f"""[client]
