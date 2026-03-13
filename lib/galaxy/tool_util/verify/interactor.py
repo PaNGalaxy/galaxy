@@ -305,7 +305,6 @@ class GalaxyInteractorApi:
         attributes = output_testdef.attributes
         name = output_testdef.name
         expected_count = attributes.get("count")
-        self.wait_for_jobs(history_id, jobs, maxseconds)
         hid = self.__output_id(output_data)
         # TODO: Twill version verifies dataset is 'ok' in here.
         try:
@@ -981,6 +980,22 @@ class GalaxyInteractorApi:
         kwd = self._prepare_request_params(data=data, files=files, as_json=json, headers=headers)
         kwd["timeout"] = kwd.pop("timeout", util.DEFAULT_SOCKET_TIMEOUT)
         return requests.post(url, **kwd)
+
+    def _options(
+        self,
+        path: str,
+        data: Optional[Dict[str, Any]] = None,
+        key: Optional[str] = None,
+        headers: Optional[Dict[str, Optional[str]]] = None,
+        admin: bool = False,
+        anon: bool = False,
+        json: bool = False,
+    ) -> Response:
+        headers = self.api_key_header(key=key, admin=admin, anon=anon, headers=headers)
+        url = self.get_api_url(path)
+        kwd = self._prepare_request_params(data=data, as_json=json, headers=headers)
+        kwd["timeout"] = kwd.pop("timeout", util.DEFAULT_SOCKET_TIMEOUT)
+        return requests.options(url, **kwd)
 
     def _delete(self, path, data=None, key=None, headers=None, admin=False, anon=False, json=False, params=None):
         headers = self.api_key_header(key=key, admin=admin, anon=anon, headers=headers)

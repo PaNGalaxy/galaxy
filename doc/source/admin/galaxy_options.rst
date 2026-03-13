@@ -1126,9 +1126,9 @@
 :Type: str
 
 
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``enable_tool_generated_tours``
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 :Description:
     Allow tools to show the option of and create interactive tours
@@ -2466,7 +2466,7 @@
 :Description:
     The BibTeX citation for Galaxy, to be displayed in the History
     Tool Reference List
-:Default: ``@article{Galaxy2024, title={The Galaxy platform for accessible, reproducible, and collaborative data analyses: 2024 update}, author={{The Galaxy Community}}, journal={Nucleic Acids Research}, year={2024}, doi={10.1093/nar/gkae410}, url={https://doi.org/10.1093/nar/gkae410}}``
+:Default: ``@article{Galaxy2024, title="The Galaxy platform for accessible, reproducible, and collaborative data analyses: 2024 update", author="{The Galaxy Community}", journal="Nucleic Acids Research", year="2024", doi="10.1093/nar/gkae410", url="https://doi.org/10.1093/nar/gkae410"}``
 :Type: str
 
 
@@ -5935,3 +5935,16 @@
     is ``true``. Runs in a Celery task.
 :Default: ``86400``
 :Type: int
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``enable_beta_tool_formats``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Enable beta tool formats (yaml, cwl, ...) which is a prerequisite
+    for user defined tools.
+:Default: ``false``
+:Type: bool
+
+

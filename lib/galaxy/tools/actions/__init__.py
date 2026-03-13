@@ -176,7 +176,13 @@ class DefaultToolAction(ToolAction):
                     if converted_dataset:
                         data = converted_dataset
                     else:
-                        data = data.get_converted_dataset(trans, target_ext, target_context=parent, history=history)
+                        data = data.get_converted_dataset(
+                            trans,
+                            target_ext,
+                            target_context=parent,
+                            history=history,
+                            use_cached_job=param_values.get("__use_cached_job__", False),
+                        )
 
                 input_name = prefixed_name
                 # Checked security of whole collection all at once if mapping over this input, else
@@ -506,11 +512,19 @@ class DefaultToolAction(ToolAction):
 
         if not completed_job:
             # Determine output dataset permission/roles list
+            default_history_permissions = app.security_agent.history_get_default_permissions(history)
             if all_permissions:
                 output_permissions = app.security_agent.guess_derived_permissions(all_permissions)
+                # Ensure history default access restrictions are applied even when
+                # inputs are less restrictive (e.g. public library datasets). The
+                # history defaults reflect the user's intent for output privacy.
+                # See https://github.com/galaxyproject/galaxy/issues/21802
+                access_action = app.security_agent.get_action("access")
+                if access_action in default_history_permissions and access_action not in output_permissions:
+                    output_permissions[access_action] = default_history_permissions[access_action]
             else:
                 # No valid inputs, we will use history defaults
-                output_permissions = app.security_agent.history_get_default_permissions(history)
+                output_permissions = default_history_permissions
 
         # Add the dbkey to the incoming parameters
         incoming["dbkey"] = input_dbkey
@@ -736,7 +750,7 @@ class DefaultToolAction(ToolAction):
                 hdca.collection.mark_as_populated()
             object_store_populator = ObjectStorePopulator(trans.app, trans.user)
             for data in out_data.values():
-                data.set_skipped(object_store_populator)
+                data.set_skipped(object_store_populator, replace_dataset=False)
         job.preferred_object_store_id = preferred_object_store_id
         self._handle_credentials_context(trans.sa_session, job, credentials_context)
         self._record_inputs(trans, tool, job, incoming, inp_data, inp_dataset_collections)

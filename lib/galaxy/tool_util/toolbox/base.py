@@ -803,7 +803,7 @@ class AbstractToolBox(ManagesIntegratedToolPanelMixin):
 
                 # if we don't have a lineage_map for this tool we need to sort by version,
                 # so that the last tool in rval is the newest tool.
-                rval.sort(key=lambda t: t.version)
+                rval.sort(key=lambda t: t.version_object)
             if rval:
                 if get_all_versions:
                     return rval
@@ -1147,6 +1147,8 @@ class AbstractToolBox(ManagesIntegratedToolPanelMixin):
         force_watch: bool = False,
     ) -> None:
         def quick_load(tool_file: "StrPath", async_load: bool = True) -> Union[str, None]:
+            if not self._looks_like_a_tool(str(tool_file)):
+                return None
             try:
                 tool = self.load_tool(tool_file)
                 self.__add_tool(tool, load_panel_dict, elems)

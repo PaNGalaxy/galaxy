@@ -180,13 +180,13 @@ skip-client: ## Run only the server, skipping the client build.
 
 node-deps: ## Install NodeJS dependencies.
 ifndef YARN
-	npm install -g yarn;
+	corepack enable yarn;
 endif
 	$(IN_VENV) yarn install $(YARN_INSTALL_OPTS)
 
 client-node-deps: ## Install NodeJS dependencies for the client.
 ifndef YARN
-	npm install -g yarn;
+	corepack enable yarn;
 endif
 	$(IN_VENV) cd client && yarn install $(YARN_INSTALL_OPTS)
 
@@ -203,8 +203,8 @@ remove-api-schema:
 	rm _shed_schema.yaml
 
 update-client-api-schema: client-node-deps build-api-schema ## Update client API schema
-	$(IN_VENV) cd client && npx openapi-typescript ../_schema.yaml > src/api/schema/schema.ts && npx prettier --write src/api/schema/schema.ts
-	$(IN_VENV) cd client && npx openapi-typescript ../_shed_schema.yaml > ../lib/tool_shed/webapp/frontend/src/schema/schema.ts && npx prettier --write ../lib/tool_shed/webapp/frontend/src/schema/schema.ts
+	$(IN_VENV) cd client && yarn openapi-typescript ../_schema.yaml -o src/api/schema/schema.ts && yarn prettier --write src/api/schema/schema.ts
+	$(IN_VENV) cd client && yarn openapi-typescript ../_shed_schema.yaml -o ../lib/tool_shed/webapp/frontend/src/schema/schema.ts && yarn prettier --write ../lib/tool_shed/webapp/frontend/src/schema/schema.ts
 	$(MAKE) remove-api-schema
 
 lint-api-schema: build-api-schema

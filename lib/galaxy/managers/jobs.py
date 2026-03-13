@@ -379,6 +379,8 @@ class JobManager:
 class JobSearch:
     """Search for jobs using tool inputs or other jobs"""
 
+    IGNORED_NON_JOB_PARAMETERS = ("__use_cached_job__", "__workflow_invocation_uuid__", "__when_value__", "__input_ext")
+
     def __init__(
         self,
         sa_session: galaxy_scoped_session,
@@ -570,7 +572,7 @@ class JobSearch:
                         continue
                     elif k == "chromInfo" and "?.len" in v:
                         continue
-                    elif k == "__when_value__":
+                    elif k in self.IGNORED_NON_JOB_PARAMETERS:
                         continue
                     a = aliased(model.JobParameter)
                     job_parameter_conditions.append(
@@ -657,7 +659,7 @@ class JobSearch:
                 continue
             elif k == "chromInfo" and "?.len" in v:
                 continue
-            elif k == "__when_value__":
+            elif k in self.IGNORED_NON_JOB_PARAMETERS:
                 # TODO: really need to separate this.
                 continue
             value_dump = None if v is None else json.dumps(v, sort_keys=True)
@@ -786,6 +788,8 @@ class JobSearch:
                     e.history_dataset_association_id.isnot(None),
                 ),
                 or_(b.deleted == false(), c.deleted == false()),
+                # Exclude HDAs where _state is set (_state is NULL when metadata is OK)
+                c._state.is_(None),
             )
         )
         return stmt
@@ -905,7 +909,11 @@ class JobSearch:
         signature_elements_select = signature_elements_select.join(
             _hda_cte_ref, _hda_cte_ref.id == _leaf_cte_ref.hda_id
         )
-        signature_elements_select = signature_elements_select.where(_hdca_target_cte_ref.id == v)
+        signature_elements_select = signature_elements_select.where(
+            _hdca_target_cte_ref.id == v,
+            # Exclude leaf HDAs where _state is set (_state is NULL when metadata is OK)
+            _hda_cte_ref._state.is_(None),
+        )
         signature_elements_cte = signature_elements_select.cte(
             safe_label_or_none(f"signature_elements_{k}_{value_index}")
         )
@@ -1143,7 +1151,11 @@ class JobSearch:
             _leaf_target_dce_ref = _dce_target_level_list[-1]
             reference_dce_signature_elements_select = reference_dce_signature_elements_select.join(
                 _hda_target_ref, _hda_target_ref.id == _leaf_target_dce_ref.hda_id
-            ).where(_dce_target_root_ref.id == v)
+            ).where(
+                _dce_target_root_ref.id == v,
+                # Exclude leaf HDAs where _state is set (_state is NULL when metadata is OK)
+                _hda_target_ref._state.is_(None),
+            )
             reference_dce_signature_elements_cte = reference_dce_signature_elements_select.cte(
                 safe_label_or_none(f"ref_dce_sig_els_{k}_{value_index}")
             )
@@ -1397,6 +1409,8 @@ class JobSearch:
                     a.name == k,
                     dce_left.element_identifier == dce_right.element_identifier,
                     hda_left.dataset_id == hda_right.dataset_id,  # Direct dataset_id comparison
+                    # Exclude HDAs where _state is set (_state is NULL when metadata is OK)
+                    hda_right._state.is_(None),
                 )
             )
             used_ids.append(labeled_col)

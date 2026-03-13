@@ -1090,6 +1090,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/file_landings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create File Landing */
+        post: operations["create_file_landing_api_file_landings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/file_source_instances": {
         parameters: {
             query?: never;
@@ -7417,6 +7434,75 @@ export interface components {
             /** Item Ids */
             item_ids: string[];
         };
+        /** CollectionElementCollectionRequestUri */
+        CollectionElementCollectionRequestUri: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "Collection";
+            /** Collection Type */
+            collection_type: string;
+            /** Elements */
+            elements: (
+                | components["schemas"]["CollectionElementCollectionRequestUri"]
+                | components["schemas"]["CollectionElementDataRequestUri"]
+            )[];
+            /**
+             * Identifier
+             * @description A unique identifier for this element within the collection.
+             */
+            identifier: string;
+        };
+        /** CollectionElementDataRequestUri */
+        CollectionElementDataRequestUri: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "File";
+            /** Created From Basename */
+            created_from_basename?: string | null;
+            /**
+             * Dbkey
+             * @default ?
+             */
+            dbkey: string;
+            /**
+             * Deferred
+             * @default false
+             */
+            deferred: boolean;
+            /** Ext */
+            ext: string;
+            /** Hashes */
+            hashes?: components["schemas"]["DatasetHash-Input"][] | null;
+            /**
+             * Identifier
+             * @description A unique identifier for this element within the collection.
+             */
+            identifier: string;
+            /** Info */
+            info?: string | null;
+            /** Location */
+            location: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Space To Tab
+             * @default false
+             */
+            space_to_tab: boolean;
+            /** Src */
+            src?: null;
+            /** Tags */
+            tags?: string[] | null;
+            /**
+             * To Posix Lines
+             * @default false
+             */
+            to_posix_lines: boolean;
+        };
         /** CollectionElementIdentifier */
         CollectionElementIdentifier: {
             /**
@@ -8007,6 +8093,23 @@ export interface components {
              * @description The target file source to create the entry in.
              */
             target: string;
+        };
+        /** CreateFileLandingPayload */
+        CreateFileLandingPayload: {
+            /** Client Secret */
+            client_secret?: string | null;
+            /** Origin */
+            origin?: string | null;
+            /**
+             * Public
+             * @default false
+             */
+            public: boolean;
+            /** Request State */
+            request_state: (
+                | components["schemas"]["FileRequestUri"]
+                | components["schemas"]["DataRequestCollectionUri"]
+            )[];
         };
         /** CreateHistoryContentFromStore */
         CreateHistoryContentFromStore: {
@@ -9306,6 +9409,11 @@ export interface components {
              * @description The type of the collection, can be `list`, `paired`, or define subcollections using `:` as separator like `list:paired` or `list:list`.
              */
             collection_type: string;
+            /**
+             * Column Definitions
+             * @description Column definitions for sample sheet collections.
+             */
+            column_definitions?: components["schemas"]["SampleSheetColumnDefinition"][] | null;
             /** Contents Url */
             contents_url?: string | null;
             /**
@@ -9606,6 +9714,30 @@ export interface components {
              */
             type: "data";
         };
+        /** DataRequestCollectionUri */
+        DataRequestCollectionUri: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            class: "Collection";
+            /** Collection Type */
+            collection_type: string;
+            /**
+             * Deferred
+             * @default false
+             */
+            deferred: boolean;
+            /** Elements */
+            elements: (
+                | components["schemas"]["CollectionElementCollectionRequestUri"]
+                | components["schemas"]["CollectionElementDataRequestUri"]
+            )[];
+            /** Name */
+            name?: string | null;
+            /** Src */
+            src?: null;
+        };
         /** DatasetAssociationRoles */
         DatasetAssociationRoles: {
             /**
@@ -9683,7 +9815,17 @@ export interface components {
          */
         DatasetExtraFiles: components["schemas"]["ExtraFileEntry"][];
         /** DatasetHash */
-        DatasetHash: {
+        "DatasetHash-Input": {
+            /**
+             * Hash Function
+             * @enum {string}
+             */
+            hash_function: "MD5" | "SHA-1" | "SHA-256" | "SHA-512";
+            /** Hash Value */
+            hash_value: string;
+        };
+        /** DatasetHash */
+        "DatasetHash-Output": {
             /**
              * Extra Files Path
              * @description The path to the extra files used to generate the hash.
@@ -11396,6 +11538,50 @@ export interface components {
             /** visible */
             visible: boolean;
         };
+        /** FileRequestUri */
+        FileRequestUri: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            class: "File";
+            /** Created From Basename */
+            created_from_basename?: string | null;
+            /**
+             * Dbkey
+             * @default ?
+             */
+            dbkey: string;
+            /**
+             * Deferred
+             * @default false
+             */
+            deferred: boolean;
+            /** Ext */
+            ext: string;
+            /** Hashes */
+            hashes?: components["schemas"]["DatasetHash-Input"][] | null;
+            /** Info */
+            info?: string | null;
+            /** Location */
+            location: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Space To Tab
+             * @default false
+             */
+            space_to_tab: boolean;
+            /** Src */
+            src?: null;
+            /** Tags */
+            tags?: string[] | null;
+            /**
+             * To Posix Lines
+             * @default false
+             */
+            to_posix_lines: boolean;
+        };
         /** FileSourceTemplateSummaries */
         FileSourceTemplateSummaries: components["schemas"]["FileSourceTemplateSummary"][];
         /** FileSourceTemplateSummary */
@@ -12236,7 +12422,7 @@ export interface components {
              * Hashes
              * @description The list of hashes associated with this dataset.
              */
-            hashes?: components["schemas"]["DatasetHash"][] | null;
+            hashes?: components["schemas"]["DatasetHash-Output"][] | null;
             /**
              * HDA or LDDA
              * @description Whether this dataset belongs to a history (HDA) or a library (LDDA).
@@ -12497,7 +12683,7 @@ export interface components {
              * Hashes
              * @description The list of hashes associated with this dataset.
              */
-            hashes: components["schemas"]["DatasetHash"][];
+            hashes: components["schemas"]["DatasetHash-Output"][];
             /**
              * HDA or LDDA
              * @description Whether this dataset belongs to a history (HDA) or a library (LDDA).
@@ -13732,7 +13918,7 @@ export interface components {
              * Tags
              * @description The tags of the topic.
              */
-            tags: string[];
+            tags: components["schemas"]["HelpForumTag"][];
             /**
              * Tags Descriptions
              * @description The descriptions of the tags of the topic.
@@ -15033,9 +15219,11 @@ export interface components {
              * Errors
              * @description Errors associated with the invocation.
              */
-            errors?: {
-                [key: string]: unknown;
-            } | null;
+            errors?:
+                | {
+                      [key: string]: unknown;
+                  }[]
+                | null;
             /**
              * Galaxy Version
              * @description The version of Galaxy this object was generated with.
@@ -26637,6 +26825,51 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Request Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageExceptionModel"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageExceptionModel"];
+                };
+            };
+        };
+    };
+    create_file_landing_api_file_landings_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The user ID that will be used to effectively make this API call. Only admins and designated users can make API calls on behalf of other users. */
+                "run-as"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFileLandingPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolLandingRequest"];
                 };
             };
             /** @description Request Error */

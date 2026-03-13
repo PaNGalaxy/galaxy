@@ -2,7 +2,7 @@
 psycopg2-binary==2.9.10
 mysqlclient
 fluent-logger
-sentry-sdk[fastapi]
+sentry-sdk
 pbs_python
 drmaa
 statsd
@@ -13,7 +13,7 @@ ldap3==2.9.1
 python-pam
 galaxycloudrunner
 pkce
-total-perspective-vortex>=3.1.1,<4
+total-perspective-vortex>=3.1.2,<4
 openai
 # upper version constraint because of https://github.com/galaxyproject/galaxy/issues/20600
 redis>=5.3.0,<6

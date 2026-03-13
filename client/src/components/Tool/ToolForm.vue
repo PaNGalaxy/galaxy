@@ -128,7 +128,6 @@ import { useHistoryStore } from "@/stores/historyStore";
 import { useTourStore } from "@/stores/tourStore";
 import { useUserStore } from "@/stores/userStore";
 import { useUserToolsServiceCredentialsStore } from "@/stores/userToolsServiceCredentialsStore";
-import { startWatchingHistory } from "@/watch/watchHistoryProvided";
 
 import ToolRecommendation from "../ToolRecommendation";
 import { getToolFormData, submitJob, updateToolFormData } from "./services";
@@ -277,10 +276,11 @@ export default {
         },
         hasCredentialsErrors() {
             if (this.formConfig.credentials?.length) {
-                const { hasUserProvidedAllRequiredServiceCredentials } = useUserToolCredentials(
-                    this.formConfig.id,
-                    this.formConfig.version,
-                );
+                const { hasUserProvidedAllRequiredServiceCredentials, toolHasRequiredServiceCredentials } =
+                    useUserToolCredentials(this.formConfig.id, this.formConfig.version);
+                if (!toolHasRequiredServiceCredentials.value) {
+                    return false;
+                }
                 return !hasUserProvidedAllRequiredServiceCredentials.value;
             }
             return false;
@@ -310,6 +310,7 @@ export default {
     methods: {
         ...mapActions(useJobStore, ["saveLatestResponse"]),
         ...mapActions(useTourStore, ["setTour"]),
+        ...mapActions(useHistoryStore, ["startWatchingHistory"]),
         emailAllowed(config, user) {
             return config.server_mail_configured && !user.isAnonymous;
         },
@@ -395,9 +396,9 @@ export default {
                 tool_id: this.formConfig.id,
                 tool_version: this.formConfig.version,
                 tool_uuid: this.toolUuid,
+                __tags: this.tags,
                 inputs: {
                     ...this.formData,
-                    __tags: this.tags,
                 },
             };
             if (this.useEmail) {
@@ -428,7 +429,7 @@ export default {
                     this.submissionRequestFailed = false;
                     this.showExecuting = false;
                     let changeRoute = false;
-                    startWatchingHistory();
+                    this.startWatchingHistory();
                     if (jobResponse.produces_entry_points) {
                         this.showEntryPoints = true;
                         this.entryPoints = jobResponse.jobs;

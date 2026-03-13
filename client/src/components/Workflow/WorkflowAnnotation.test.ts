@@ -92,7 +92,7 @@ async function mountWorkflowAnnotation(version: "run_form" | "invocation", ownsW
         propsData: {
             workflowId: ownsWorkflow ? SAMPLE_WORKFLOW.id : OTHER_USER_WORKFLOW_ID,
             historyId: TEST_HISTORY_ID,
-            invocationUpdateTime: version === "invocation" ? INVOCATION_TIME : undefined,
+            invocationCreateTime: version === "invocation" ? INVOCATION_TIME : undefined,
             showDetails: version === "run_form",
         },
         localVue,

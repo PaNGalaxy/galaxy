@@ -1841,7 +1841,7 @@ mapping:
 
       citation_bibtex:
         type: str
-        default: "@article{Galaxy2024, title={The Galaxy platform for accessible, reproducible, and collaborative data analyses: 2024 update}, author={{The Galaxy Community}}, journal={Nucleic Acids Research}, year={2024}, doi={10.1093/nar/gkae410}, url={https://doi.org/10.1093/nar/gkae410}}"
+        default: '@article{Galaxy2024, title="The Galaxy platform for accessible, reproducible, and collaborative data analyses: 2024 update", author="{The Galaxy Community}", journal="Nucleic Acids Research", year="2024", doi="10.1093/nar/gkae410", url="https://doi.org/10.1093/nar/gkae410"}'
         required: false
         per_host: true
         desc: |
@@ -4388,3 +4388,9 @@ mapping:
         desc: |
           The interval in seconds between attempts to delete all failed Galaxy job's working directories from the filesystem (every 24 hours by default) if enable_failed_jobs_working_directory_cleanup is ``true``. Runs in a Celery task.
 
+      enable_beta_tool_formats:
+        type: bool
+        default: false
+        required: false
+        desc: |
+          Enable beta tool formats (yaml, cwl, ...) which is a prerequisite for user defined tools.

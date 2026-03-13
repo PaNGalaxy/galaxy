@@ -29,7 +29,7 @@ export default {
         };
     },
     watch: {
-        "$route.params": {
+        "$route.query": {
             handler() {
                 this.getEditorConfig();
             },
@@ -43,21 +43,27 @@ export default {
                 reloadEditor = false;
                 this.skipNextReload = false;
             }
-            if (reloadEditor) {
-                this.editorReloadKey += 1;
-            }
 
-            this.version = Query.get("version");
+            const versionParam = Query.get("version");
+            this.version = versionParam !== undefined ? parseInt(versionParam, 10) : undefined;
             this.storedWorkflowId = Query.get("id");
             this.workflowId = Query.get("workflow_id");
             const workflowId = this.workflowId || this.storedWorkflowId;
             if (!workflowId) {
                 this.newWorkflow = true;
+                if (reloadEditor) {
+                    this.editorReloadKey += 1;
+                }
                 return;
             }
+            this.newWorkflow = false;
             if (this.workflowId) {
                 const { id: storedWorkflowId } = await getWorkflowInfo(workflowId, this.version, true);
                 this.storedWorkflowId = storedWorkflowId;
+            }
+
+            if (reloadEditor) {
+                this.editorReloadKey += 1;
             }
         },
     },

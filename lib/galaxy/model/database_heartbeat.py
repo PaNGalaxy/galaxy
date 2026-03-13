@@ -11,9 +11,12 @@ from sqlalchemy import (
 )
 
 from galaxy.model import WorkerProcess
+from galaxy.model.base import check_database_connection
 from galaxy.model.orm.now import now
 
 log = logging.getLogger(__name__)
+
+WEBAPP = "webapp"  # WorkerProcess.app_type for web apps.
 
 
 class DatabaseHeartbeat:
@@ -87,21 +90,28 @@ class DatabaseHeartbeat:
             worker_process = session.scalars(stmt).first()
             if not worker_process:
                 worker_process = WorkerProcess(server_name=self.server_name, hostname=self.hostname)
+            if self.application_stack.app.is_webapp:
+                worker_process.app_type = WEBAPP
             worker_process.update_time = now()
             worker_process.pid = self.pid
             session.add(worker_process)
         # We only want a single process watching the various config files on the file system.
         # We just pick the max server name for simplicity
-        is_config_watcher = self.server_name == max(
-            p.server_name for p in self.get_active_processes(self.heartbeat_interval + 1)
-        )
+        webapp_servers = [
+            p.server_name for p in self.get_active_processes(self.heartbeat_interval + 1) if p.app_type == WEBAPP
+        ]
+        is_config_watcher = bool(webapp_servers) and self.server_name == max(webapp_servers)
         if is_config_watcher != self.is_config_watcher:
             self.is_config_watcher = is_config_watcher
 
     def send_database_heartbeat(self):
         if self.active:
             while not self.exit.is_set():
-                self.update_watcher_designation()
+                check_database_connection(self.sa_session)
+                try:
+                    self.update_watcher_designation()
+                except Exception:
+                    log.exception("Error sending database heartbeat for server '%s'", self.server_name)
                 self.exit.wait(self.heartbeat_interval)
 
     def _delete_worker_process(self):

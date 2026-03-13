@@ -50,6 +50,7 @@ from galaxy.model.dataset_collections.adapters import (
     TransientCollectionAdapterDatasetInstanceElement,
     validate_collection_adapter_src_dict,
 )
+from galaxy.model.dataset_collections.types.sample_sheet_util import column_definitions_compatible
 from galaxy.schema.fetch_data import FilesPayload
 from galaxy.tool_util.parameters.factory import get_color_value
 from galaxy.tool_util.parser import get_input_source as ensure_input_source
@@ -2528,6 +2529,11 @@ class DataCollectionToolParameter(BaseDataToolParameter):
             match = dataset_collection_matcher.hdca_match(dataset_collection_instance)
             if not match:
                 continue
+            # Filter sample sheet collections by column_definitions compatibility
+            if self._column_definitions:
+                collection_cols = dataset_collection_instance.collection.column_definitions
+                if not column_definitions_compatible(collection_cols, self._column_definitions):
+                    continue
             yield dataset_collection_instance, match.implicit_conversion
 
     def match_multirun_collections(self, trans, history, dataset_collection_matcher):
@@ -2658,6 +2664,7 @@ class DataCollectionToolParameter(BaseDataToolParameter):
                     "name": name,
                     "src": "hdca",
                     "tags": [t.user_tname if not t.value else f"{t.user_tname}:{t.value}" for t in hdca.tags],
+                    "column_definitions": hdca.collection.column_definitions,
                 }
             )
 
@@ -2681,6 +2688,7 @@ class DataCollectionToolParameter(BaseDataToolParameter):
                     "name": name,
                     "src": "hdca",
                     "tags": [t.user_tname if not t.value else f"{t.user_tname}:{t.value}" for t in hdca.tags],
+                    "column_definitions": hdca.collection.column_definitions,
                 }
             )
 
@@ -2732,6 +2740,11 @@ class DirectoryUriToolParameter(SimpleTextToolParameter):
         super().validate(value, trans=trans)
         if not value:
             return  # value is not set yet, do not validate
+        # Skip file source validation in workflow building mode to allow workflows
+        # referencing removed file sources to be exported/viewed. Users can then
+        # download and edit them. Validation still occurs during tool execution.
+        if trans.workflow_building_mode:
+            return
         file_source_path = trans.app.file_sources.get_file_source_path(value)
         file_source = file_source_path.file_source
         if file_source is None:

@@ -65,6 +65,8 @@ from galaxy.util import (
 if TYPE_CHECKING:
     from pulsar.client.client import BaseJobClient
 
+    from galaxy.jobs.wrappers import MinimalJobWrapper
+
 log = logging.getLogger(__name__)
 
 __all__ = (
@@ -538,8 +540,18 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 compute_environment = PulsarComputeEnvironment(client, job_wrapper, remote_job_config)
                 prepare_kwds["compute_environment"] = compute_environment
 
-            if job_wrapper.prepare(**prepare_kwds) is False:
+            try:
+                job_prepare_ret = job_wrapper.prepare(**prepare_kwds)
+            except Exception as e:
+                # If we fail here the error isn't recoverable and we fail the job.
+                log.exception("failure preparing job %d", job_wrapper.job_id)
+                job_state = self._job_state(job_wrapper.get_job(), job_wrapper)
+                job_state.fail_message = str(e)
+                self.work_queue.put((self.fail_job, job_state))
+                job_prepare_ret = False
+            if job_prepare_ret is False:
                 return command_line, client, remote_job_config, compute_environment, remote_container
+
             self.__prepare_input_files_locally(job_wrapper)
             remote_metadata = PulsarJobRunner.__remote_metadata(client)
             dependency_resolution = PulsarJobRunner.__dependency_resolution(client)
@@ -651,8 +663,8 @@ class PulsarJobRunner(AsynchronousJobRunner):
         output_paths = job_wrapper.job_io.get_output_fnames()
         return [str(o) for o in output_paths]  # Force job_path from DatasetPath objects.
 
-    def get_input_files(self, job_wrapper):
-        input_paths = job_wrapper.job_io.get_input_paths()
+    def get_input_files(self, job_wrapper: "MinimalJobWrapper"):
+        input_paths = job_wrapper.job_io.get_input_paths(None)
         return [str(i) for i in input_paths]  # Force job_path from DatasetPath objects.
 
     def get_client_from_wrapper(self, job_wrapper):

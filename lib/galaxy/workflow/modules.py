@@ -1035,13 +1035,6 @@ class InputModule(WorkflowModule):
                     step_outputs["input_ds_copy"] = new_hdca
                 else:
                     raise Exception("Unknown history content encountered")
-        # If coming from UI - we haven't registered invocation inputs yet,
-        # so do that now so dependent steps can be recalculated. In the future
-        # everything should come in from the API and this can be eliminated.
-        if not invocation.has_input_for_step(step.id):
-            content = next(iter(step_outputs.values()))
-            if content and content is not NO_REPLACEMENT:
-                invocation.add_input(content, step.id)
         progress.set_outputs_for_input(invocation_step, step_outputs)
         return None
 
@@ -1520,10 +1513,15 @@ class InputParameterModule(WorkflowModule):
                     subworkflow_input_name = connection.input_name
                     for step in module.subworkflow.input_steps:
                         if step.input_type == "parameter" and step.label == subworkflow_input_name:
+                            # static_options are raw tuples, convert to ParameterOption namedtuples
+                            # to match ToolModule path and support intersection logic
                             static_options.append(
-                                step.module.get_runtime_inputs(step, connections=step.output_connections)[
-                                    "input"
-                                ].static_options
+                                [
+                                    ParameterOption(*o)
+                                    for o in step.module.get_runtime_inputs(step, connections=step.output_connections)[
+                                        "input"
+                                    ].static_options
+                                ]
                             )
 
             options: Optional[list[OptionDict]] = None
@@ -2071,7 +2069,7 @@ class ToolModule(WorkflowModule):
         if self.tool and self.tool.raw_help and self.tool.raw_help.format == "restructuredtext":
             host_url = self.trans.url_builder("/")
             static_path = self.trans.url_builder(static_path) if static_path else ""
-            return self.tool.help.render(host_url=host_url, static_path=static_path)
+            return self.tool.render_help(host_url=host_url, static_path=static_path)
 
     # ---- Configuration time -----------------------------------------------
 
@@ -2510,6 +2508,7 @@ class ToolModule(WorkflowModule):
             for pja in step.post_job_actions:
                 if pja.action_type == "ValidateOutputsAction":
                     validate_outputs = True
+
             credentials_context = self._resolve_credentials_context(tool)
             execution_tracker = execute(
                 trans=self.trans,

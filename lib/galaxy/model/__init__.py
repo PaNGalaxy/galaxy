@@ -130,6 +130,7 @@ from sqlalchemy.orm.collections import attribute_keyed_dict
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import FromClause
 from typing_extensions import (
+    deprecated,
     Literal,
     NotRequired,
     Protocol,
@@ -550,6 +551,7 @@ class WorkerProcess(Base, UsesCreateAndUpdateTime):
     hostname: Mapped[Optional[str]] = mapped_column(String(255))
     pid: Mapped[Optional[int]]
     update_time: Mapped[Optional[datetime]] = mapped_column(default=now, onupdate=now)
+    app_type: Mapped[Optional[str]]
 
 
 def cached_id(galaxy_model_object):
@@ -1083,38 +1085,50 @@ WHERE user_id = :user_id and quota_source_label = :label
 
     total_disk_usage = property(get_disk_usage, set_disk_usage)
 
-    def adjust_total_disk_usage(self, amount, quota_source_label):
+    def adjust_total_disk_usage(self, amount, quota_source_label, preserve_update_time: bool = False):
         assert amount is not None
         if amount != 0:
             if quota_source_label is None:
-                self.disk_usage = (self.disk_usage or 0) + amount
+                if preserve_update_time:
+                    # Use explicit SQL UPDATE to preserve update_time (avoids triggering onupdate=now)
+                    session = required_object_session(self)
+                    session.execute(
+                        update(User)
+                        .where(User.id == self.id)
+                        .values(
+                            disk_usage=User.disk_usage + amount,
+                            update_time=self.update_time,
+                        )
+                    )
+                else:
+                    self.disk_usage = (self.disk_usage or 0) + amount
             else:
                 # else would work on newer sqlite - 3.24.0
-                engine = required_object_session(self).bind
-                if "sqlite" in engine.dialect.name:
+                sa_session = required_object_session(self)
+                assert sa_session.bind is not None
+                if "sqlite" in sa_session.bind.dialect.name:
                     # hacky alternative for older sqlite
-                    statement = """
+                    sql = """
 WITH new (user_id, quota_source_label) AS ( VALUES(:user_id, :label) )
 INSERT OR REPLACE INTO user_quota_source_usage (id, user_id, quota_source_label, disk_usage)
 SELECT old.id, new.user_id, new.quota_source_label, COALESCE(old.disk_usage + :amount, :amount)
 FROM new LEFT JOIN user_quota_source_usage AS old ON new.user_id = old.user_id AND NEW.quota_source_label = old.quota_source_label;
 """
                 else:
-                    statement = """
+                    sql = """
 INSERT INTO user_quota_source_usage(user_id, disk_usage, quota_source_label)
 VALUES(:user_id, :amount, :label)
 ON CONFLICT
     ON constraint uqsu_unique_label_per_user
     DO UPDATE SET disk_usage = user_quota_source_usage.disk_usage + :amount
 """
-                statement = text(statement)
+                statement = text(sql)
                 params = {
                     "user_id": self.id,
                     "amount": int(amount),
                     "label": quota_source_label,
                 }
-                with engine.connect() as conn, conn.begin():
-                    conn.execute(statement, params)
+                sa_session.execute(statement, params)
 
     def _get_social_auth(self, provider_backend):
         if not self.social_auth:
@@ -1642,7 +1656,17 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
         back_populates="job"
     )
 
-    dict_collection_visible_keys = ["id", "state", "exit_code", "update_time", "create_time", "galaxy_version"]
+    dict_collection_visible_keys = [
+        "id",
+        "state",
+        "exit_code",
+        "update_time",
+        "create_time",
+        "galaxy_version",
+        "tool_id",
+        "tool_version",
+        "history_id",
+    ]
     dict_element_visible_keys = [
         "id",
         "state",
@@ -1653,6 +1677,9 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
         "command_version",
         "copied_from_job_id",
         "user_id",
+        "tool_id",
+        "tool_version",
+        "history_id",
     ]
 
     _numeric_metric = JobMetricNumeric
@@ -2033,6 +2060,21 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             self.state_history.append(JobStateHistory(self))
             return True
 
+    @deprecated("Use tool.get_param_values(job) instead")
+    def get_param_values(self, app, ignore_errors=False):
+        """
+        Read encoded parameter values from the database and turn back into a
+        dict of tool parameter values.
+        """
+        tool = app.toolbox.get_tool(
+            self.tool_id,
+            tool_version=self.tool_version,
+            tool_uuid=self.dynamic_tool and self.dynamic_tool.uuid,
+            user=self.user,
+        )
+        param_dict = tool.get_param_values(self, ignore_errors=ignore_errors)
+        return param_dict
+
     def raw_param_dict(self):
         param_dict = {p.name: p.value for p in self.parameters}
         return param_dict
@@ -2134,6 +2176,9 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
         job_attrs["create_time"] = self.create_time.isoformat()
         job_attrs["update_time"] = self.update_time.isoformat()
         job_attrs["job_messages"] = self.job_messages
+        job_attrs["object_store_id"] = self.object_store_id
+        if self.object_store_id_overrides:
+            job_attrs["object_store_id_overrides"] = self.object_store_id_overrides
 
         # Get the job's parameters
         param_dict = self.raw_param_dict()
@@ -2175,9 +2220,6 @@ class Job(Base, JobLike, UsesCreateAndUpdateTime, Dictifiable, Serializable):
             rval = super().to_dict(view="collection")
         else:
             rval = super().to_dict(view=view)
-        rval["tool_id"] = self.tool_id
-        rval["tool_version"] = self.tool_version
-        rval["history_id"] = self.history_id
         if system_details or view == "admin_job_list":
             # System level details that only admins should have.
             rval["external_id"] = self.job_runner_external_id
@@ -2811,6 +2853,17 @@ class ImplicitCollectionJobs(Base, Serializable):
             .where(ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id == self.id)
             .all()
         )
+
+    def get_job_attributes(self, attributes: list[str]):
+        session = required_object_session(self)
+        targets = [getattr(Job.table.columns, attr) for attr in attributes]
+        stmt = (
+            select(*targets)
+            .select_from(Job)
+            .join(ImplicitCollectionJobsJobAssociation, Job.id == ImplicitCollectionJobsJobAssociation.job_id)
+            .where(ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id == self.id)
+        )
+        return session.execute(stmt)
 
     def _serialize(self, id_encoder, serialization_options):
         rval = dict_for(
@@ -3700,13 +3753,18 @@ class History(Base, HasTags, Dictifiable, UsesAnnotations, HasName, Serializable
         else:
             hdcas = self.active_dataset_collections
         for hdca in hdcas:
-            new_hdca = hdca.copy(flush=False, element_destination=new_history, set_hid=False, minimize_copies=True)
+            new_hdca = hdca.copy(
+                flush=False,
+                element_destination=new_history,
+                set_hid=False,
+                minimize_copies=True,
+                target_user=target_user,
+            )
             new_history.add_dataset_collection(new_hdca, set_hid=False)
             db_session.add(new_hdca)
 
             if target_user:
                 new_hdca.copy_item_annotation(db_session, self.user, hdca, target_user, new_hdca)
-                new_hdca.copy_tags_from(target_user, hdca)
 
         new_history.hid_counter = self.hid_counter
         db_session.commit()
@@ -4455,7 +4513,7 @@ class Dataset(Base, StorableObject, Serializable):
 
     def ensure_shareable(self):
         if not self.shareable:
-            raise Exception(CANNOT_SHARE_PRIVATE_DATASET_MESSAGE)
+            raise galaxy.exceptions.MessageException(CANNOT_SHARE_PRIVATE_DATASET_MESSAGE)
 
     def get_file_name(self, sync_cache: bool = True, user=None) -> str:
         if self.purged:
@@ -4730,26 +4788,32 @@ class Dataset(Base, StorableObject, Serializable):
             literal(0).label("depth_level"),
         ]
 
-        # Create a single base query that covers both HDA and LDDA cases using OR conditions
-        base_query = (
+        # Create separate base queries for HDA and LDDA cases and union them
+        # We need to wrap the union in a subquery to use it as the anchor for the recursive CTE
+        union_query = (
             select(*base_columns)
             .select_from(
-                DatasetCollectionElement.__table__.outerjoin(
+                DatasetCollectionElement.__table__.join(
                     HistoryDatasetAssociation.__table__, DatasetCollectionElement.hda_id == HistoryDatasetAssociation.id
-                ).outerjoin(
-                    LibraryDatasetDatasetAssociation.__table__,
-                    DatasetCollectionElement.ldda_id == LibraryDatasetDatasetAssociation.id,
                 )
             )
-            .where(
-                or_(
-                    HistoryDatasetAssociation.dataset_id == self.id,
-                    LibraryDatasetDatasetAssociation.dataset_id == self.id,
+            .where(HistoryDatasetAssociation.dataset_id == self.id)
+            .union(
+                select(*base_columns)
+                .select_from(
+                    DatasetCollectionElement.__table__.join(
+                        LibraryDatasetDatasetAssociation.__table__,
+                        DatasetCollectionElement.ldda_id == LibraryDatasetDatasetAssociation.id,
+                    )
                 )
+                .where(LibraryDatasetDatasetAssociation.dataset_id == self.id)
             )
-        )
+        ).subquery()
 
-        # Create the recursive CTE from the single base query
+        # Select from the union subquery to create a proper base query for the CTE
+        base_query = select(union_query.c.collection_id, union_query.c.depth_level)
+
+        # Create the recursive CTE from the base query
         collection_hierarchy_cte = base_query.cte(name="collection_hierarchy", recursive=True)
 
         # Create aliases for the recursive part
@@ -5152,9 +5216,15 @@ class DatasetInstance(RepresentById, UsesCreateAndUpdateTime, _HasTable):
 
     quota_source_label = property(get_quota_source_label)
 
-    def set_skipped(self, object_store_populator: "ObjectStorePopulator") -> None:
+    def set_skipped(self, object_store_populator: "ObjectStorePopulator", replace_dataset: bool) -> None:
         assert self.dataset
         object_store_populator.set_object_store_id(self)
+        if replace_dataset:
+            replacement = Dataset(state=Dataset.states.NEW)
+            replacement.object_store_id = self.dataset.object_store_id
+            self.dataset = replacement
+            self.dataset_id = None
+            self.dataset.object_store.create(self.dataset)
         self.extension = "expression.json"
         self.state = self.states.OK
         self.blurb = "skipped"
@@ -5374,7 +5444,7 @@ class DatasetInstance(RepresentById, UsesCreateAndUpdateTime, _HasTable):
                     return item
         return None
 
-    def get_converted_dataset_deps(self, trans, target_ext):
+    def get_converted_dataset_deps(self, trans, target_ext, use_cached_job=False):
         """
         Returns dict of { "dependency" => HDA }
         """
@@ -5383,9 +5453,11 @@ class DatasetInstance(RepresentById, UsesCreateAndUpdateTime, _HasTable):
             depends_list = trans.app.datatypes_registry.converter_deps[self.extension][target_ext]
         except KeyError:
             depends_list = []
-        return {dep: self.get_converted_dataset(trans, dep) for dep in depends_list}
+        return {dep: self.get_converted_dataset(trans, dep, use_cached_job=use_cached_job) for dep in depends_list}
 
-    def get_converted_dataset(self, trans, target_ext, target_context=None, history=None, include_errored=False):
+    def get_converted_dataset(
+        self, trans, target_ext, target_context=None, history=None, include_errored=False, use_cached_job=False
+    ):
         """
         Return converted dataset(s) if they exist, along with a dict of dependencies.
         If not converted yet, do so and return None (the first time). If unconvertible, raise exception.
@@ -5410,7 +5482,7 @@ class DatasetInstance(RepresentById, UsesCreateAndUpdateTime, _HasTable):
         # Check if we have dependencies
         try:
             for dependency in depends_list:
-                dep_dataset = self.get_converted_dataset(trans, dependency)
+                dep_dataset = self.get_converted_dataset(trans, dependency, use_cached_job=use_cached_job)
                 if dep_dataset is None:
                     # None means converter is running first time
                     return None
@@ -5435,6 +5507,7 @@ class DatasetInstance(RepresentById, UsesCreateAndUpdateTime, _HasTable):
                     deps=deps,
                     target_context=target_context,
                     history=history,
+                    use_cached_job=use_cached_job,
                 ).values()
             )
         )
@@ -5844,7 +5917,7 @@ class HistoryDatasetAssociation(DatasetInstance, HasTags, Dictifiable, UsesAnnot
         Copy this HDA to a library optionally replacing an existing LDDA.
         """
         if not self.dataset.shareable:
-            raise Exception("Attempting to share a non-shareable dataset.")
+            raise Exception(CANNOT_SHARE_PRIVATE_DATASET_MESSAGE)
 
         if replace_dataset:
             # The replace_dataset param ( when not None ) refers to a LibraryDataset that
@@ -7149,6 +7222,12 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
 
     def expire_populated_state(self):
         required_object_session(self).expire(self, ("populated_state",))
+        # Clear the cached populated_optimized value so it will be recomputed
+        # on the next access with fresh database state. This prevents a race
+        # condition where the cached value becomes stale while nested
+        # collections are being populated.
+        if hasattr(self, "_populated_optimized"):
+            delattr(self, "_populated_optimized")
 
     @property
     def allow_implicit_mapping(self):
@@ -7319,7 +7398,11 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
         minimize_copies=False,
         copy_hid=True,
     ):
-        new_collection = DatasetCollection(collection_type=self.collection_type, element_count=self.element_count)
+        new_collection = DatasetCollection(
+            collection_type=self.collection_type,
+            element_count=self.element_count,
+            column_definitions=self.column_definitions,
+        )
         for element in self.elements:
             element.copy_to_collection(
                 new_collection,
@@ -7357,7 +7440,7 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
                 else:
                     element.hda = replacement.hda.copy(copy_hid=False, flush=False)
                     history.stage_addition(element.hda)
-            if replacement.child_collection:
+            elif replacement.child_collection:
                 if element.child_collection:
                     element.child_collection.replace_elements_with_copies(
                         replacement.child_collection.elements, history=history
@@ -7367,7 +7450,7 @@ class DatasetCollection(Base, Dictifiable, UsesAnnotations, Serializable):
                         flush=False, element_destination=history
                     )
             else:
-                raise ValueError("Cannot replace {type(replacement.element_object)}")
+                raise ValueError(f"Cannot replace {type(replacement.element_object)}")
 
     def replace_failed_elements(self, replacements):
         stmt = self._build_nested_collection_attributes_stmt(
@@ -7785,6 +7868,7 @@ class HistoryDatasetCollectionAssociation(
         flush: bool = True,
         set_hid: bool = True,
         minimize_copies: bool = False,
+        target_user: Optional[User] = None,
     ):
         """
         Create a copy of this history dataset collection association. Copy
@@ -7813,8 +7897,9 @@ class HistoryDatasetCollectionAssociation(
         hdca.collection = collection_copy
         session = required_object_session(self)
         session.add(hdca)
-        if self.history and self.history.user:
-            hdca.copy_tags_from(self.history.user, self)
+        copy_user = target_user or (self.history.user if self.history else None)
+        if copy_user:
+            hdca.copy_tags_from(copy_user, self)
         if element_destination and set_hid:
             element_destination.stage_addition(hdca)
             element_destination.add_pending_items()
@@ -8115,6 +8200,7 @@ class DatasetCollectionElement(Base, Dictifiable, Serializable):
             collection=collection,
             element_index=self.element_index,
             element_identifier=self.element_identifier,
+            columns=self.columns,
         )
         return new_element
 
@@ -9836,6 +9922,9 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
         for content in self.input_dataset_collections:
             if content.workflow_step_id == step_id:
                 return True
+        for content in self.input_step_parameters:
+            if content.workflow_step_id == step_id:
+                return True
         return False
 
     def set_handler(self, handler):
@@ -10122,6 +10211,15 @@ class WorkflowInvocationStep(Base, Dictifiable, Serializable):
 
         return step_attrs
 
+    def get_jobs_dict(self):
+        if self.implicit_collection_jobs:
+            result = self.implicit_collection_jobs.get_job_attributes(Job.dict_collection_visible_keys)
+            return [{"model_class": "Job", **row._mapping} for row in result]
+        elif self.job:
+            return [self.job.to_dict()]
+        else:
+            return []
+
     def to_dict(self, view="collection", value_mapper=None):
         rval = super().to_dict(view=view, value_mapper=value_mapper)
         rval["order_index"] = self.workflow_step.order_index
@@ -10130,9 +10228,7 @@ class WorkflowInvocationStep(Base, Dictifiable, Serializable):
         # Following no longer makes sense...
         # rval['state'] = self.job.state if self.job is not None else None
         if view == "element":
-            jobs = []
-            for job in self.jobs:
-                jobs.append(job.to_dict())
+            jobs = self.get_jobs_dict()
 
             outputs = {}
             for output_assoc in self.output_datasets:
