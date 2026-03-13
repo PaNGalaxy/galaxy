@@ -305,24 +305,28 @@ class AuthnzManager:
             raise exceptions.ItemAccessibilityException(msg)
 
     def refresh_expiring_oidc_tokens_for_provider(self, trans, auth):
-        with open("/tmp/galaxy_refresh_lock", "w") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                success, message, backend = self._get_authnz_backend(auth.provider)
-                if success is False:
-                    msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
-                    log.error(msg)
-                    return False
-                refreshed = backend.refresh(trans.sa_session, auth, 30)
-                if refreshed:
-                    log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
-                return True
-            except BlockingIOError:
-                log.debug("Another process is refreshing, skipping")
-                return True
-            except Exception as e:
-                log.exception("An error occurred when refreshing user token")
+        try:
+            success, message, backend = self._get_authnz_backend(auth.provider)
+            if success is False:
+                msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
+                log.error(msg)
                 return False
+            log.debug("Attempting to acquire refresh lock")
+            with open("/tmp/galaxy_refresh_lock", "w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                log.debug("Acquired refresh lock")
+                refreshed = backend.refresh(trans.sa_session, auth, 30)
+            if refreshed:
+                log.debug(
+                    f"Refreshed user token via `{auth.provider}` identity provider"
+                )
+            return True
+        except BlockingIOError:
+            log.debug("Another process is refreshing, skipping")
+            return True
+        except Exception as e:
+            log.exception(f"An error occurred when refreshing user token: {str(e)}")
+            return False
 
     def refresh_expiring_oidc_tokens(self, trans, user=None):
         user = trans.user or user
