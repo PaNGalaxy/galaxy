@@ -212,11 +212,11 @@ class PSAAuthnz(IdentityProvider):
         if int(user_authnz_token.extra_data["auth_time"]) + skip_old_tokens_threshold_seconds < int(time.time()):
             raise Exception("Expired Tokens. User needs to sign in.")
 
-#        if not (
-#            int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2
-#           <= int(time.time())
-#       ):
-#           return False
+        if not (
+            int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2
+           <= int(time.time())
+       ):
+           return False
 
         lock_id = hash(user_authnz_token.provider) & 0x7FFFFFFF
         if not try_lock(sa_session, lock_id):
