@@ -31,6 +31,7 @@ from galaxy.model import (
 from galaxy.model.orm.util import add_object_to_object_session
 from galaxy.util import requests
 from . import IdentityProvider
+from galaxy.util.lock import try_lock, unlock
 
 try:
     import pkce
@@ -152,27 +153,38 @@ class OIDCAuthnzBase(IdentityProvider):
             "refresh_token": custos_authnz_token.refresh_token,
         }
 
-        log.debug(
-            f"Refreshing user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
-        )
-        token = oauth2_session.refresh_token(token_endpoint, **params)
-        processed_token = self._process_token_after_refresh(token)
-
-        custos_authnz_token.access_token = processed_token["access_token"]
-        if "id_token" in processed_token:
-            custos_authnz_token.id_token = processed_token["id_token"]
+        log.debug("Attempting to acquire refresh lock")
+        lock_id = hash(custos_authnz_token.provider) & 0x7FFFFFFF
+        if not try_lock(sa_session, lock_id):
+            log.debug("Another process is refreshing, skipping")
+            return False
         else:
-            custos_authnz_token.id_token = None
-        custos_authnz_token.refresh_token = processed_token["refresh_token"]
-        custos_authnz_token.expiration_time = processed_token["expiration_time"]
-        custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
+            log.debug("Acquired refresh lock")
 
-        sa_session.add(custos_authnz_token)
-        sa_session.commit()
+        try:
+            log.debug(
+                f"Refreshing user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
+            )
+            token = oauth2_session.refresh_token(token_endpoint, **params)
+            processed_token = self._process_token_after_refresh(token)
 
-        log.debug(
-            f"Refreshed user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
-        )
+            custos_authnz_token.access_token = processed_token["access_token"]
+            if "id_token" in processed_token:
+                custos_authnz_token.id_token = processed_token["id_token"]
+            else:
+                custos_authnz_token.id_token = None
+            custos_authnz_token.refresh_token = processed_token["refresh_token"]
+            custos_authnz_token.expiration_time = processed_token["expiration_time"]
+            custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
+
+            sa_session.add(custos_authnz_token)
+            sa_session.commit()
+
+            log.debug(
+                f"Refreshed user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
+            )
+        finally:
+            unlock(sa_session, lock_id)
 
         return True
 

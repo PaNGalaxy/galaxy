@@ -31,6 +31,7 @@ from galaxy.util import (
     DEFAULT_SOCKET_TIMEOUT,
     requests,
 )
+from galaxy.util.lock import try_lock, unlock
 from . import IdentityProvider
 from ..config import GalaxyAppConfiguration
 
@@ -211,10 +212,19 @@ class PSAAuthnz(IdentityProvider):
         if int(user_authnz_token.extra_data["auth_time"]) + skip_old_tokens_threshold_seconds < int(time.time()):
             raise Exception("Expired Tokens. User needs to sign in.")
 
-        if (
-            int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2
-            <= int(time.time())
-        ):
+#        if not (
+#            int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2
+#           <= int(time.time())
+#       ):
+#           return False
+
+        lock_id = hash(user_authnz_token.provider) & 0x7FFFFFFF
+        if not try_lock(sa_session, lock_id):
+            log.debug("Another process is refreshing, skipping")
+            return False
+        else:
+            log.debug("Acquired refresh lock")
+        try:
             on_the_fly_config(sa_session)
             if self.config["provider"] == "azure":
                 self.refresh_azure(user_authnz_token)
@@ -224,10 +234,11 @@ class PSAAuthnz(IdentityProvider):
             log.debug(
                 f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
             )
+        finally:
+            unlock(sa_session, lock_id)
 
-            return True
+        return True
 
-        return False
 
     def _try_to_locate_refresh_token_expiration(self, extra_data):
         try:
