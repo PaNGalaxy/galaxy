@@ -88,10 +88,11 @@ class RegisterToolAction(BaseUploadToolAction):
         outputs = []
         for item in incoming.get("series", []):
             name = item.get("input", None)
+            tags = item.get("tags", None)
             file_type = os.path.splitext(name)[1][1:]
             dbkey = "?"
             uploaded_dataset = Bunch(type="file", name=name, file_type=file_type, dbkey=dbkey)
-            tag_list = []
+            tag_list = tags.split(",") if tags else []
             data = upload_common.new_upload(
                 trans, "", uploaded_dataset, library_bunch=None, history=history, tag_list=tag_list
             )
