@@ -24,7 +24,7 @@ def try_lock(session, lock_id):
     """
     if session.bind.dialect.name == "postgresql":
         return session.execute(
-            sa.text("SELECT pg_try_advisory_lock(:id)"),
+            sa.text("SELECT pg_try_advisory_xact_lock(:id)"),
             {"id": lock_id},
         ).scalar()
 
@@ -46,10 +46,6 @@ def unlock(session, lock_id):
     - For file-based locks, releases the flock and closes the file handle.
     """
     if session.bind.dialect.name == "postgresql":
-        session.execute(
-            sa.text("SELECT pg_advisory_unlock(:id)"),
-            {"id": lock_id},
-        )
         return
 
     f = _LOCK_HANDLES.pop(lock_id, None)
