@@ -46,6 +46,7 @@ def unlock(session, lock_id):
     - For file-based locks, releases the flock and closes the file handle.
     """
     if session.bind.dialect.name == "postgresql":
+        session.commit() # commit to make sure the lock is released
         return
 
     f = _LOCK_HANDLES.pop(lock_id, None)
