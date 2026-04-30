@@ -1132,6 +1132,12 @@ class PulsarKubernetesJobRunner(PulsarCoexecutionJobRunner):
     poll = True  # Poll so we can check API for pod IP for ITs.
     client_manager_kwargs = KUBERNETES_CLIENT_MANAGER_KWARGS
 
+class PulsarIRIJobRunner(PulsarCoexecutionJobRunner):
+    destination_defaults = {"iri_enabled": True, **COEXECUTION_DESTINATION_DEFAULTS}
+    use_mq = False
+    poll = True
+    client_manager_kwargs = {"iri_enabled": True}
+
 
 TES_DESTINATION_DEFAULTS: dict[str, Any] = {
     "tes_url": PARAMETER_SPECIFICATION_REQUIRED,
