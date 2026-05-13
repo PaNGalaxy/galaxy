@@ -198,19 +198,13 @@ class PSAAuthnz(IdentityProvider):
         extra_data["expires"] = int(expires - time.time())
         user_authnz_token.set_extra_data(extra_data)
 
-    def refresh(self, sa_session, user_authnz_token, skip_old_tokens_threshold_days):
+    def refresh(self, trans, user_authnz_token):
         if not user_authnz_token or not user_authnz_token.extra_data:
             return False
-        # refresh tokens if they reached their half lifetime
-        skip_old_tokens_threshold_seconds = skip_old_tokens_threshold_days * 86400  # 86400 seconds in a day
         expires = self._try_to_locate_refresh_token_expiration(user_authnz_token.extra_data)
-        if not expires and skip_old_tokens_threshold_seconds==0:
+        if not expires:
             log.debug("No `expires` or `expires_in` key found in token extra data, cannot refresh")
             return False
-
-        # do not refresh tokens if last token is too old
-        if int(user_authnz_token.extra_data["auth_time"]) + skip_old_tokens_threshold_seconds < int(time.time()):
-            raise Exception("Expired Tokens. User needs to sign in.")
 
         if not (
             int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2
@@ -219,23 +213,23 @@ class PSAAuthnz(IdentityProvider):
            return False
 
         lock_id = hash(user_authnz_token.provider) & 0x7FFFFFFF
-        if not try_lock(sa_session, lock_id):
+        if not try_lock(trans.sa_session, lock_id):
             log.debug("Another process is refreshing, skipping")
             return False
         else:
             log.debug("Acquired refresh lock")
         try:
-            on_the_fly_config(sa_session)
+            on_the_fly_config(trans.sa_session)
             if self.config["provider"] == "azure":
                 self.refresh_azure(user_authnz_token)
             else:
-                strategy = Strategy(None, sa_session, Storage, self.config)
+                strategy = Strategy(None, trans.sa_session, Storage, self.config)
                 user_authnz_token.refresh_token(strategy)
             log.debug(
                 f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
             )
         finally:
-            unlock(sa_session, lock_id)
+            unlock(trans.sa_session, lock_id)
 
         return True
 
