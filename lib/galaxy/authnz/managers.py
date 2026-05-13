@@ -309,10 +309,12 @@ class AuthnzManager:
                 msg = f"An error occurred when refreshing user token on `{auth.provider}` identity provider: {message}"
                 log.error(msg)
                 return False
-            backend.refresh(trans.sa_session, auth, 30)
+            backend.refresh(trans, auth)
             return True
         except Exception as e:
             log.exception(f"An error occurred when refreshing user token: {str(e)}")
+            # TODO: I believe we can get rid of this logout in Galaxy 26.0 due to their authentication refactoring. This needs to be tested and confirmed, though.
+            trans.handle_user_logout(logout_all=True)
             return False
 
     def refresh_expiring_oidc_tokens(self, trans, user=None):

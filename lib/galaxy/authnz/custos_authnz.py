@@ -117,7 +117,7 @@ class OIDCAuthnzBase(IdentityProvider):
     def _decode_token_no_signature(self, token):
         return jwt.decode(token, audience=self.config.client_id, options={"verify_signature": False})
 
-    def refresh(self, sa_session, custos_authnz_token, skip_old_tokens_threshold_days):
+    def refresh(self, trans, custos_authnz_token):
         if custos_authnz_token is None:
             raise exceptions.AuthenticationFailed("cannot find authorized user while refreshing token")
         id_token_decoded = self._decode_token_no_signature(custos_authnz_token.id_token)
@@ -132,13 +132,9 @@ class OIDCAuthnzBase(IdentityProvider):
             refresh_token_decoded = self._decode_token_no_signature(custos_authnz_token.refresh_token)
             # do not attempt to use refresh token that is already expired
             if int(refresh_token_decoded["exp"]) <= int(time.time()):
-                # in the future we might want to log out the user here
-                return False
+                raise Exception("Token has expired. User needs to sign in.")
         except jwt.exceptions.DecodeError:
-            # raise (and logout) if the current token is too old
-            skip_old_tokens_threshold_seconds = skip_old_tokens_threshold_days * 86400  # 86400 seconds in a day
-            if int(id_token_decoded["iat"]) + skip_old_tokens_threshold_seconds < int(time.time()):
-                raise Exception("Expired Tokens. User needs to sign in.")
+            pass
 
         oauth2_session = self._create_oauth2_session()
         token_endpoint = self.config.token_endpoint
@@ -155,7 +151,7 @@ class OIDCAuthnzBase(IdentityProvider):
 
         log.debug("Attempting to acquire refresh lock")
         lock_id = hash(custos_authnz_token.provider) & 0x7FFFFFFF
-        if not try_lock(sa_session, lock_id):
+        if not try_lock(trans.sa_session, lock_id):
             log.debug("Another process is refreshing, skipping")
             return False
         else:
@@ -177,14 +173,14 @@ class OIDCAuthnzBase(IdentityProvider):
             custos_authnz_token.expiration_time = processed_token["expiration_time"]
             custos_authnz_token.refresh_expiration_time = processed_token["refresh_expiration_time"]
 
-            sa_session.add(custos_authnz_token)
-            sa_session.commit()
+            trans.sa_session.add(custos_authnz_token)
+            trans.sa_session.commit()
 
             log.debug(
                 f"Refreshed user token for {custos_authnz_token.external_user_id} via `{custos_authnz_token.provider}` identity provider"
             )
         finally:
-            unlock(sa_session, lock_id)
+            unlock(trans.sa_session, lock_id)
 
         return True
 
