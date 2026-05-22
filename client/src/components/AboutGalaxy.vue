@@ -29,49 +29,19 @@ const versionUserDocumentationUrl = computed(() => {
 
 <template>
     <div v-if="isConfigLoaded" class="about-galaxy">
-        <Heading h1 :icon="['gxd', 'galaxyLogo']" size="lg">Help and Support</Heading>
         <div class="p-2">
             <Heading h2 separator size="md">Support</Heading>
-            <div v-if="config.wiki_url">
-                <ExternalLink :href="config.wiki_url">
-                    <strong v-localize>Community Hub</strong>
-                </ExternalLink>
-                <p v-localize>Join our community and explore tutorials on using Galaxy and enhance your skills.</p>
-            </div>
-            <div v-if="config.helpsite_url">
-                <ExternalLink :href="config.helpsite_url">
-                    <strong v-localize>Ask Questions & Find Answers</strong>
-                </ExternalLink>
-                <p v-localize>
-                    Visit the Galaxy Q&A website to find answers to your questions and connect with other users.
-                </p>
-            </div>
-            <div v-if="config.support_url">
-                <ExternalLink :href="config.support_url">
-                    <strong v-localize>Reach Out</strong>
-                </ExternalLink>
-                <p v-localize>Need help or want to teach and learn more about Galaxy? Feel free to reach out to us.</p>
-            </div>
-            <Heading v-localize h2 separator size="md">Help</Heading>
-            <div>
-                <RouterLink to="tours">
-                    <strong v-localize>Interactive Tours</strong>
-                </RouterLink>
-                <p v-localize>Discover and learn about Galaxy with our interactive tours.</p>
-            </div>
-            <div v-if="config.screencasts_url">
-                <ExternalLink :href="config.screencasts_url">
-                    <strong v-localize>Videos and Screencasts</strong>
-                </ExternalLink>
-                <p v-localize>Learn more about Galaxy by watching videos and screencasts.</p>
-            </div>
-            <div v-if="config.citation_url">
-                <ExternalLink :href="config.citation_url">
-                    <strong v-localize>How to Cite Us</strong>
-                </ExternalLink>
-                <p v-localize>View details on how to properly cite Galaxy.</p>
-            </div>
-            <Heading h2 separator size="md">Technical Details</Heading>
+            <p>
+                If you need support, then you can directly open a ticket in the
+                <ExternalLink :href="config.dashboard_url">
+                    <strong v-localize>NOVA Dashboard</strong>
+                </ExternalLink>,
+                or you can email
+                <ExternalLink :href="`mailto:${config.support_url}`">
+                    <strong v-localize>{{ config.support_url }}</strong>
+                </ExternalLink>.
+            </p>
+            <Heading h2 separator size="md">About NDIP and Galaxy</Heading>
             <div>
                 <!-- Galaxy version (detailed), with a link to the release notes -->
                 <ExternalLink :href="versionUserDocumentationUrl">
@@ -93,10 +63,19 @@ const versionUserDocumentationUrl = computed(() => {
                 </template>
             </div>
             <div>
-                <ExternalLink :href="apiDocsLink">
-                    <strong v-localize>API Documentation</strong>
+                <ExternalLink href="https://link.springer.com/chapter/10.1007/978-3-031-23606-8_9">
+                    <strong v-localize>How to Cite NDIP</strong>
                 </ExternalLink>
-                <p v-localize>Explore the Galaxy API.</p>
+                <p v-localize>
+                    If you find NDIP useful, please cite our SMC 2022 paper which also gives a high-level overview to
+                    the motivation and goals of the Neutrons Data Interpretation Platform.
+                </p>
+            </div>
+            <div v-if="config.citation_url">
+                <ExternalLink :href="config.citation_url">
+                    <strong v-localize>How to Cite Galaxy</strong>
+                </ExternalLink>
+                <p v-localize>View details on how to properly cite Galaxy.</p>
             </div>
             <div>
                 <License class="font-weight-bold" :license-id="galaxyLicense" />
@@ -110,6 +89,35 @@ const versionUserDocumentationUrl = computed(() => {
                 <p v-localize>
                     This Galaxy Server has specified Terms and Conditions that apply to use of the service.
                 </p>
+            </div>
+            <Heading h2 separator size="md">Documentation</Heading>
+            <div>
+                <ExternalLink href="/docs/">
+                    <strong v-localize>NDIP Documentation</strong>
+                </ExternalLink>
+            </div>
+            <div>
+                <ExternalLink :href="apiDocsLink">
+                    <strong v-localize>Galaxy API Documentation</strong>
+                </ExternalLink>
+                <p v-localize>Explore the Galaxy API.</p>
+            </div>
+            <div>
+                <RouterLink to="tours">
+                    <strong v-localize>Interactive Tours</strong>
+                </RouterLink>
+                <p v-localize>Discover and learn about Galaxy with our interactive tours.</p>
+            </div>
+            <div v-if="config.screencasts_url">
+                <ExternalLink :href="config.screencasts_url">
+                    <strong v-localize>Videos and Screencasts</strong>
+                </ExternalLink>
+                <p v-localize>Learn more about Galaxy by watching videos and screencasts.</p>
+            </div>
+            <Heading h2 separator size="md">Acknowledgement Statement</Heading>
+            <div>
+                This work was sponsored by the Laboratory Directed Research and Development Program of Oak
+                Ridge National Laboratory, managed by UT-Battelle, LLC, for the U.S. Department of Energy.
             </div>
         </div>
     </div>
