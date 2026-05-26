@@ -124,8 +124,8 @@ class OIDC(JSAppLauncher):
             )
             return trans.show_error_message(
                 f"Failed to handle authentication callback from {provider}. "
-                "Please try again, and if the problem persists, contact "
-                "the Galaxy instance admin"
+                "Please try clearing your browser data and logging in again. "
+                f"If the problem persists, contact email us at {trans.app.config.support_url}."
             )
         try:
             success, message, (redirect_url, user) = trans.app.authnz_manager.callback(
