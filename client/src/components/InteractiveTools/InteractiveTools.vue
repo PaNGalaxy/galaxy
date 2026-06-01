@@ -104,7 +104,7 @@ onMounted(() => {
             :items="activeTools"
             :filter="filter"
             @filtered="filtered">
-            <template v-slot:cell(actions)="row">
+            <!-- <template v-slot:cell(actions)="row">
                 <b-button
                     :id="createId('stop', row.item.id)"
                     v-b-tooltip.hover
@@ -114,7 +114,7 @@ onMounted(() => {
                     @click.stop="stopInteractiveTool(row.item.id, row.item.name)">
                     <FontAwesomeIcon :icon="faStop" />
                 </b-button>
-            </template>
+            </template> -->
             <template v-slot:cell(name)="row">
                 <a
                     :id="createId('link', row.item.id)"

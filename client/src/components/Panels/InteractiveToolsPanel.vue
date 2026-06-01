@@ -97,12 +97,12 @@ function openInteractiveTool(toolId: string) {
                                 title="Open in new tab">
                                 <FontAwesomeIcon :icon="faExternalLinkAlt" />
                             </a>
-                            <button
+                            <!-- <button
                                 class="btn btn-sm btn-link text-danger"
                                 title="Stop this interactive tool"
                                 @click="stopInteractiveTool(tool.id, tool.name)">
                                 <FontAwesomeIcon :icon="faStop" />
-                            </button>
+                            </button> -->
                         </div>
                     </div>
                 </div>

@@ -136,7 +136,7 @@ function onDisplay($event: MouseEvent) {
             @click.prevent.stop="emit('edit')">
             <icon icon="pen" />
         </BButton>
-        <BButton
+        <!-- <BButton
             v-if="isRunningInteractiveTool"
             v-b-tooltip.hover
             class="delete-btn px-1"
@@ -145,9 +145,9 @@ function onDisplay($event: MouseEvent) {
             variant="link"
             @click.stop="onDelete($event)">
             <FontAwesomeIcon :icon="faStop" />
-        </BButton>
+        </BButton> -->
         <BButton
-            v-else-if="writable && isHistoryItem && !isDeleted"
+            v-if="writable && isHistoryItem && !isDeleted"
             v-b-tooltip.hover
             :tabindex="isDataset ? '0' : '-1'"
             class="delete-btn px-1"
