@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { library } from "@fortawesome/fontawesome-svg-core";
-import { faBug, faChartBar, faInfoCircle, faLink, faRedo, faSitemap, faStop } from "@fortawesome/free-solid-svg-icons";
+import { faBug, faChartBar, faInfoCircle, faLink, faRedo, faSitemap, faSpinner, faStop } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BButton } from "bootstrap-vue";
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router/composables";
 
 import type { HDADetailed } from "@/api";
@@ -32,6 +32,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits(["toggleHighlights"]);
 
+const stopping = ref(false);
 const router = useRouter();
 
 const showDownloads = computed(() => {
@@ -99,10 +100,7 @@ function onRerun() {
 
 function onStop() {
     stopJob(props.item.creating_job);
-    var btn = document.querySelector(".stop-btn")
-    if (btn) {
-        btn!.classList.add("stopping-job");
-    }
+    stopping.value = true;
 }
 
 </script>
@@ -173,12 +171,14 @@ function onStop() {
 
                 <BButton
                     v-if="showStop"
+                    v-b-tooltip.hover
+                    :title="stopping ? `Stopping Job` : `Finish Job Early`"
                     class="stop-btn px-1"
-                    title="Finish Job Early"
                     size="sm"
                     variant="link"
                     @click.stop="onStop">
-                    <FontAwesomeIcon :icon="faStop" />
+                    <FontAwesomeIcon v-if="stopping" :icon="faSpinner" class="fa-spin" />
+                    <FontAwesomeIcon v-else :icon="faStop" />
                 </BButton>
 
                 <BButton
@@ -197,15 +197,3 @@ function onStop() {
         </div>
     </div>
 </template>
-
-<style scoped>
-.stopping-job {
-    animation: blink-animation .5s steps(5, start) infinite;
-}
-@keyframes blink-animation {
-    to {
-        visibility: hidden;
-    }
-}
-</style>
-
