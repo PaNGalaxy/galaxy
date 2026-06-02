@@ -137,13 +137,15 @@ class FastAPITokenExchange:
         if user is None:
             return self._error_response(f"No Galaxy user found for email: {email}")
 
-        if payload.exchange_to == "globus":
+        if payload.exchange_to == "globus_iri":
             try:
                 response, expires_at = self.get_globus_token(trans, user)
             except Exception as exc:
                 return self._error_response(str(exc))
+        elif payload.exchange_to == "globus_transfer":
+            return self._error_response(f"NDIP token exchange to: {payload.exchange_to} is not implemented.")
         else:
-            return self._error_response(f"Cannot exchange NDIP token to: {payload.exchange_to}")
+            return self._error_response(f"NDIP token exchange to: {payload.exchange_to} is not implemented.")
 
 #        job = self.__authorize_job_access(trans, job_id, job_key)
 #        trans.app.authnz_manager.refresh_expiring_oidc_tokens(trans, job.user)  # type: ignore[attr-defined]
