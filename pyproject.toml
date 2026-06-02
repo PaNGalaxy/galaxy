@@ -41,6 +41,7 @@ dependencies = [
     "fissix",
     "fs",
     "future>=1.0.0",  # Python 3.12 support
+    "globus_sdk",
     "gravity>=1.1.1",
     "gunicorn",
     "gxformat2>=0.21.0",
