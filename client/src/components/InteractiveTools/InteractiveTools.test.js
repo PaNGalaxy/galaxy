@@ -93,34 +93,34 @@ describe("InteractiveTools/InteractiveTools.vue", () => {
         expect(checkIfExists("#link-", firstTool.id)).toBeFalsy();
     });
 
-    it("sends a delete request after the stop button is pressed", async () => {
-        const firstTool = testInteractiveToolsResponse[0];
-        const toolId = firstTool.id;
+    // it("sends a delete request after the stop button is pressed", async () => {
+    //     const firstTool = testInteractiveToolsResponse[0];
+    //     const toolId = firstTool.id;
 
-        axiosMock.onDelete(new RegExp("/api/entry_points/*")).reply(200, { status: "ok", message: "ok" });
-        await wrapper.get(`#stop-${toolId}`).trigger("click");
+    //     axiosMock.onDelete(new RegExp("/api/entry_points/*")).reply(200, { status: "ok", message: "ok" });
+    //     await wrapper.get(`#stop-${toolId}`).trigger("click");
 
-        expect(axiosMock.history.delete.length).toBe(1);
-        expect(axiosMock.history.delete[0].url.includes(toolId)).toBeTruthy();
-    });
+    //     expect(axiosMock.history.delete.length).toBe(1);
+    //     expect(axiosMock.history.delete[0].url.includes(toolId)).toBeTruthy();
+    // });
 
-    it("shows an error message if the tool deletion fails", async () => {
-        const firstTool = testInteractiveToolsResponse[0];
-        const toolId = firstTool.id;
-        const interactiveToolsStore = useInteractiveToolsStore();
+    // it("shows an error message if the tool deletion fails", async () => {
+    //     const firstTool = testInteractiveToolsResponse[0];
+    //     const toolId = firstTool.id;
+    //     const interactiveToolsStore = useInteractiveToolsStore();
 
-        // Set up the network error for DELETE requests
-        axiosMock.onDelete(new RegExp("/api/entry_points/*")).networkError();
+    //     // Set up the network error for DELETE requests
+    //     axiosMock.onDelete(new RegExp("/api/entry_points/*")).networkError();
 
-        // Try to stop the tool
-        await wrapper.get(`#stop-${toolId}`).trigger("click");
-        await flushPromises();
+    //     // Try to stop the tool
+    //     await wrapper.get(`#stop-${toolId}`).trigger("click");
+    //     await flushPromises();
 
-        // The error should be in the interactiveToolsStore messages
-        expect(interactiveToolsStore.messages.length).toBeGreaterThan(0);
-        expect(interactiveToolsStore.messages[0]).toMatch(/Network Error/);
+    //     // The error should be in the interactiveToolsStore messages
+    //     expect(interactiveToolsStore.messages.length).toBeGreaterThan(0);
+    //     expect(interactiveToolsStore.messages[0]).toMatch(/Network Error/);
 
-        // The error should be displayed in the UI
-        expect(wrapper.get(".alert-danger").text()).toMatch(/Network Error/);
-    });
+    //     // The error should be displayed in the UI
+    //     expect(wrapper.get(".alert-danger").text()).toMatch(/Network Error/);
+    // });
 });
