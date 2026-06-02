@@ -333,7 +333,6 @@ class PulsarJobRunner(AsynchronousJobRunner):
             return None
         return self._update_job_state_for_status(job_state, status)
 
-
     def _update_job_for_status_details(self, job, job_wrapper, status_details):
         if not job.job_messages:
             job.job_messages = [status_details]
@@ -349,21 +348,26 @@ class PulsarJobRunner(AsynchronousJobRunner):
         self.sa_session.commit()
 
     def _update_job_state_for_status(
-        self,
-        job_state: AsynchronousJobState,
-        pulsar_status: Union[str, None],
-        full_status: Union[dict[str, Any], None] = None,
+            self,
+            job_state: AsynchronousJobState,
+            pulsar_status: Union[str, None],
+            full_status: Union[dict[str, Any], None] = None,
     ) -> Union[AsynchronousJobState, None]:
-        log.debug("(%s) Received status update: %s", job_state.job_id, pulsar_status)
         if pulsar_status in ["complete", "cancelled"]:
+            log.debug("%s (%s) Received status update: %s ", job_state.job_wrapper.job_id, job_state.job_id,
+                      pulsar_status)
             self.mark_as_finished(job_state)
             return None
         if job_state.job_wrapper.get_state() == model.Job.states.STOPPED:
+            log.debug("%s (%s) Received status update: %s ", job_state.job_wrapper.job_id, job_state.job_id,
+                      pulsar_status)
             client = self.get_client_from_state(job_state)
             client.kill()
             self.mark_as_finished(job_state)
             return None
         if pulsar_status in ["failed", "lost"]:
+            log.debug("%s (%s) Received status update: %s ", job_state.job_wrapper.job_id, job_state.job_id,
+                      pulsar_status)
             if pulsar_status == "failed":
                 message = FAILED_REMOTE_ERROR
             else:
@@ -372,6 +376,8 @@ class PulsarJobRunner(AsynchronousJobRunner):
                 self.fail_job(job_state, message=message, full_status=full_status)
             return None
         if pulsar_status == "running" and not job_state.running:
+            log.debug("%s (%s) Received status update: %s ", job_state.job_wrapper.job_id, job_state.job_id,
+                      pulsar_status)
             job_state.running = True
             job_state.job_wrapper.change_state(model.Job.states.RUNNING)
         return job_state
@@ -491,9 +497,9 @@ class PulsarJobRunner(AsynchronousJobRunner):
             # Set the job destination here (unlike other runners) because there are likely additional job destination
             # params from the Pulsar client.
             job_wrapper.set_job_destination(job_destination, external_id=external_job_id, flush=True, job=job)
-        except Exception:
+        except Exception as e:
             job_wrapper.fail("failure running job", exception=True)
-            log.exception("failure running job %d", job_wrapper.job_id)
+            log.exception("failure running job %d %e", job_wrapper.job_id, e)
             return
 
         pulsar_job_state = AsynchronousJobState(
@@ -666,15 +672,16 @@ class PulsarJobRunner(AsynchronousJobRunner):
                     params[key] = model.User.expand_user_properties(user, value)
 
         env = getattr(job_wrapper.job_destination, "env", [])
-        return self.get_client(params, job_id, env)
+        return self.get_client(params, job_id, None, env)
 
     def get_client_from_state(self, job_state: AsynchronousJobState) -> "BaseJobClient":
         job_destination_params = job_state.job_destination.params
-        job_id = job_state.job_wrapper.job_id  # we want the Galaxy ID here, job_state.job_id is the external one.
-        return self.get_client(job_destination_params, job_id)
+        job_id = job_state.job_wrapper.job_id
+        external_job_id = job_state.job_id
+        return self.get_client(job_destination_params, job_id, external_job_id)
 
     def get_client(
-        self, job_destination_params: dict[str, Any], job_id, env: Union[list, None] = None
+            self, job_destination_params: dict[str, Any], job_id, external_job_id=None, env: Union[list, None] = None
     ) -> "BaseJobClient":
         # Cannot use url_for outside of web thread.
         # files_endpoint = url_for( controller="job_files", job_id=encoded_job_id )
@@ -690,7 +697,8 @@ class PulsarJobRunner(AsynchronousJobRunner):
         job_key = self.app.security.encode_id(job_id, kind=secret)
         token_endpoint = f"{self.galaxy_url}/api/jobs/{encoded_job_id}/oidc-tokens?job_key={job_key}"
         get_client_kwds = dict(
-            job_id=str(job_id), files_endpoint=files_endpoint, token_endpoint=token_endpoint, env=env
+            job_id=str(job_id), external_job_id=str(external_job_id), files_endpoint=files_endpoint,
+            token_endpoint=token_endpoint, env=env
         )
         # Turn MutableDict into standard dict for pulsar consumption
         job_destination_params = dict(job_destination_params.items())
@@ -832,9 +840,10 @@ class PulsarJobRunner(AsynchronousJobRunner):
         else:
             # Remote kill
             pulsar_url = job.job_runner_name
-            job_id = job.job_runner_external_id
+            job_id = job.id
+            external_job_id = job.job_runner_external_id
             log.debug(f"Attempt remote Pulsar kill of job with url {pulsar_url} and id {job_id}")
-            client = self.get_client(job.destination_params, job_id)
+            client = self.get_client(job.destination_params, job_id, external_job_id)
             if soft_kill:
                 client.kill(soft_kill=soft_kill)
             else:
@@ -1131,6 +1140,13 @@ class PulsarKubernetesJobRunner(PulsarCoexecutionJobRunner):
     use_mq = True
     poll = True  # Poll so we can check API for pod IP for ITs.
     client_manager_kwargs = KUBERNETES_CLIENT_MANAGER_KWARGS
+
+
+class PulsarIRIJobRunner(PulsarCoexecutionJobRunner):
+    destination_defaults = {"iri_enabled": True, **COEXECUTION_DESTINATION_DEFAULTS}
+    use_mq = False
+    poll = True
+    client_manager_kwargs = {"iri_enabled": True}
 
 
 TES_DESTINATION_DEFAULTS: dict[str, Any] = {

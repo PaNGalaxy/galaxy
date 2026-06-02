@@ -4164,3 +4164,29 @@ class SanitizedString(str):
             core_schema.str_schema(),
             serialization=core_schema.to_string_ser_schema(),
         )
+
+class TokenExchangePayload(Model):
+    ndip_token: str
+    exchange_to: str
+
+class TokenExchangeResponse(BaseModel):
+    response: str = Field(
+        ...,
+        title="Response",
+        description="The response to the token exchange query.",
+    )
+    expires_at: Optional[float] = Field(
+        None,
+        title="Expires At",
+        description="Unix timestamp when the exchanged token expires.",
+    )
+    error_code: Optional[int] = Field(
+        ...,
+        title="Error Code",
+        description="The error code, if any, for the token exchange query.",
+    )
+    error_message: Optional[str] = Field(
+        ...,
+        title="Error Message",
+        description="The error message, if any, for the token exchange query.",
+    )
