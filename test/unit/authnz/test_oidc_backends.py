@@ -13,11 +13,13 @@ from unittest.mock import (
     patch,
 )
 
+import jwt
 import pytest
 from social_core.utils import setting_name
 
 from galaxy.authnz.cilogon import CILogonOpenIdConnect
 from galaxy.authnz.keycloak import KeycloakOpenIdConnect
+from galaxy.authnz.pingfed import PingfedOpenIdConnect
 from galaxy.authnz.psa_authnz import (
     associate_by_email_if_logged_in,
     check_user_creation_confirmation,
@@ -138,6 +140,49 @@ class TestKeycloakPKCE:
 
         assert "code_verifier" in params
         assert params["code_verifier"] == "verifier123"
+
+
+class TestPingfedExtraData:
+    def test_extra_data_preserves_expires_in(self):
+        strategy = MockStrategy()
+        backend = PingfedOpenIdConnect(strategy, redirect_uri="http://localhost/callback")
+        id_token = jwt.encode(
+            {"sub": "user-sub"},
+            "secret" * 6,
+            algorithm="HS256",
+        )
+        response = {
+            "access_token": "access-token",
+            "id_token": id_token,
+            "refresh_token": "refresh-token",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        }
+
+        extra_data = backend.extra_data(None, "user-sub", response, {}, {})
+
+        assert extra_data["refresh_token"] == "refresh-token"
+        assert extra_data["expires_in"] == 3600
+
+    def test_extra_data_calculates_expires_from_id_token(self):
+        strategy = MockStrategy()
+        backend = PingfedOpenIdConnect(strategy, redirect_uri="http://localhost/callback")
+        id_token = jwt.encode(
+            {"sub": "user-sub", "iat": 1710000000, "exp": 1710003600},
+            "secret" * 6,
+            algorithm="HS256",
+        )
+        response = {
+            "access_token": "access-token",
+            "id_token": id_token,
+            "refresh_token": "refresh-token",
+            "token_type": "Bearer",
+        }
+
+        extra_data = backend.extra_data(None, "user-sub", response, {}, {})
+
+        assert extra_data["refresh_token"] == "refresh-token"
+        assert extra_data["expires_in"] == 3600
 
 
 class TestKeycloakIDPHint:
