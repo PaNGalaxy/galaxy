@@ -129,8 +129,8 @@ class OIDC(BaseUIController):
             else:
                 error_msg = (
                     f"Failed to handle authentication callback from {provider}. "
-                    "Please try again, and if the problem persists, contact "
-                    "the Galaxy instance admin."
+                    "Please try clearing your browser data and logging in again, and if the problem persists, contact "
+                    "contact us at {trans.app.config.support_url}."
                 )
             redirect_to = trans.url_builder("/login/start", message=error_msg, status="danger")
             return trans.response.send_redirect(redirect_to)
