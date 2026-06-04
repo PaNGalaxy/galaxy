@@ -21,11 +21,13 @@ cat <<EOF
 '${0##*/} -unit (test_selector)'    for running unit tests on specified test path (using pytest selector syntax)
 '${0##*/} -selenium'                for running all selenium web tests (in lib/galaxy_test/selenium)
 '${0##*/} -selenium (test_selector)' for running specified selenium web tests (using pytest selector syntax)
+'${0##*/} -playwright'                 for running all end2end web tests (in lib/galaxy_test/selenium) using Playwright
+'${0##*/} -playwright (test_selector)' for running specified end2end web tests (using pytest selector syntax) using Playwright
 
 This wrapper script largely serves as a point documentation and convenience for
 running Galaxy's Python tests. All Python tests shipped with Galaxy can be run with
 pytest directly. Galaxy's client unit tests can be run with ``make client-test``
-or ``yarn`` directly as documented in detail in ``client/README.md``.
+or ``pnpm`` directly as documented in detail in ``client/README.md``.
 
 The main test types are as follows:
 
@@ -44,8 +46,7 @@ The main test types are as follows:
    quickly test just a component or a few components of Galaxy's backend code.
 - Selenium: These are full stack tests meant to test the Galaxy UI with real
    browsers and are located in lib/galaxy_test/selenium.
-- ToolShed: These are web tests that use the older Python web testing
-   framework twill to test ToolShed related functionality. These are
+- ToolShed: These are tests that test ToolShed related functionality. These are
    located in lib/tool_shed/test.
 
 Python testing is done via pytest. Specific tests can be selected
@@ -77,12 +78,44 @@ Run all selenium tests (Under Linux using Docker):
 Run a specific selenium test (under Linux or Mac OS X after installing geckodriver or chromedriver):
     ./run_tests.sh -selenium lib/galaxy_test/selenium/test_registration.py::TestRegistration::test_reregister_username_fails
 
-Run a selenium test against a running server while watching client (fastest iterating on client tests):
-    ./run.sh & # run Galaxy on 8080
-    make client-watch & # watch for client changes
-    export GALAXY_TEST_EXTERNAL=http://localhost:8080/  # Target tests at server.
+Run an end-to-end test using Selenium against a running server while watching client (fastest iterating on client tests):
+    GALAXY_SKIP_CLIENT_BUILD=1 GALAXY_RUN_WITH_TEST_TOOLS=1 ./run.sh & # run Galaxy on 8080 with test tools and skip client build
+    make client-dev-server & # watch for client changes and serve on 8081
+    export GALAXY_TEST_EXTERNAL=http://localhost:8081/  # Target tests at server.
     . .venv/bin/activate # source the virtualenv so can skip run_tests.sh.
     pytest lib/galaxy_test/selenium/test_workflow_editor.py::TestWorkflowEditor::test_data_input
+
+Some tests create new users but most tests can just use a single user - you can adjust
+these end-to-end tests to use a specific user by copying and updating the sample config:
+
+
+    cp lib/galaxy_test/selenium/jupyter/galaxy_selenium_context.yml.sample ./galaxy_selenium_context.yml
+    vi galaxy_selenium_context.yml  # edit user and password, target galaxy server, etc..
+
+Config keys map to environment variables:
+    local_galaxy_url    -> GALAXY_TEST_SELENIUM_URL
+    login_email         -> GALAXY_TEST_SELENIUM_USER_EMAIL
+    login_password      -> GALAXY_TEST_SELENIUM_USER_PASSWORD
+    admin_api_key       -> GALAXY_TEST_SELENIUM_ADMIN_API_KEY
+    selenium_galaxy_url -> GALAXY_TEST_EXTERNAL_FROM_SELENIUM
+
+If you've setup this config file, the file can be used with any end-to-end/selenium/playwright test by
+setting GALAXY_TEST_END_TO_END_CONFIG when calling pytest or run_tests.sh. So for example
+the last line in that previous example run could become:
+
+    GALAXY_TEST_END_TO_END_CONFIG=./galaxy_selenium_context.yml pytest lib/galaxy_test/selenium/test_workflow_editor.py::TestWorkflowEditor::test_data_input
+
+Run an end-to-end test using Playwright against a running server while watching client (fastest iterating on client tests):
+    GALAXY_SKIP_CLIENT_BUILD=1 GALAXY_RUN_WITH_TEST_TOOLS=1 ./run.sh & # run Galaxy on 8080 with test tools and skip client build
+    make client-dev-server & # watch for client changes and serve on 8081
+    export GALAXY_TEST_EXTERNAL=http://localhost:8081/  # Target tests at server.
+    . .venv/bin/activate # source the virtualenv so can skip run_tests.sh.
+    GALAXY_TEST_DRIVER_BACKEND=playwright pytest lib/galaxy_test/selenium/test_workflow_editor.py::TestWorkflowEditor::test_data_input
+
+Playwright will probably require a browser installation:
+
+    . .venv/bin/activate
+    playwright install --with-deps
 
 To run the tool tests for a specific framework test tool
 listed in test/functional/tools/sample_tool_conf.xml.
@@ -260,7 +293,9 @@ TOOL_SHED_TEST_TMP_DIR          Defaults to random /tmp directory - place for
                                 tool shed test server files to be placed.
 TOOL_SHED_TEST_OMIT_GALAXY      Do not launch a Galaxy server for tool shed
                                 testing.
-GALAXY_TEST_DISABLE_ACCESS_LOG  Do not log access messages
+GALAXY_TEST_DISABLE_ACCESS_LOG  Do not log access messages.
+GALAXY_TEST_LOG_LEVEL           Set Galaxy server log level for tests
+                                (default: DEBUG). E.g. WARNING to reduce output.
 GALAXY_TEST_AXE_SCRIPT_URL      URL of aXe script to use for accessibility testing.
 GALAXY_TEST_SKIP_AXE            Set this to '1' to skip aXe accessibilty testing when
                                 running selenium tests.
@@ -299,6 +334,10 @@ fi
 xunit_report_file=""
 structured_data_report_file=""
 structured_data_html=0
+# Detect blocking I/O in async handlers during tests via aiocop
+# (https://github.com/Feverup/aiocop).  Set to 0 to disable.
+GALAXY_TEST_AIOCOP=${GALAXY_TEST_AIOCOP:-1}
+export GALAXY_TEST_AIOCOP
 SKIP_CLIENT_BUILD=${GALAXY_SKIP_CLIENT_BUILD:-1}
 if [ "$SKIP_CLIENT_BUILD" = "1" ]; then
     skip_client_build="--skip-client-build"
@@ -362,6 +401,21 @@ do
           GALAXY_TEST_TOOL_CONF="lib/galaxy/config/sample/tool_conf.xml.sample,test/functional/tools/sample_tool_conf.xml"
           report_file="./run_selenium_tests.html"
           skip_client_build=""
+          if [ $# -gt 1 ]; then
+              selenium_script=$2
+              shift 2
+          else
+              selenium_script="./lib/galaxy_test/selenium"
+              shift 1
+          fi
+          ;;
+      -playwright|--playwright)
+          GALAXY_TEST_TOOL_CONF="lib/galaxy/config/sample/tool_conf.xml.sample,test/functional/tools/sample_tool_conf.xml"
+          GALAXY_TEST_DRIVER_BACKEND="playwright"
+          export GALAXY_TEST_DRIVER_BACKEND
+          report_file="./run_playwright_tests.html"
+          skip_client_build=""
+          install_playwright_browers=(chromium)
           if [ $# -gt 1 ]; then
               selenium_script=$2
               shift 2
@@ -502,6 +556,7 @@ do
             --ignore lib/tool_shed/webapp/controllers
             --ignore=lib/tool_shed/webapp/model/migrations/alembic/'
           generate_cwl_conformance_tests=1
+          install_playwright_browers=(chromium firefox)
           if [ $# -gt 1 ]; then
               unit_extra="$unit_extra $2"
               shift 2
@@ -588,6 +643,10 @@ fi
 
 setup_python
 
+if [ -n "$install_playwright_browers" ]; then
+    playwright install "${install_playwright_browers[@]}"
+fi
+
 if [ -n "$framework_test" ] || [ -n "$data_managers_test" ] ; then
     if [ -n "$test_id" ]; then
         selector="-k $test_id"
@@ -635,7 +694,7 @@ if [ -n "$generate_cwl_conformance_tests" ]; then
 fi
 export GALAXY_TEST_TOOL_CONF
 if [ "$coverage_arg" = '--with-coverage' ]; then
-    coverage_arg="--cov-report xml --cov-report term --cov=lib"
+    coverage_arg="--cov-report xml --cov=lib"
 fi
 if [ -n "$marker" ]; then
     marker_args=(-m "$marker")
@@ -646,6 +705,9 @@ args=(-v $debug $structured_data_args --html "$report_file" --self-contained-htm
 "$test_script" "${args[@]}"
 exit_status=$?
 echo "Testing complete. HTML report is in \"$report_file\"." 1>&2
+if [ -n "$coverage_arg" ] && [ -f .coverage ]; then
+    echo "Total coverage: $(coverage report --format=total)%" 1>&2
+fi
 if [ "$structured_data_html" = '1' ]; then
    python scripts/tests_markdown.py --output_path "${structured_data_report_file%.json}.html" "$structured_data_report_file"
 fi

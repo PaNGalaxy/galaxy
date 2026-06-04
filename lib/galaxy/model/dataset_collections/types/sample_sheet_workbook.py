@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import (
     cast,
+    Literal,
     Optional,
     Protocol,
     TYPE_CHECKING,
@@ -15,7 +16,6 @@ from pydantic import (
     BaseModel,
     Field,
 )
-from typing_extensions import Literal
 
 from galaxy.exceptions import RequestParameterInvalidException
 from galaxy.model.dataset_collections.rule_target_columns import (
@@ -47,7 +47,7 @@ from galaxy.model.dataset_collections.workbook_util import (
     ReadOnlyWorkbook,
     set_column_width,
 )
-from galaxy.schema.schema import SampleSheetColumnValueT
+from galaxy.tool_util_models.sample_sheet import SampleSheetColumnValueT
 from galaxy.util import (
     string_as_bool,
     string_as_bool_or_none,
@@ -601,7 +601,7 @@ def _list_to_sample_sheet_collection_type(input_collection_type: str) -> SampleS
     """
     # Pass through existing sample_sheet types unchanged
     if input_collection_type in SAMPLE_SHEET_COLLECTION_TYPES:
-        return cast(SampleSheetCollectionType, input_collection_type)
+        return input_collection_type
 
     # Convert list types to sample_sheet types
     if input_collection_type == "list":

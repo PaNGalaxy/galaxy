@@ -10,15 +10,15 @@
                         <b-form-radio-group
                             v-if="!hasLabels"
                             v-model="editor"
-                            v-b-tooltip.hover.bottom
+                            v-g-tooltip.hover.bottom
                             button-variant="outline-primary"
                             buttons
                             size="sm"
                             title="Editor"
                             :options="editorOptions" />
                         <slot name="buttons" />
-                        <b-button v-b-tooltip.hover.bottom title="Help" variant="link" role="button" @click="onHelp">
-                            <FontAwesomeIcon icon="question" />
+                        <b-button v-g-tooltip.hover.bottom title="Help" variant="link" role="button" @click="onHelp">
+                            <FontAwesomeIcon :icon="faQuestion" />
                         </b-button>
                     </div>
                 </div>
@@ -30,40 +30,41 @@
                     :markdown-text="markdownText"
                     :steps="steps"
                     :mode="mode"
+                    :hide-toolbox="hideToolbox"
                     @update="$emit('update', $event)" />
                 <CellEditor v-else :markdown-text="markdownText" :labels="labels" @update="$emit('update', $event)" />
             </div>
         </div>
-        <b-modal v-model="showHelpModal" hide-footer>
-            <template v-slot:modal-title>
-                <h2 v-if="mode === 'page'" class="mb-0">Markdown Help for Pages</h2>
-                <h2 v-else class="mb-0">Markdown Help for Invocation Reports</h2>
-            </template>
+        <GModal
+            :show.sync="showHelpModal"
+            size="medium"
+            fixed-height
+            :title="mode === 'page' ? 'Markdown Help for Pages' : 'Markdown Help for Invocation Reports'">
             <MarkdownHelp :mode="mode" />
-        </b-modal>
+        </GModal>
     </div>
 </template>
 
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faQuestion } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { computed, ref } from "vue";
 
+import type { DirectiveMode } from "./directives";
 import type { WorkflowLabel } from "./Editor/types";
 
+import GModal from "../BaseComponents/GModal.vue";
 import CellEditor from "./Editor/CellEditor.vue";
 import TextEditor from "./Editor/TextEditor.vue";
 import MarkdownHelp from "@/components/Markdown/MarkdownHelp.vue";
 
-library.add(faQuestion);
-
 const props = defineProps<{
     markdownText: string;
-    mode: "report" | "page";
+    mode: DirectiveMode;
     labels?: Array<WorkflowLabel>;
     steps?: Record<string, any>;
     title: string;
+    hideToolbox?: boolean;
 }>();
 
 const showHelpModal = ref<boolean>(false);

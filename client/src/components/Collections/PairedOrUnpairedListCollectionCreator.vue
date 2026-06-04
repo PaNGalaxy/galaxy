@@ -12,7 +12,7 @@ import { useAgGrid } from "@/composables/useAgGrid";
 import { usePairingDatasetTargetsStore } from "@/stores/collectionBuilderItemsStore";
 import localize from "@/utils/localization";
 
-import type { GenericPair } from "../History/adapters/buildCollectionModal";
+import type { GenericPair } from "../Collections/common/buildCollectionModal";
 import { stripExtension, useUpdateIdentifiersForRemoveExtensions } from "./common/stripExtension";
 import {
     type SupportedPairedOrPairedBuilderCollectionTypes,
@@ -474,12 +474,11 @@ async function attemptCreate() {
     } else {
         listIdentifiers = pairedListIdentifiers();
     }
-    let confirmed = false;
+    let confirmed: boolean | null = false;
     if (listIdentifiers.length == 0) {
         confirmed = await confirm("Are you sure you want to create a list with no entries?", {
             title: "Create an empty list",
-            okTitle: "Create",
-            okVariant: "primary",
+            okText: "Create",
         });
         if (!confirmed) {
             return;

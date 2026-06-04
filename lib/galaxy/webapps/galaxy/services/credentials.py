@@ -1,6 +1,6 @@
+from collections.abc import Callable
 from typing import (
     Any,
-    Callable,
     cast,
     Optional,
     Union,
@@ -453,8 +453,7 @@ class CredentialsService:
 
         user_cred_map, group_map, cred_map = self.credentials_manager.index_credentials(existing_user_credentials)
 
-        user_credentials = user_cred_map.get((service_name, service_version))
-        if user_credentials:
+        if user_credentials := user_cred_map.get((service_name, service_version)):
             user_credentials_id = user_credentials.id
         else:
             user_credentials_id = self.credentials_manager.add_user_credentials(

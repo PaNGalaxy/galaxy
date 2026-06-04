@@ -1,11 +1,12 @@
 import abc
 from typing import (
     Any,
+    Literal,
     Optional,
     TYPE_CHECKING,
 )
 
-from typing_extensions import Literal
+from starlette.datastructures import URL
 
 from galaxy.managers.context import ProvidesHistoryContext
 
@@ -72,6 +73,9 @@ class WorkRequestContext(ProvidesHistoryContext):
             self.__user_current_roles = super().get_current_user_roles()
         return self.__user_current_roles
 
+    def get_galaxy_session(self):
+        return self.galaxy_session
+
     def set_user(self, user):
         """Set the current user."""
         raise NotImplementedError("Cannot change users from a work request context.")
@@ -105,6 +109,11 @@ class GalaxyAbstractRequest:
     @abc.abstractmethod
     def get_cookie(self, name):
         """Return cookie."""
+
+    @property
+    @abc.abstractmethod
+    def url(self) -> URL:
+        """Full URL of the request."""
 
 
 class GalaxyAbstractResponse:

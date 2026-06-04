@@ -230,6 +230,8 @@ store configuration).
 
 ![galaxy.objectstore.templates.models](object_store_templates.png)
 
+For information on adding validation constraints to template variables, see the [Template Variable Validators](#template-variable-validators) section.
+
 ### Ready To Use Production Object Store Templates
 
 The templates are sufficiently generic that they may make sense for a variety of
@@ -425,9 +427,52 @@ configuration).
 
 ![](file_source_rspace_configuration.png)
 
+#### `ascp`
+
+The `ascp` file source plugin provides high-speed file downloads using the Aspera FASP protocol.
+It requires the `ascp` binary to be installed and accessible on the Galaxy server.
+
+Example configuration for EBI SRA downloads:
+
+```yaml
+- type: ascp
+  id: ebi_aspera
+  label: "EBI Aspera Downloads"
+  doc: "High-speed downloads from EBI SRA using Aspera FASP protocol"
+  ascp_path: "ascp" # Path to ascp binary
+  user: "era-fasp"
+  host: "fasp.sra.ebi.ac.uk"
+  port: 33001
+  rate_limit: "300m" # Transfer rate limit (e.g., "300m" for 300 Mbps)
+  disable_encryption: true # Disable encryption for maximum speed
+  # Retry and resume configuration (optional)
+  max_retries: 3
+  retry_base_delay: 2.0
+  retry_max_delay: 60.0
+  enable_resume: true
+  # SSH key content (required) - embed the key directly in the configuration
+  ssh_key_content: |
+    -----BEGIN RSA PRIVATE KEY-----
+    <YOUR ACTUAL SSH PRIVATE KEY CONTENT>
+    -----END RSA PRIVATE KEY-----
+  # SSH key passphrase. https://embl.service-now.com/kb?id=kb_article_view&sys_kb_id=4cc60cf8c398a610bf313dfc0501314c#mcetoc_1idpn4k0to
+  ssh_key_passphrase: sample_passphrase
+```
+
+The plugin is **download-only** and supports automatic retry with exponential backoff for transient
+network errors and can resume interrupted transfers. Both `ascp://` and `fasp://` URL schemes are supported.
+
+**SSH Key Configuration Note:** The plugin requires SSH key content (not file paths) because Galaxy jobs often
+run on clusters that don't mount Galaxy's root or configuration directories. The configuration block is copied
+to the job's directory, but referenced key paths wouldn't be accessible.
+
+**Note:** The plugin does not support browsing directories or uploading files (`writable: false`, `browsable: false`).
+
 ### YAML Syntax
 
 ![galaxy.files.templates.models](file_source_templates.png)
+
+For information on adding validation constraints to template variables, see the [Template Variable Validators](#template-variable-validators) section.
 
 ### Ready To Use Production File Source Templates
 
@@ -483,7 +528,7 @@ and you are comfortable with it storing your user's secrets.
 
 #### Allow Users to Define eLabFTW Instances as File Sources
 
-```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_elabftw.yaml
+```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_elabftw.yml
 :language: yaml
 ```
 
@@ -491,7 +536,7 @@ and you are comfortable with it storing your user's secrets.
 
 #### Allow Users to Define InvenioRDM Servers as File Sources
 
-```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_invenio.yaml
+```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_invenio.yml
 :language: yaml
 ```
 
@@ -499,7 +544,7 @@ and you are comfortable with it storing your user's secrets.
 
 #### Allow Users to Define Zenodo as File Source
 
-```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_zenodo.yaml
+```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_zenodo.yml
 :language: yaml
 ```
 
@@ -507,12 +552,11 @@ and you are comfortable with it storing your user's secrets.
 
 #### Allow Users to Define RSpace Instances as File Sources
 
-```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_rspace.yaml
+```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_rspace.yml
 :language: yaml
 ```
 
 ![Screenshot](user_file_source_form_full_rspace.png)
-
 
 ### Production OAuth 2.0 File Source Templates
 
@@ -582,6 +626,88 @@ a production Galaxy instance but Dropbox operates on a different scale.
 For more information on what Dropbox considers a "development" app versus a "production"
 app - checkout the [Dropbox documentation](https://www.dropbox.com/developers/reference/developer-guide#production-approval).
 
+#### OneDrive
+
+Once you have OAuth 2.0 client credentials from Microsoft Entra (called `oauth2_client_id`
+and `oauth2_client_secret` here), the following configurations can be used to enable
+OneDrive for your Galaxy instance.
+
+```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_onedrive.yml
+:language: yaml
+```
+or
+
+```{literalinclude} ../../../lib/galaxy/files/templates/examples/production_onedrive_full.yml
+:language: yaml
+```
+
+To use one of these templates, make the credentials available to Galaxy's web and job handler
+processes using the environment variables `GALAXY_ONEDRIVE_CLIENT_ID` and
+`GALAXY_ONEDRIVE_CLIENT_SECRET`. Jobs themselves do not need these values and should
+not receive them.
+If your Galaxy instance has Vault configured, you can use this Vault-backed variant instead:
+
+```{literalinclude} ../../../lib/galaxy/files/templates/examples/onedrive_client_secrets_in_vault.yml
+:language: yaml
+```
+
+The current OneDrive implementation supports two drive modes:
+
+- `drive_mode: appfolder`
+  This is the default and targets Microsoft Graph `special/approot`. Galaxy can
+  browse, download, upload, and create folders inside the application's dedicated
+  OneDrive app folder (`Apps/<Application Name>`). This mode should be paired
+  with delegated permission `Files.ReadWrite.AppFolder`.
+- `drive_mode: full`
+  This targets the user's full OneDrive root (`/me/drive/root`) instead of the
+  application folder. This mode requires broader delegated Microsoft Graph
+  permissions such as `Files.ReadWrite`.
+
+To configure Microsoft Entra app for this file source:
+
+1. Sign in to [Microsoft Azure](https://portal.azure.com/). Go to `Microsoft Entra ID` and open
+   `App Registrations`.
+2. Select `New registration`.
+3. Enter a recognizable application name for Galaxy, for example `Galaxy OneDrive`.
+4. Under `Supported account types`, choose the audience that matches your deployment.
+   If Galaxy users may connect both organizational Microsoft accounts and personal
+   Microsoft accounts, select `Any Entra ID tenant + Personal Microsoft accounts`.
+5. Under `Redirect URI`, choose platform type `Web` and enter your Galaxy callback URL:
+   `<your galaxy root>/oauth2_callback`.
+   For example, if Galaxy is available at `https://usegalaxy.eu`, use
+   `https://usegalaxy.eu/oauth2_callback`.
+   For local development this is often `http://localhost:8080/oauth2_callback`.
+6. Create the registration and open the app's `Overview` page.
+   Copy the `Application (client) ID` and expose it to Galaxy as
+   `GALAXY_ONEDRIVE_CLIENT_ID`.
+7. Open `Certificates & secrets > Client secrets`, create a new client secret,
+   and copy the generated secret value immediately.
+   Expose that value to Galaxy as `GALAXY_ONEDRIVE_CLIENT_SECRET`.
+   Microsoft only shows the full secret value once.
+8. Open `API permissions` and add Microsoft Graph delegated permissions.
+   For the default app-folder configuration, add `Files.ReadWrite.AppFolder`.
+   Also add `offline_access` so Galaxy can obtain refresh tokens for long-lived access.
+9. If your deployment uses `drive_mode: full` instead of the default `appfolder`,
+   add delegated permission `Files.ReadWrite` instead of `Files.ReadWrite.AppFolder`.
+   This must match the scope requested in the Galaxy template.
+
+After this setup, users connect their own OneDrive accounts through Galaxy's OAuth2
+flow. The client ID and client secret identify your Galaxy application to Microsoft,
+but file access is performed with per-user delegated access and refresh tokens.
+
+To configure full-drive access instead of the default app-folder mode, you need to
+change both the Galaxy yml config template and the Microsoft Entra app registration. 
+In Galaxy yml config, set `drive_mode: full` and request a broader OAuth scope such as
+`oauth2_scope: "offline_access Files.ReadWrite"`. In Microsoft Entra, grant the
+matching delegated Microsoft Graph permission (`Files.ReadWrite` instead of
+`Files.ReadWrite.AppFolder`). If only the Microsoft permission is widened and
+`drive_mode` remains `appfolder`, Galaxy will continue to operate only inside the
+application folder.
+
+This implementation currently uses Microsoft Graph's simple upload endpoint and
+does not yet implement resumable uploads for very large files, server-side pagination,
+or server-side search/sorting.
+
 ## Playing Nicer with Ansible
 
 Many large instances of Galaxy are configured with Ansible and much of the existing administrator
@@ -615,8 +741,8 @@ plugin templates.
 :language: yaml
 ```
 
--   https://github.com/ansible/ansible/pull/75306
--   https://stackoverflow.com/questions/12083319/add-custom-tokens-in-jinja2-e-g-somevar
+- https://github.com/ansible/ansible/pull/75306
+- https://stackoverflow.com/questions/12083319/add-custom-tokens-in-jinja2-e-g-somevar
 
 ## Jinja Template Reference
 
@@ -637,6 +763,8 @@ and the [list of builtin filters](https://jinja.palletsprojects.com/en/3.0.x/tem
 
 This is a typed dictionary object is populated with user supplied values defined via the the `variables` section of the configuration template and filled in by the user when they
 created a new object store or file source.
+
+For information on adding validation constraints to template variables, see the [Template Variable Validators](#template-variable-validators) section.
 
 ### `secrets`
 
@@ -712,6 +840,132 @@ on the simple minio example.
 ```{literalinclude} ../../../lib/galaxy/objectstore/templates/examples/minio_example.yml
 :language: yaml
 ```
+
+## Template Variable Validators
+
+Template variables can include optional validators to enforce constraints on user input. Validators ensure that users provide valid values when configuring file sources or object stores, providing clear error messages when validation fails.
+
+### Required vs optional template variables and secrets
+
+When defining `variables` and `secrets` in file source (and object store) templates, Galaxy follows **explicit rules**:
+
+- Variables and secrets are **required by default**.
+- A variable or secret is optional **only if** `optional: true` is explicitly set.
+- Defining a `default` value **does not** make a field optional.
+- Default values are applied **only** for variables or secrets marked as `optional: true`.
+- Validators are evaluated **only when a value is provided**; omitted optional fields are not validated.
+- Default values **are validated** when they are applied (i.e. for `optional: true` fields with a default).
+
+This explicit model avoids implicit behavior and makes template intent clear and predictable.
+
+### Validator Types
+
+Galaxy supports three types of validators that can be applied to template variables:
+
+#### `regex` - Pattern Matching
+
+Validates that a value matches (or doesn't match) a regular expression pattern.
+
+**Parameters:**
+
+- `type`: Must be `regex`
+- `expression`: The regular expression pattern to match
+- `message`: Error message shown when validation fails
+- `negate` (optional): If `true`, validation succeeds when the pattern does NOT match (default: `false`)
+
+**Example:**
+
+```yaml
+variables:
+  bucket:
+    label: Bucket Name
+    type: string
+    validators:
+      - type: regex
+        expression: '^(?!\s)(?!.*\s$).*$'
+        message: "Bucket name cannot have leading or trailing whitespace"
+      - type: regex
+        expression: "^.*[^/]$"
+        message: "Bucket name cannot end with a slash"
+```
+
+#### `length` - String Length Constraints
+
+Validates that a string value's length falls within specified bounds.
+
+**Parameters:**
+
+- `type`: Must be `length`
+- `min` (optional): Minimum allowed length (inclusive)
+- `max` (optional): Maximum allowed length (inclusive)
+- `message`: Error message shown when validation fails
+
+**Example:**
+
+```yaml
+variables:
+  username:
+    label: Username
+    type: string
+    validators:
+      - type: length
+        min: 3
+        max: 20
+        message: "Username must be between 3 and 20 characters"
+```
+
+#### `in_range` - Numeric Range Constraints
+
+Validates that a numeric value falls within specified bounds.
+
+**Parameters:**
+
+- `type`: Must be `in_range`
+- `min` (optional): Minimum allowed value (inclusive)
+- `max` (optional): Maximum allowed value (inclusive)
+- `message`: Error message shown when validation fails
+
+**Example:**
+
+```yaml
+variables:
+  port:
+    label: Port Number
+    type: integer
+    validators:
+      - type: range
+        min: 1
+        max: 65535
+        message: "Port must be between 1 and 65535"
+```
+
+### Multiple Validators
+
+You can apply multiple validators to a single variable. They are evaluated in order, and the first failing validator will stop validation and return its error message.
+
+**Example:**
+
+```yaml
+variables:
+  project_name:
+    label: Project Name
+    type: string
+    validators:
+      - type: length
+        min: 3
+        max: 50
+        message: "Project name must be between 3 and 50 characters"
+      - type: regex
+        expression: "^[a-zA-Z0-9_-]+$"
+        message: "Project name can only contain letters, numbers, hyphens, and underscores"
+```
+
+### Validator Behavior
+
+- Validators are **optional** - variables without validators accept any value (subject to type constraints)
+- Validators **skip empty values** - if a variable is optional and the user provides no value, validators are not run
+- Validators apply to **both frontend and backend** - validation happens in the UI for immediate feedback and on the server for security
+- **Clear error messages** help users understand what went wrong and how to fix it
 
 ## Connecting Configuration Templates to Secrets
 

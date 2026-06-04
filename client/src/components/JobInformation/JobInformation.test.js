@@ -1,8 +1,10 @@
-import "tests/jest/mockHelpPopovers";
+import "@tests/vitest/mockHelpPopovers";
 
+import { createTestingPinia } from "@pinia/testing";
+import { getLocalVue } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
-import { getLocalVue } from "tests/jest/helpers";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useServerMock } from "@/api/client/__mocks__";
 
@@ -10,7 +12,7 @@ import jobResponse from "./testData/jobInformationResponse.json";
 
 import JobInformation from "./JobInformation.vue";
 
-jest.mock("app");
+vi.mock("app");
 
 const JOB_ID = "test_id";
 const STDOUT_POSITION = 0;
@@ -69,6 +71,7 @@ describe("JobInformation/JobInformation.vue", () => {
         wrapper = mount(JobInformation, {
             propsData,
             localVue,
+            pinia: createTestingPinia({ createSpy: vi.fn }),
         });
         await flushPromises();
         jobInfoTable = wrapper.find("#job-information");

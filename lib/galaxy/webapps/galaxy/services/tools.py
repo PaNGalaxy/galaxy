@@ -6,10 +6,11 @@ from json import dumps
 from typing import (
     Any,
     cast,
-    Literal,
+    get_args,
     Optional,
     Union,
 )
+from uuid import UUID
 
 from starlette.datastructures import UploadFile
 
@@ -18,6 +19,7 @@ from galaxy import (
     util,
 )
 from galaxy.config import GalaxyAppConfiguration
+from galaxy.exceptions import RequestParameterInvalidException
 from galaxy.exceptions.utils import api_error_to_dict
 from galaxy.managers.collections_util import dictify_dataset_collection_instance
 from galaxy.managers.context import (
@@ -31,7 +33,6 @@ from galaxy.managers.tools import (
 )
 from galaxy.model import (
     LibraryDatasetDatasetAssociation,
-    PostJobAction,
     User,
 )
 from galaxy.schema.credentials import CredentialsContext
@@ -51,6 +52,7 @@ from galaxy.schema.fetch_data import (
 )
 from galaxy.schema.schema import CreateToolLandingRequestPayload
 from galaxy.security.idencoding import IdEncodingHelper
+from galaxy.tool_util.parameters import ToolParameterT
 from galaxy.tool_util_models.parameters import (
     CollectionElementCollectionRequestUri,
     CollectionElementDataRequestUri,
@@ -59,6 +61,7 @@ from galaxy.tool_util_models.parameters import (
     FileRequestUri,
 )
 from galaxy.tools import Tool
+from galaxy.tools._types import InputFormatT
 from galaxy.tools.search import ToolBoxSearch
 from galaxy.util.path import safe_contains
 from galaxy.webapps.galaxy.services._fetch_util import validate_and_normalize_targets
@@ -107,6 +110,17 @@ def file_landing_payload_to_fetch_targets(data_landing_payload: CreateFileLandin
 
     This function transforms data/collection requests (used in workflow landing and data request payloads) into the fetch API's target format.
     """
+    # Validate sample sheet metadata before conversion
+    for request_item in data_landing_payload.request_state:
+        if isinstance(request_item, DataRequestCollectionUri):
+            has_sample_sheet_metadata = request_item.column_definitions is not None or request_item.rows is not None
+            if has_sample_sheet_metadata:
+                collection_type = request_item.collection_type
+                if not collection_type.startswith("sample_sheet"):
+                    raise RequestParameterInvalidException(
+                        f"Sample sheet metadata (column_definitions, rows) can only be used with collection_type 'sample_sheet' or 'sample_sheet:<type>', not '{collection_type}'"
+                    )
+
     targets: list[Union[DataElementsTarget, HdcaDataItemsTarget]] = []
 
     for request_item in data_landing_payload.request_state:
@@ -172,6 +186,8 @@ def file_landing_payload_to_fetch_targets(data_landing_payload: CreateFileLandin
                     elements=elements,
                     collection_type=request_item.collection_type,
                     name=request_item.name,
+                    column_definitions=request_item.column_definitions,
+                    rows=request_item.rows,
                 )
             )
 
@@ -190,6 +206,18 @@ class ToolsService(ServiceBase):
         self.config = config
         self.toolbox_search = toolbox_search
         self.history_manager = history_manager
+
+    def curated_tool_tags_by_id(self, trans: ProvidesUserContext) -> dict[str, list[str]]:
+        """Return {tool_id: [tag, ...]} for currently-loaded tools that carry curated tags.
+
+        Sidecar for the My Tools panel; keeps `tool_tags` out of the bulk /api/tools
+        payload (and out of its cache key).
+        """
+        mapping: dict[str, list[str]] = {}
+        for _, tool in trans.app.toolbox.tools():
+            if tool.tool_tags:
+                mapping[tool.id] = list(tool.tool_tags)
+        return mapping
 
     def file_landing_to_tool_landing(
         self,
@@ -212,6 +240,7 @@ class ToolsService(ServiceBase):
             request_state=request_state,
             client_secret=file_landing_payload.client_secret,
             public=file_landing_payload.public,
+            origin=file_landing_payload.origin,
         )
 
     def data_landing_to_tool_landing(
@@ -234,7 +263,18 @@ class ToolsService(ServiceBase):
             request_state=request_state,
             client_secret=data_landing_payload.client_secret,
             public=data_landing_payload.public,
+            origin=data_landing_payload.origin,
         )
+
+    def inputs(
+        self,
+        trans: ProvidesHistoryContext,
+        tool_ref: ToolRunReference,
+    ) -> list[ToolParameterT]:
+        tool = get_tool(trans, tool_ref)
+        if tool.parameters is None:
+            raise exceptions.RequestParameterInvalidException("Tool input parameter schema could not be retrieved.")
+        return tool.parameters
 
     def create_fetch(
         self,
@@ -297,7 +337,9 @@ class ToolsService(ServiceBase):
             history_id = trans.security.decode_id(history_id) if isinstance(history_id, str) else history_id
             target_history = self.history_manager.get_mutable(history_id, trans.user, current_history=trans.history)
         else:
-            target_history = None
+            if trans.history is None:
+                raise exceptions.RequestParameterMissingException("A valid history is required to execute tools.")
+            target_history = trans.history
 
         # Set up inputs.
         inputs = payload.get("inputs", {})
@@ -326,9 +368,9 @@ class ToolsService(ServiceBase):
         preferred_object_store_id = payload.get("preferred_object_store_id")
         credentials_context = payload.get("credentials_context")
         input_format = str(payload.get("input_format", "legacy"))
-        if input_format not in ("legacy", "21.01"):
+        if input_format not in get_args(InputFormatT):
             raise exceptions.RequestParameterInvalidException(f"input_format invalid {input_format}")
-        input_format = cast(Literal["legacy", "21.01"], input_format)
+        input_format = cast(InputFormatT, input_format)  # https://github.com/python/mypy/issues/15106
         if "data_manager_mode" in payload:
             incoming["__data_manager_mode"] = payload["data_manager_mode"]
         tags = payload.get("__tags")
@@ -341,23 +383,8 @@ class ToolsService(ServiceBase):
             preferred_object_store_id=preferred_object_store_id,
             credentials_context=CredentialsContext(root=credentials_context) if credentials_context else None,
             tags=tags,
+            send_email_notification=inputs.get("send_email_notification", False),
         )
-
-        new_pja_flush = False
-        for job in vars.get("jobs", []):
-            if inputs.get("send_email_notification", False):
-                # Unless an anonymous user is invoking this via the API it
-                # should never be an option, but check and enforce that here
-                if trans.user is None:
-                    raise exceptions.ToolExecutionError("Anonymously run jobs cannot send an email notification.")
-                else:
-                    job_email_action = PostJobAction("EmailAction")
-                    job.add_post_job_action(job_email_action)
-                    new_pja_flush = True
-
-        if new_pja_flush:
-            trans.sa_session.commit()
-
         return self._handle_inputs_output_to_api_response(trans, tool, target_history, vars)
 
     def _handle_inputs_output_to_api_response(self, trans, tool, target_history, vars) -> JobCreateResponse:
@@ -468,12 +495,14 @@ class ToolsService(ServiceBase):
     def _get_tool(
         self, trans: ProvidesUserContext, id, tool_version=None, tool_uuid=None, user: Optional[User] = None
     ) -> Tool:
+        if tool_uuid:
+            try:
+                UUID(tool_uuid)
+            except ValueError:
+                raise exceptions.RequestParameterInvalidException(f"Invalid tool_uuid '{tool_uuid}'.")
         tool = trans.app.toolbox.get_tool(id, tool_version)
         if not tool:
-            if user:
-                # FIXME: id as tool_uuid is for raw_tool_source endpoint, port to fastapi and fix
-                if id == tool_uuid:
-                    id = None
+            if user and (id or tool_uuid):
                 tool = trans.app.toolbox.get_tool(user=user, tool_id=id, tool_uuid=tool_uuid)
                 if tool:
                     return tool

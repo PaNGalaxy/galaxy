@@ -25,6 +25,7 @@ from galaxy.security.validate_user_input import (
     validate_publicname,
 )
 from galaxy.structured_app import StructuredApp
+from galaxy.util import now
 from galaxy.web import (
     expose_api_anonymous_and_sessionless,
     url_for,
@@ -246,7 +247,7 @@ class User(BaseUIController, UsesFormDefinitionsMixin):
         #  Activation is forced and the user is not active yet. Check the grace period.
         activation_grace_period = trans.app.config.activation_grace_period
         delta = timedelta(hours=int(activation_grace_period))
-        time_difference = datetime.utcnow() - create_time
+        time_difference = now() - create_time
         return time_difference > delta or activation_grace_period == 0
 
     @web.expose
@@ -285,7 +286,7 @@ class User(BaseUIController, UsesFormDefinitionsMixin):
         """
         params = util.Params(kwd, sanitize=False)
         activation_token = params.get("activation_token", None)
-        index_url = web.url_for(controller="root", action="index")
+        index_url = web.url_for("/")
         invalid_link_message = f"You are using an invalid activation link. Try to log in and we will send you a new activation email. <br><a href='{index_url}'>Go to login page.</a>"
 
         email = params.get("email", None)

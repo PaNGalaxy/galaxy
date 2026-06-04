@@ -220,7 +220,7 @@ class WebApplication:
         else:
             environ["is_api_request"] = False
             controllers = self.controllers
-        if map_match is None:
+        if not map_match:
             raise webob.exc.HTTPNotFound(f"No route for {path_info}")
         self.trace(path_info=path_info, map_match=map_match)
         # Setup routes
@@ -264,14 +264,17 @@ class WebApplication:
             f"{'api' if environ['is_api_request'] else 'web'}.{controller_name}.{action_tag}"
         )
         # Combine mapper args and query string / form args and call
-        kwargs = trans.request.params.mixed()
+        try:
+            kwargs = trans.request.params.mixed()
+        except UnicodeDecodeError:
+            raise webob.exc.HTTPBadRequest("Unable to decode request parameters.")
         kwargs.update(map_match)
         # Special key for AJAX debugging, remove to avoid confusing methods
         kwargs.pop("_", None)
         try:
             body = method(trans, **kwargs)
         except Exception as e:
-            body = self.handle_controller_exception(e, trans, method, **kwargs)
+            body = self.handle_controller_exception(e, trans, method, kwargs)
             if not body:
                 trans.response.headers.pop("content-length", None)
                 raise
@@ -307,7 +310,7 @@ class WebApplication:
             # Worst case scenario
             return [smart_str(body)]
 
-    def handle_controller_exception(self, e, trans, method, **kwargs):
+    def handle_controller_exception(self, e, trans, method, kwargs):
         """
         Allow handling of exceptions raised in controller methods.
         """
@@ -439,7 +442,10 @@ class Request(webob.Request):
         cookies = SimpleCookie()
         if cookie_header := self.environ.get("HTTP_COOKIE"):
             all_cookies = webob.cookies.parse_cookie(cookie_header)
-            galaxy_cookies = {k.decode(): v.decode() for k, v in all_cookies if k.startswith(b"galaxy")}
+            try:
+                galaxy_cookies = {k.decode(): v.decode() for k, v in all_cookies if k.startswith(b"galaxy")}
+            except UnicodeDecodeError:
+                galaxy_cookies = {}
             if galaxy_cookies:
                 try:
                     cookies.load(galaxy_cookies)

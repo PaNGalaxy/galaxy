@@ -1,15 +1,16 @@
 from typing import (
     Annotated,
     Any,
+    Literal,
     Optional,
     Union,
 )
 
 from pydantic import (
     Field,
+    model_validator,
     RootModel,
 )
-from typing_extensions import Literal
 
 from galaxy.util.config_templates import (
     ConfiguredOAuth2Sources,
@@ -36,16 +37,21 @@ FileSourceTemplateType = Literal[
     "posix",
     "s3fs",
     "azure",
+    "azureflat",
     "onedata",
     "webdav",
     "dropbox",
     "googledrive",
+    "onedrive",
     "elabftw",
     "inveniordm",
     "zenodo",
     "rspace",
     "dataverse",
     "huggingface",
+    "iiif",
+    "omero",
+    "ssh",
 ]
 
 
@@ -111,6 +117,25 @@ class GoogleDriveFileSourceConfiguration(OAuth2FileSourceConfiguration, StrictMo
     oauth2_access_token: str
 
 
+class OneDriveFileSourceTemplateConfiguration(OAuth2TemplateConfiguration, StrictModel):
+    type: Literal["onedrive"]
+    writable: Union[bool, TemplateExpansion] = False
+    oauth2_client_id: Union[str, TemplateExpansion]
+    oauth2_client_secret: Union[str, TemplateExpansion]
+    # Microsoft Graph app-folder scope keeps access limited to Apps/<Application Name>.
+    oauth2_scope: Optional[Union[str, TemplateExpansion]] = None
+    drive_mode: Union[Literal["appfolder", "full"], TemplateExpansion] = "appfolder"
+    template_start: Optional[str] = None
+    template_end: Optional[str] = None
+
+
+class OneDriveFileSourceConfiguration(OAuth2FileSourceConfiguration, StrictModel):
+    type: Literal["onedrive"]
+    writable: bool = False
+    oauth2_access_token: str
+    drive_mode: Literal["appfolder", "full"] = "appfolder"
+
+
 class S3FSFileSourceTemplateConfiguration(StrictModel):
     type: Literal["s3fs"]
     endpoint_url: Optional[Union[str, TemplateExpansion]] = None
@@ -121,6 +146,7 @@ class S3FSFileSourceTemplateConfiguration(StrictModel):
     writable: Union[bool, TemplateExpansion] = False
     template_start: Optional[str] = None
     template_end: Optional[str] = None
+    request_checksum_calculation: Optional[Union[str, TemplateExpansion, None]] = None
 
 
 class S3FSFileSourceConfiguration(StrictModel):
@@ -131,6 +157,7 @@ class S3FSFileSourceConfiguration(StrictModel):
     key: Optional[str] = None
     bucket: Optional[str] = None
     writable: bool = False
+    request_checksum_calculation: Optional[str] = None
 
 
 class FtpFileSourceTemplateConfiguration(StrictModel):
@@ -140,6 +167,7 @@ class FtpFileSourceTemplateConfiguration(StrictModel):
     user: Optional[Union[str, TemplateExpansion]] = None
     passwd: Optional[Union[str, TemplateExpansion]] = None
     writable: Union[bool, TemplateExpansion] = False
+    tls: Union[bool, TemplateExpansion] = False
     template_start: Optional[str] = None
     template_end: Optional[str] = None
 
@@ -150,6 +178,35 @@ class FtpFileSourceConfiguration(StrictModel):
     port: int = 21
     user: Optional[str] = None
     passwd: Optional[str] = None
+    writable: bool = False
+    tls: bool = False
+
+
+class SshFileSourceTemplateConfiguration(StrictModel):
+    type: Literal["ssh"]
+    host: Union[str, TemplateExpansion]
+    user: Optional[Union[str, TemplateExpansion]] = None
+    passwd: Optional[Union[str, TemplateExpansion]] = None
+    pkey: Optional[Union[str, TemplateExpansion]] = None
+    timeout: Union[int, TemplateExpansion] = 10
+    port: Union[int, TemplateExpansion] = 22
+    compress: Union[bool, TemplateExpansion] = False
+    path: Union[str, TemplateExpansion]
+    writable: Union[bool, TemplateExpansion] = False
+    template_start: Optional[str] = None
+    template_end: Optional[str] = None
+
+
+class SshFileSourceConfiguration(StrictModel):
+    type: Literal["ssh"]
+    host: str
+    user: Optional[str] = None
+    passwd: Optional[str] = None
+    pkey: Optional[str] = None
+    timeout: int = 10
+    port: int = 22
+    compress: bool = False
+    path: str
     writable: bool = False
 
 
@@ -173,6 +230,24 @@ class AzureFileSourceConfiguration(StrictModel):
     writable: bool = False
 
 
+class AzureFlatFileSourceTemplateConfiguration(StrictModel):
+    type: Literal["azureflat"]
+    account_name: Union[str, TemplateExpansion]
+    container_name: Union[str, TemplateExpansion, None] = None
+    account_key: Union[str, TemplateExpansion]
+    writable: Union[bool, TemplateExpansion] = False
+    template_start: Optional[str] = None
+    template_end: Optional[str] = None
+
+
+class AzureFlatFileSourceConfiguration(StrictModel):
+    type: Literal["azureflat"]
+    account_name: str
+    container_name: Optional[str] = None
+    account_key: str
+    writable: bool = False
+
+
 class OnedataFileSourceTemplateConfiguration(StrictModel):
     type: Literal["onedata"]
     access_token: Union[str, TemplateExpansion]
@@ -191,9 +266,22 @@ class OnedataFileSourceConfiguration(StrictModel):
     writable: bool = False
 
 
-class WebdavFileSourceTemplateConfiguration(StrictModel):
+class WebdavConfigMixin:
+    @model_validator(mode="before")
+    @classmethod
+    def ensure_base_url(cls, data: Any) -> Any:
+        # Accept the version-0 WebDAV template's `url` field as an alias of
+        # `base_url` so that v0 templates and any persisted v0 rendered configs
+        # continue to validate after the rename.
+        if isinstance(data, dict) and "base_url" not in data and "url" in data:
+            data = dict(data)
+            data["base_url"] = data.pop("url")
+        return data
+
+
+class WebdavFileSourceTemplateConfiguration(WebdavConfigMixin, StrictModel):
     type: Literal["webdav"]
-    url: Union[str, TemplateExpansion]
+    base_url: Union[str, TemplateExpansion]
     root: Union[str, TemplateExpansion]
     login: Union[str, TemplateExpansion]
     password: Union[str, TemplateExpansion]
@@ -202,9 +290,9 @@ class WebdavFileSourceTemplateConfiguration(StrictModel):
     template_end: Optional[str] = None
 
 
-class WebdavFileSourceConfiguration(StrictModel):
+class WebdavFileSourceConfiguration(WebdavConfigMixin, StrictModel):
     type: Literal["webdav"]
-    url: str
+    base_url: str
     root: str
     login: str
     password: str
@@ -311,22 +399,59 @@ class HuggingFaceFileSourceConfiguration(StrictModel):
     endpoint: Optional[str] = None
 
 
+class IIIFFileSourceTemplateConfiguration(StrictModel):
+    type: Literal["iiif"]
+    manifest_url: Union[str, TemplateExpansion]
+    template_start: Optional[str] = None
+    template_end: Optional[str] = None
+
+
+class IIIFFileSourceConfiguration(StrictModel):
+    type: Literal["iiif"]
+    manifest_url: str
+
+
+class OmeroFileSourceTemplateConfiguration(StrictModel):
+    type: Literal["omero"]
+    username: Union[str, TemplateExpansion]
+    password: Union[str, TemplateExpansion]
+    host: Union[str, TemplateExpansion]
+    port: Union[int, TemplateExpansion] = 4064
+    writable: Union[bool, TemplateExpansion] = False
+    template_start: Optional[str] = None
+    template_end: Optional[str] = None
+
+
+class OmeroFileSourceConfiguration(StrictModel):
+    type: Literal["omero"]
+    username: str
+    password: str
+    host: str
+    port: int = 4064
+    writable: bool = False
+
+
 FileSourceTemplateConfiguration = Annotated[
     Union[
         PosixFileSourceTemplateConfiguration,
         S3FSFileSourceTemplateConfiguration,
         FtpFileSourceTemplateConfiguration,
         AzureFileSourceTemplateConfiguration,
+        AzureFlatFileSourceTemplateConfiguration,
         OnedataFileSourceTemplateConfiguration,
         WebdavFileSourceTemplateConfiguration,
         DropboxFileSourceTemplateConfiguration,
         GoogleDriveFileSourceTemplateConfiguration,
+        OneDriveFileSourceTemplateConfiguration,
         eLabFTWFileSourceTemplateConfiguration,
         InvenioFileSourceTemplateConfiguration,
         ZenodoFileSourceTemplateConfiguration,
         RSpaceFileSourceTemplateConfiguration,
         DataverseFileSourceTemplateConfiguration,
         HuggingFaceFileSourceTemplateConfiguration,
+        IIIFFileSourceTemplateConfiguration,
+        OmeroFileSourceTemplateConfiguration,
+        SshFileSourceTemplateConfiguration,
     ],
     Field(discriminator="type"),
 ]
@@ -337,16 +462,21 @@ FileSourceConfiguration = Annotated[
         S3FSFileSourceConfiguration,
         FtpFileSourceConfiguration,
         AzureFileSourceConfiguration,
+        AzureFlatFileSourceConfiguration,
         OnedataFileSourceConfiguration,
         WebdavFileSourceConfiguration,
         DropboxFileSourceConfiguration,
         GoogleDriveFileSourceConfiguration,
+        OneDriveFileSourceConfiguration,
         eLabFTWFileSourceConfiguration,
         InvenioFileSourceConfiguration,
         ZenodoFileSourceConfiguration,
         RSpaceFileSourceConfiguration,
         DataverseFileSourceConfiguration,
         HuggingFaceFileSourceConfiguration,
+        IIIFFileSourceConfiguration,
+        OmeroFileSourceConfiguration,
+        SshFileSourceConfiguration,
     ],
     Field(discriminator="type"),
 ]
@@ -415,16 +545,21 @@ TypesToConfigurationClasses: dict[FileSourceTemplateType, type[FileSourceConfigu
     "posix": PosixFileSourceConfiguration,
     "s3fs": S3FSFileSourceConfiguration,
     "azure": AzureFileSourceConfiguration,
+    "azureflat": AzureFlatFileSourceConfiguration,
     "onedata": OnedataFileSourceConfiguration,
     "webdav": WebdavFileSourceConfiguration,
     "dropbox": DropboxFileSourceConfiguration,
     "googledrive": GoogleDriveFileSourceConfiguration,
+    "onedrive": OneDriveFileSourceConfiguration,
     "elabftw": eLabFTWFileSourceConfiguration,
     "inveniordm": InvenioFileSourceConfiguration,
     "zenodo": ZenodoFileSourceConfiguration,
     "rspace": RSpaceFileSourceConfiguration,
     "dataverse": DataverseFileSourceConfiguration,
     "huggingface": HuggingFaceFileSourceConfiguration,
+    "iiif": IIIFFileSourceConfiguration,
+    "omero": OmeroFileSourceConfiguration,
+    "ssh": SshFileSourceConfiguration,
 }
 
 
@@ -439,6 +574,12 @@ OAUTH2_CONFIGURED_SOURCES: ConfiguredOAuth2Sources = {
         authorize_params={"access_type": "offline", "prompt": "consent"},
         token_url="https://oauth2.googleapis.com/token",
         scope="https://www.googleapis.com/auth/drive.file",
+    ),
+    "onedrive": OAuth2Configuration(
+        authorize_url="https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        token_url="https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        authorize_params={},
+        scope="offline_access Files.ReadWrite.AppFolder",
     ),
 }
 

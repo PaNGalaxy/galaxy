@@ -12,6 +12,7 @@ import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BLink } from "bootstrap-vue";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { computed } from "vue";
+import { useRouter } from "vue-router/composables";
 
 import type { UserNotification } from "@/api/notifications";
 import type { CardAction } from "@/components/Common/GCard.types";
@@ -32,12 +33,36 @@ const props = defineProps<{
 const emit = defineEmits(["select"]);
 
 const notificationsStore = useNotificationsStore();
+const router = useRouter();
 
-const { renderMarkdown } = useMarkdown({ openLinksInNewPage: true });
+const { renderMarkdown } = useMarkdown({ openLinksInNewPage: false });
+
+function handleMessageClick(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    const anchor = target.closest("a");
+
+    if (anchor) {
+        const href = anchor.getAttribute("href");
+        if (href) {
+            // Check if this is an internal link (same origin or relative path)
+            try {
+                const url = new URL(href, window.location.origin);
+                if (url.origin === window.location.origin) {
+                    event.preventDefault();
+                    router.push(url.pathname + url.search + url.hash);
+                }
+            } catch {
+                // If URL parsing fails, let the browser handle it
+            }
+        }
+    }
+}
 
 const title = computed(() => {
     if (props.notification.category === "new_shared_item") {
         return `${sharedItemType.value} shared with you by ${props.notification.content.owner_name}`;
+    } else if (props.notification.category === "storage_operation") {
+        return props.notification.content.subject;
     } else {
         return props.notification.content.subject;
     }
@@ -45,7 +70,12 @@ const title = computed(() => {
 
 const titleIcon = computed(() => {
     return {
-        icon: props.notification.category === "new_shared_item" ? faRetweet : faInbox,
+        icon:
+            props.notification.category === "new_shared_item"
+                ? faRetweet
+                : props.notification.category === "storage_operation"
+                  ? faHourglassHalf
+                  : faInbox,
         class: `text-${notificationVariant.value}`,
     };
 });
@@ -138,11 +168,10 @@ function markNotificationAsSeen() {
         @select="emit('select', [props.notification])">
         <template v-slot:description>
             <template v-if="props.notification.category === 'new_shared_item'">
-                <span>The user</span>
-                <b>{{ props.notification.content.owner_name }}</b>
-                <span>shared </span>
+                <span>The user</span>{{ " " }}<b>{{ props.notification.content.owner_name }}</b
+                >{{ " " }}<span>shared </span>
                 <BLink
-                    v-b-tooltip.bottom
+                    v-g-tooltip.bottom
                     :title="`View ${props.notification.content.item_type} in new tab`"
                     class="text-primary"
                     :href="absPath(props.notification.content.slug)"
@@ -151,11 +180,39 @@ function markNotificationAsSeen() {
                     {{ props.notification.content.item_name }}
                     <FontAwesomeIcon :icon="faExternalLinkAlt" fixed-width size="sm" />
                 </BLink>
-                <em>{{ props.notification.content.item_type }}</em>
-                <span> with you.</span>
+                <em>{{ props.notification.content.item_type }}</em
+                >{{ " " }}<span> with you.</span>
+            </template>
+            <template v-else-if="props.notification.category === 'storage_operation'">
+                <p>
+                    {{ props.notification.content.message }}
+                </p>
+                <p class="mb-1">
+                    <strong>Mode:</strong> {{ props.notification.content.mode }}
+                    <span class="mx-2">|</span>
+                    <strong>State:</strong> {{ props.notification.content.state }}
+                </p>
+                <p class="mb-1">
+                    <strong>Total:</strong> {{ props.notification.content.total_count }}
+                    <span class="mx-2">|</span>
+                    <strong>Succeeded:</strong> {{ props.notification.content.succeeded_count }}
+                    <span class="mx-2">|</span>
+                    <strong>Failed:</strong> {{ props.notification.content.failed_count }}
+                    <span class="mx-2">|</span>
+                    <strong>Skipped:</strong> {{ props.notification.content.skipped_count }}
+                </p>
+                <BLink
+                    class="text-primary"
+                    :href="props.notification.content.run_url"
+                    @click="markNotificationAsSeen()">
+                    Open storage operation run status
+                </BLink>
             </template>
             <template v-else>
-                <span class="notification-message" v-html="renderMarkdown(props.notification.content.message)" />
+                <span
+                    class="notification-message"
+                    @click="handleMessageClick"
+                    v-html="renderMarkdown(props.notification.content.message)" />
             </template>
         </template>
     </GCard>

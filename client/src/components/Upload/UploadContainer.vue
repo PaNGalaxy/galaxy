@@ -1,25 +1,27 @@
 <script setup>
-import { BAlert, BTab, BTabs } from "bootstrap-vue";
-import { getDatatypesMapper } from "components/Datatypes";
-import LoadingSpan from "components/LoadingSpan";
+import { BAlert } from "bootstrap-vue";
+import { storeToRefs } from "pinia";
+import { computed, onMounted, ref } from "vue";
+
+import { canMutateHistory } from "@/api";
+import { getDatatypesMapper } from "@/components/Datatypes";
 import {
     AUTO_EXTENSION,
     DEFAULT_DBKEY,
     DEFAULT_EXTENSION,
     getUploadDatatypes,
     getUploadDbKeys,
-} from "components/Upload/utils";
-import { storeToRefs } from "pinia";
-import { computed, onMounted, ref } from "vue";
-
-import { canMutateHistory } from "@/api";
+} from "@/components/Upload/utils";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useUploadStore } from "@/stores/uploadStore";
-import { uploadPayload } from "@/utils/upload-payload.js";
+import { buildLegacyPayload } from "@/utils/upload";
 
-import CompositeBox from "./CompositeBox";
-import DefaultBox from "./DefaultBox";
-import RulesInput from "./RulesInput";
+import CompositeBox from "./CompositeBox.vue";
+import DefaultBox from "./DefaultBox.vue";
+import RulesInput from "./RulesInput.vue";
+import GTab from "@/components/BaseComponents/GTab.vue";
+import GTabs from "@/components/BaseComponents/GTabs.vue";
+import LoadingSpan from "@/components/LoadingSpan.vue";
 
 const props = defineProps({
     auto: {
@@ -74,7 +76,7 @@ const props = defineProps({
     },
 });
 
-const collectionTabActive = ref(null);
+const currentTab = ref(0);
 const extensionsSet = ref(false);
 const datatypesMapper = ref(null);
 const datatypesMapperReady = ref(false);
@@ -82,7 +84,29 @@ const dbKeysSet = ref(false);
 const listExtensions = ref([]);
 const listDbKeys = ref([]);
 const regular = ref(null);
-const regularTabActive = ref(null);
+
+// Tab indices shift based on which tabs are visible, so compute them dynamically
+const regularTabIndex = computed(() => (showRegular.value ? 0 : -1));
+const _compositeTabIndex = computed(() => {
+    let idx = 0;
+    if (showRegular.value) {
+        idx++;
+    }
+    return showComposite.value ? idx : -1;
+});
+const collectionTabIndex = computed(() => {
+    let idx = 0;
+    if (showRegular.value) {
+        idx++;
+    }
+    if (showComposite.value) {
+        idx++;
+    }
+    return showCollection.value ? idx : -1;
+});
+
+const regularTabActive = computed(() => currentTab.value === regularTabIndex.value);
+const collectionTabActive = computed(() => currentTab.value === collectionTabIndex.value);
 
 const { percentage, status } = storeToRefs(useUploadStore());
 
@@ -120,13 +144,13 @@ const showRules = computed(() => !props.formats || props.multiple);
 
 function immediateUpload(files) {
     if (showRegular.value) {
-        regularTabActive.value = true;
+        currentTab.value = regularTabIndex.value;
         regular.value?.addFiles(files, true);
     }
 }
 
 function toData(items, history_id, composite = false) {
-    return uploadPayload(items, history_id, composite);
+    return buildLegacyPayload(items, history_id, composite);
 }
 
 async function loadExtensions() {
@@ -176,34 +200,30 @@ defineExpose({
             create a new one.
         </span>
     </BAlert>
-    <BTabs v-else-if="ready">
-        <BTab v-if="showRegular" title="Regular" button-id="tab-title-link-regular" :active.sync="regularTabActive">
-        </BTab>
-        <BTab v-if="showComposite" id="composite" title="Composite" button-id="tab-title-link-composite">
-            <CompositeBox
-                :effective-extensions="effectiveExtensions"
-                :default-db-key="defaultDbKey"
-                :file-sources-configured="fileSourcesConfigured"
-                :ftp-upload-site="currentUserId && ftpUploadSite"
-                :has-callback="hasCallback"
-                :history-id="currentHistoryId"
-                :list-db-keys="listDbKeys"
-                v-on="$listeners" />
-        </BTab>
-        <BTab
-            v-if="showCollection"
-            title="Collection"
-            button-id="tab-title-link-collection"
-            :active.sync="collectionTabActive">
-        </BTab>
-        <BTab v-if="showRules" id="rule-based" title="Rule-based" button-id="tab-title-link-rule-based">
-            <RulesInput
-                :file-sources-configured="fileSourcesConfigured"
-                :ftp-upload-site="currentUserId && ftpUploadSite"
-                :has-callback="hasCallback"
-                :history-id="currentHistoryId"
-                v-on="$listeners" />
-        </BTab>
+    <div v-else-if="ready">
+        <GTabs v-model="currentTab">
+            <GTab v-if="showRegular" title="Regular" button-id="tab-title-link-regular" />
+            <GTab v-if="showComposite" id="composite" title="Composite" button-id="tab-title-link-composite">
+                <CompositeBox
+                    :effective-extensions="effectiveExtensions"
+                    :default-db-key="defaultDbKey"
+                    :file-sources-configured="fileSourcesConfigured"
+                    :ftp-upload-site="currentUserId && ftpUploadSite"
+                    :has-callback="hasCallback"
+                    :history-id="currentHistoryId"
+                    :list-db-keys="listDbKeys"
+                    v-on="$listeners" />
+            </GTab>
+            <GTab v-if="showCollection" title="Collection" button-id="tab-title-link-collection" />
+            <GTab v-if="showRules" id="rule-based" title="Rule-based" button-id="tab-title-link-rule-based">
+                <RulesInput
+                    :file-sources-configured="fileSourcesConfigured"
+                    :ftp-upload-site="currentUserId && ftpUploadSite"
+                    :has-callback="hasCallback"
+                    :history-id="currentHistoryId"
+                    v-on="$listeners" />
+            </GTab>
+        </GTabs>
         <DefaultBox
             v-if="showRegular || showCollection"
             v-show="regularTabActive || collectionTabActive"
@@ -222,7 +242,7 @@ defineExpose({
             :is-collection="collectionTabActive"
             @progress="progress"
             v-on="$listeners" />
-    </BTabs>
+    </div>
     <div v-else>
         <LoadingSpan message="Loading required information from Galaxy server." />
     </div>

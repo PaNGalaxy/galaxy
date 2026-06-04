@@ -285,6 +285,15 @@ class WorkflowInvoker:
                     step.log_str(),
                     failure_reason,
                 )
+                if isinstance(e, modules.FailWorkflowEvaluation):
+                    # If this step is a subworkflow, prepend its ID to the path
+                    if step.type == "subworkflow":
+                        error_dict = e.why.model_dump()
+                        current_path = error_dict.get("workflow_step_index_path") or []
+                        current_path.append(step.order_index)
+                        error_dict["workflow_step_index_path"] = current_path
+                        error_class = type(e.why)
+                        e.why = error_class(**error_dict)
                 if isinstance(e, MessageException):
                     # This is the highest level at which we can inject the step id
                     # to provide some more context to the exception.
@@ -715,7 +724,13 @@ class WorkflowProgress:
         # Determine output value from inputs_by_step_id or default
         outputs = {}
         if step.id not in self.inputs_by_step_id:
-            outputs["output"] = step.get_input_default_value(NO_REPLACEMENT)
+            default_value = step.get_input_default_value(NO_REPLACEMENT)
+            # For parameter_input steps, unwrap {"src": "json", "value": X}
+            # dicts to just X — matching the unwrap logic in
+            # InputParameterModule.get_input_value().
+            if step.type == "parameter_input" and isinstance(default_value, dict):
+                default_value = default_value.get("value", default_value)
+            outputs["output"] = default_value
         else:
             outputs["output"] = self.inputs_by_step_id[step.id]
 

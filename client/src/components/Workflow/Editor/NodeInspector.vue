@@ -129,6 +129,7 @@ function updateStored(v: boolean) {
                     :datatypes="datatypes"
                     @onSetData="(id, d) => emit('dataChanged', id, d)"
                     @onUpdateStep="(id, s) => emit('stepUpdated', id, s)"
+                    @onChangePostJobActions="(id, a) => emit('postJobActionsChanged', id, a)"
                     @onAnnotation="(id, a) => emit('annotationChanged', id, a)"
                     @onLabel="(id, l) => emit('labelChanged', id, l)"
                     @onEditSubworkflow="(id) => emit('editSubworkflow', id)"
@@ -139,7 +140,7 @@ function updateStored(v: boolean) {
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .tool-inspector {
     --clearance: 8px;

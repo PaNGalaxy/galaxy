@@ -1,15 +1,20 @@
 import { createPopper } from "@popperjs/core";
+import {
+    advanceToJustBeforeTooltipHoverDelay,
+    advanceTooltipHoverDelay,
+    runPendingTimersAndFlush,
+} from "@tests/vitest/tooltipTestUtils";
 import { mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+import { DEFAULT_TOOLTIP_HOVER_DELAY_MS, INTERACTIVE_POPOVER_CLOSE_DELAY_MS } from "@/utils/tooltipTiming";
 
 import PopperComponent from "./Popper.vue";
 
-// value from usePopper.ts
-const DELAY_CLOSE = 50;
-
-jest.mock("@popperjs/core", () => ({
-    createPopper: jest.fn(() => ({
-        destroy: jest.fn(),
-        update: jest.fn(),
+vi.mock("@popperjs/core", () => ({
+    createPopper: vi.fn(() => ({
+        destroy: vi.fn(),
+        update: vi.fn(),
     })),
 }));
 
@@ -29,8 +34,14 @@ function mountTarget(trigger = "click", interactive = false) {
 }
 
 describe("PopperComponent.vue", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
     afterEach(() => {
-        jest.clearAllMocks();
+        vi.runOnlyPendingTimers();
+        vi.useRealTimers();
+        vi.clearAllMocks();
     });
 
     test("renders component with default props", async () => {
@@ -105,9 +116,13 @@ describe("PopperComponent.vue", () => {
         const popperElement = wrapper.find(".popper-element");
         expect(popperElement.isVisible()).toBe(false);
         await reference.trigger("mouseover");
+        expect(popperElement.isVisible()).toBe(false);
+        advanceToJustBeforeTooltipHoverDelay();
+        expect(popperElement.isVisible()).toBe(false);
+        await advanceTooltipHoverDelay();
         expect(popperElement.isVisible()).toBe(true);
         await reference.trigger("mouseout");
-        await new Promise((r) => setTimeout(r, 0));
+        await runPendingTimersAndFlush();
         expect(popperElement.isVisible()).toBe(false);
     });
 
@@ -117,14 +132,15 @@ describe("PopperComponent.vue", () => {
         const popperElement = wrapper.find(".popper-element");
         expect(popperElement.isVisible()).toBe(false);
         await reference.trigger("mouseover");
+        await advanceTooltipHoverDelay(DEFAULT_TOOLTIP_HOVER_DELAY_MS);
         expect(popperElement.isVisible()).toBe(true);
         await reference.trigger("mouseout");
-        await new Promise((r) => setTimeout(r, DELAY_CLOSE / 2));
+        await advanceTooltipHoverDelay(INTERACTIVE_POPOVER_CLOSE_DELAY_MS / 2);
         expect(popperElement.isVisible()).toBe(true);
         await popperElement.trigger("mouseover");
-        await new Promise((r) => setTimeout(r, DELAY_CLOSE * 2));
+        await advanceTooltipHoverDelay(INTERACTIVE_POPOVER_CLOSE_DELAY_MS * 2);
         await popperElement.trigger("mouseout");
-        await new Promise((r) => setTimeout(r, DELAY_CLOSE * 2));
+        await advanceTooltipHoverDelay(INTERACTIVE_POPOVER_CLOSE_DELAY_MS * 2);
         expect(popperElement.isVisible()).toBe(false);
     });
 

@@ -6,7 +6,7 @@ from typing import (
 )
 
 from pydantic import BaseModel
-from pydantic.json_schema import GenerateJsonSchema
+from pydantic.annotated_handlers import GetCoreSchemaHandler
 from typing_extensions import override
 
 from galaxy.schema.fields import (
@@ -16,7 +16,7 @@ from galaxy.schema.fields import (
 
 DatabaseIdT = TypeVar("DatabaseIdT")
 
-ref_to_name = {}
+ref_to_name: dict[str, str] = {}
 
 
 class GenericModel(BaseModel):
@@ -27,8 +27,8 @@ class GenericModel(BaseModel):
         return f"{class_name}{suffix}"
 
     @classmethod
-    def __get_pydantic_core_schema__(cls, *args, **kwargs):
-        result = super().__get_pydantic_core_schema__(*args, **kwargs)
+    def __get_pydantic_core_schema__(cls, source: type[BaseModel], handler: GetCoreSchemaHandler):
+        result = handler(source)
         ref_to_name[result["ref"]] = cls.__name__
         return result
 
@@ -40,17 +40,6 @@ class GenericModel(BaseModel):
         elif params[0] is DecodedDatabaseIdField:
             suffix = "Request"
         return suffix
-
-
-class CustomJsonSchema(GenerateJsonSchema):
-    def get_defs_ref(self, core_mode_ref):
-        full_def = super().get_defs_ref(core_mode_ref)
-        choices = self._prioritized_defsref_choices[full_def]
-        ref, mode = core_mode_ref
-        if ref in ref_to_name:
-            for i, choice in enumerate(choices):
-                choices[i] = choice.replace(choices[0], ref_to_name[ref])  # type: ignore[call-overload]
-        return full_def
 
 
 class PatchGenericPickle:

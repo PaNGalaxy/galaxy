@@ -1,37 +1,45 @@
 import { createTestingPinia } from "@pinia/testing";
+import { getLocalVue } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
-import axios from "axios";
-import MockAdapter from "axios-mock-adapter";
 import flushPromises from "flush-promises";
 import { PiniaVuePlugin, setActivePinia } from "pinia";
-import { useEntryPointStore } from "stores/entryPointStore";
-import { useInteractiveToolsStore } from "stores/interactiveToolsStore";
-import { getLocalVue } from "tests/jest/helpers";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import InteractiveTools from "./InteractiveTools";
+import { HttpResponse, useServerMock } from "@/api/client/__mocks__";
+import { useEntryPointStore } from "@/stores/entryPointStore";
+import { useInteractiveToolsStore } from "@/stores/interactiveToolsStore";
+
 import testInteractiveToolsResponse from "./testData/testInteractiveToolsResponse.json";
 
+import InteractiveTools from "./InteractiveTools.vue";
+
 // Mock the rethrowSimple function to prevent test failures
-jest.mock("@/utils/simple-error", () => ({
-    rethrowSimple: jest.fn(),
-    errorMessageAsString: jest.fn((error) => error.message),
+vi.mock("@/utils/simple-error", () => ({
+    rethrowSimple: vi.fn(),
+    errorMessageAsString: vi.fn((error) => error.message),
 }));
+
+const { server, http } = useServerMock();
 
 describe("InteractiveTools/InteractiveTools.vue", () => {
     const localVue = getLocalVue();
     localVue.use(PiniaVuePlugin);
     let wrapper;
     let testPinia;
-    let axiosMock;
+    let deleteRequests = [];
 
     beforeEach(async () => {
-        // Initialize axios mock before creating the pinia store
-        axiosMock = new MockAdapter(axios);
+        deleteRequests = [];
         // Set up the GET response for entry points - use a copy to avoid modifications between tests
         const testData = JSON.parse(JSON.stringify(testInteractiveToolsResponse));
-        axiosMock.onGet(/\/api\/entry_points/).reply(200, testData);
+        server.use(
+            http.untyped.get("/api/entry_points", () => {
+                return HttpResponse.json(testData);
+            }),
+        );
 
         testPinia = createTestingPinia({
+            createSpy: vi.fn,
             initialState: {
                 entryPointStore: {
                     entryPoints: testData,
@@ -55,14 +63,14 @@ describe("InteractiveTools/InteractiveTools.vue", () => {
     });
 
     afterEach(() => {
-        axiosMock.restore();
-        jest.clearAllMocks();
+        vi.clearAllMocks();
     });
 
     it("renders table with interactive tools", async () => {
-        expect(wrapper.get("#interactive-tool-table").exists()).toBeTruthy();
-        // Each entry has 2 links: one to open inline and one to open in new tab
-        expect(wrapper.findAll("td > a").length).toBe(4);
+        expect(wrapper.find("#g-table-interactive-tool-table").exists()).toBeTruthy();
+        // Each entry has 2 links: one to open inline (rendered as button) and one to open in new tab (rendered as anchor)
+        expect(wrapper.findAll("td > button.g-link").length).toBe(2);
+        expect(wrapper.findAll("td > a").length).toBe(2);
     });
 
     it("displays interactive tool information correctly", async () => {
@@ -97,11 +105,18 @@ describe("InteractiveTools/InteractiveTools.vue", () => {
     //     const firstTool = testInteractiveToolsResponse[0];
     //     const toolId = firstTool.id;
 
-    //     axiosMock.onDelete(new RegExp("/api/entry_points/*")).reply(200, { status: "ok", message: "ok" });
-    //     await wrapper.get(`#stop-${toolId}`).trigger("click");
 
-    //     expect(axiosMock.history.delete.length).toBe(1);
-    //     expect(axiosMock.history.delete[0].url.includes(toolId)).toBeTruthy();
+    //     server.use(
+    //         http.untyped.delete(/\/api\/entry_points\/.*/, ({ request }) => {
+    //             deleteRequests.push({ url: request.url });
+    //             return HttpResponse.json({ status: "ok", message: "ok" });
+    //         }),
+    //     );
+    //     await wrapper.get(`#stop-${toolId}`).trigger("click");
+    //     await flushPromises();
+    //
+    //     expect(deleteRequests.length).toBe(1);
+    //     expect(deleteRequests[0].url.includes(toolId)).toBeTruthy();
     // });
 
     // it("shows an error message if the tool deletion fails", async () => {
@@ -109,8 +124,13 @@ describe("InteractiveTools/InteractiveTools.vue", () => {
     //     const toolId = firstTool.id;
     //     const interactiveToolsStore = useInteractiveToolsStore();
 
-    //     // Set up the network error for DELETE requests
-    //     axiosMock.onDelete(new RegExp("/api/entry_points/*")).networkError();
+
+        // // Set up the network error for DELETE requests
+        // server.use(
+        //     http.untyped.delete(/\/api\/entry_points\/.*/, () => {
+        //         return HttpResponse.error();
+        //     }),
+        // );
 
     //     // Try to stop the tool
     //     await wrapper.get(`#stop-${toolId}`).trigger("click");
@@ -118,9 +138,9 @@ describe("InteractiveTools/InteractiveTools.vue", () => {
 
     //     // The error should be in the interactiveToolsStore messages
     //     expect(interactiveToolsStore.messages.length).toBeGreaterThan(0);
-    //     expect(interactiveToolsStore.messages[0]).toMatch(/Network Error/);
-
+    //     expect(interactiveToolsStore.messages[0]).toMatch(/Network Error|Failed to fetch/);
+    //
     //     // The error should be displayed in the UI
-    //     expect(wrapper.get(".alert-danger").text()).toMatch(/Network Error/);
+    //     expect(wrapper.get(".alert-danger").text()).toMatch(/Network Error|Failed to fetch/);
     // });
 });

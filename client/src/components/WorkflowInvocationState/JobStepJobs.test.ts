@@ -1,7 +1,8 @@
 import { createTestingPinia } from "@pinia/testing";
+import { getLocalVue } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
-import { getLocalVue } from "tests/jest/helpers";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HttpResponse, useServerMock } from "@/api/client/__mocks__";
 import type { JobDisplayParametersSummary, ShowFullJobResponse } from "@/api/jobs";
@@ -12,6 +13,10 @@ import TEST_JOBS_JSON from "./test/json/jobs.json";
 
 import JobStepJobs from "./JobStepJobs.vue";
 
+vi.mock("vue-router/composables", () => ({
+    useRoute: vi.fn(() => ({})),
+}));
+
 const localVue = getLocalVue();
 
 const { server, http } = useServerMock();
@@ -20,7 +25,7 @@ const TEST_NEW_JOB_ID = "sample-job-NEW";
 
 const SELECTORS = {
     JOBS_TABLE: ".job-step-jobs",
-    JOB_ROW: ".job-step-jobs > tbody > tr",
+    JOB_ROW: ".job-step-jobs .g-table tbody > tr:not(.g-table-details-row):not(.g-table-empty-row)",
     JOB_CONTENT: ".g-modal-content",
     JOB_INFORMATION_TABLE: "table#job-information",
 };
@@ -74,7 +79,7 @@ describe("JobStepJobs", () => {
                 perPage: 10,
             },
             localVue,
-            pinia: createTestingPinia(),
+            pinia: createTestingPinia({ createSpy: vi.fn }),
             stubs: {
                 ContentItem: true,
                 FontAwesomeIcon: true,

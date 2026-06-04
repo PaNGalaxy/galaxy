@@ -1,6 +1,7 @@
 import logging
 from typing import (
     Any,
+    Literal,
     Optional,
     overload,
     TYPE_CHECKING,
@@ -12,7 +13,6 @@ from sqlalchemy.orm import (
     joinedload,
     Query,
 )
-from typing_extensions import Literal
 
 from galaxy import model
 from galaxy.datatypes.registry import Registry
@@ -51,6 +51,7 @@ from galaxy.short_term_storage import (
     storage_context,
 )
 from galaxy.util import validation
+from galaxy.util.rules_dsl import RulesDSLError
 
 if TYPE_CHECKING:
     from galaxy.model import (
@@ -353,6 +354,7 @@ class DatasetCollectionManager:
         # else if elements is set, it better be an ordered dict!
 
         if elements is not self.ELEMENTS_UNINITIALIZED:
+            self._validate_nested_collection_elements(collection_type_description, elements)
             type_plugin = collection_type_description.rank_type_plugin()
             dataset_collection = builder.build_collection(
                 type_plugin, elements, fields=fields, column_definitions=column_definitions, rows=rows
@@ -576,6 +578,32 @@ class DatasetCollectionManager:
             session.commit()
         return dataset_collection_instance
 
+    def _validate_nested_collection_elements(self, collection_type_description, elements) -> None:
+        """For nested collection types (e.g. ``list:paired_or_unpaired``), verify that
+        every element value is a :class:`DatasetCollection` whose ``collection_type``
+        matches the expected sub-collection type. Otherwise creating a
+        ``list:paired_or_unpaired`` from raw HDAs would silently produce a
+        structurally invalid collection that downstream tools cannot handle.
+        """
+        if not collection_type_description.has_subcollections():
+            return
+        if not isinstance(elements, dict):
+            return
+        expected_sub = collection_type_description.subcollection_type_description().collection_type
+        for identifier, value in elements.items():
+            if isinstance(value, DatasetCollection) and value.collection_type == expected_sub:
+                continue
+            if isinstance(value, DatasetCollection):
+                actual = f"a collection of type '{value.collection_type}'"
+            elif getattr(value, "history_content_type", None) == "dataset":
+                actual = "a dataset"
+            else:
+                actual = type(value).__name__
+            raise RequestParameterInvalidException(
+                f"Element '{identifier}' of collection type '{collection_type_description.collection_type}' "
+                f"must be a sub-collection of type '{expected_sub}', got {actual}."
+            )
+
     def __recursively_create_collections_for_identifiers(
         self, trans, element_identifiers, hide_source_items: bool, copy_elements: bool, history=None
     ):
@@ -610,10 +638,7 @@ class DatasetCollectionManager:
 
         new_elements = {}
         for key, element in elements.items():
-            if isinstance(element, DatasetCollection):
-                continue
-
-            if element.get("src") != "new_collection":
+            if not isinstance(element, dict) or element.get("src") != "new_collection":
                 continue
 
             # element is a dict with src new_collection and
@@ -740,7 +765,10 @@ class DatasetCollectionManager:
         elements = hdca_collection.elements
         collection_type_description = self.collection_type_descriptions.for_collection_type(collection_type)
         initial_data, initial_sources = self.__init_rule_data(elements, collection_type_description)
-        data, sources = rule_set.apply(initial_data, initial_sources)
+        try:
+            data, sources = rule_set.apply(initial_data, initial_sources)
+        except RulesDSLError as e:
+            raise MessageException(str(e)) from e
 
         collection_type = rule_set.collection_type
         collection_type_description = self.collection_type_descriptions.for_collection_type(collection_type)
@@ -916,7 +944,7 @@ class DatasetCollectionManager:
     def _get_collection_contents_qry(self, parent_id, limit=None, offset=None):
         """Build query to find first level of collection contents by containing collection parent_id"""
         DCE = model.DatasetCollectionElement
-        qry = Query(DCE).filter(DCE.dataset_collection_id == parent_id)  # type:ignore[var-annotated]
+        qry = Query(DCE).filter(DCE.dataset_collection_id == parent_id)  # type: ignore[var-annotated]
         qry = qry.order_by(DCE.element_index)
         qry = qry.options(
             joinedload(model.DatasetCollectionElement.child_collection), joinedload(model.DatasetCollectionElement.hda)

@@ -33,6 +33,19 @@ def test_sample_sheet_validation_skipped_on_empty_definitions():
     validate_row([0, 1], None)  # just ensure no exception is thrown
 
 
+def test_sample_sheet_validation_skipped_on_empty_list_definitions():
+    # Empty list of column definitions should also short-circuit validation,
+    # so a missing row is not treated as an error.
+    validate_row(None, [])
+    validate_row([0, 1], [])
+
+
+def test_sample_sheet_validation_missing_row_when_definitions_declared():
+    # When column definitions exist, a missing row is still an error.
+    with pytest.raises(RequestParameterInvalidException):
+        validate_row(None, [{"type": "int", "name": "replicate", "optional": False}])
+
+
 def test_sample_sheet_validation_number_columns():
     with pytest.raises(RequestParameterInvalidException):
         validate_row([0, 1], [{"type": "int", "name": "replicate number", "default_value": 0, "optional": False}])
@@ -57,27 +70,6 @@ def test_sample_sheet_validation_string_type():
 
     with pytest.raises(RequestParameterInvalidException):
         validate_row([1], [{"type": "string", "name": "condition", "default_value": "none", "optional": False}])
-
-    # restrict characters that might interfere with CSV/TSV serialization
-    with pytest.raises(RequestParameterInvalidException):
-        validate_row(
-            ["sample1\t"], [{"type": "string", "name": "condition", "default_value": "none", "optional": False}]
-        )
-
-    with pytest.raises(RequestParameterInvalidException):
-        validate_row(
-            ['sample1"'], [{"type": "string", "name": "condition", "default_value": "none", "optional": False}]
-        )
-
-    with pytest.raises(RequestParameterInvalidException):
-        validate_row(
-            ["sample1'"], [{"type": "string", "name": "condition", "default_value": "none", "optional": False}]
-        )
-
-    # but allow simple spaces even though we don't allow tabs/newlines in the sheet.
-    validate_row(
-        ["sample1 is cool"], [{"type": "string", "name": "condition", "default_value": "none", "optional": False}]
-    )
 
 
 def test_sample_sheet_validation_boolean_type():

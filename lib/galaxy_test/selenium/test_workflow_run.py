@@ -1,10 +1,10 @@
 import json
+from typing import Literal
 from uuid import uuid4
 
 import yaml
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from typing_extensions import Literal
 
 from galaxy_test.base import rules_test_data
 from galaxy_test.base.workflow_fixtures import (
@@ -29,17 +29,30 @@ from galaxy_test.base.workflow_fixtures import (
 )
 from .framework import (
     managed_history,
+    retry_assertion_during_transitions,
     RunsWorkflows,
+    selenium_only,
     selenium_test,
     SeleniumTestCase,
     UsesHistoryItemAssertions,
 )
 from .test_workflow_editor import CHIPSEQ_COLUMNS
 
+# Single cat1 step with no workflow-level ``inputs`` — the step's ``input1``
+# stays unconnected so the run form renders it as a dropdown via
+# ``WorkflowRunDefaultStep``, exercising our paginated tool-step handlers.
+WORKFLOW_CAT1_NO_INPUTS = """
+class: GalaxyWorkflow
+steps:
+  cat_step:
+    tool_id: cat1
+"""
+
 
 class TestWorkflowRun(SeleniumTestCase, UsesHistoryItemAssertions, RunsWorkflows):
     ensure_registered = True
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_workflow_export_file_rocrate(self):
@@ -49,7 +62,7 @@ class TestWorkflowRun(SeleniumTestCase, UsesHistoryItemAssertions, RunsWorkflows
         invocations.export_tab_disabled.wait_for_absent()
         invocations.export_tab.wait_for_and_click()
         self.screenshot("invocation_export_formats")
-        invocations.export_output_format(type="ro-crate").wait_for_and_click()
+        invocations.export_output_format(type="rocrate.zip").wait_for_and_click()
         invocations.wizard_next_button.wait_for_and_click()
         download_option = invocations.export_destination(destination="download")
         download_option.wait_for_present()
@@ -65,6 +78,7 @@ class TestWorkflowRun(SeleniumTestCase, UsesHistoryItemAssertions, RunsWorkflows
         invocations.export_download_link.wait_for_present()
         self.screenshot("invocation_export_crate_download_ready")
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_workflow_export_file_native(self):
@@ -74,7 +88,7 @@ class TestWorkflowRun(SeleniumTestCase, UsesHistoryItemAssertions, RunsWorkflows
         invocations.export_tab_disabled.wait_for_absent()
         invocations.export_tab.wait_for_and_click()
         self.screenshot("invocation_export_formats")
-        invocations.export_output_format(type="default-file").wait_for_and_click()
+        invocations.export_output_format(type="tgz").wait_for_and_click()
         invocations.wizard_next_button.wait_for_and_click()
         download_option = invocations.export_destination(destination="download")
         download_option.wait_for_present()
@@ -90,6 +104,7 @@ class TestWorkflowRun(SeleniumTestCase, UsesHistoryItemAssertions, RunsWorkflows
         invocations.export_download_link.wait_for_present()
         self.screenshot("invocation_export_native_download_ready")
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_simple_execution(self):
@@ -104,6 +119,108 @@ class TestWorkflowRun(SeleniumTestCase, UsesHistoryItemAssertions, RunsWorkflows
         self.assert_item_summary_includes(2, "2 sequences")
         self.screenshot("workflow_run_simple_complete")
 
+    @selenium_test
+    def test_workflow_run_pagination_legacy_form(self):
+        """Pagination + backend search on a workflow run form's tool-step
+        dropdown. Uses the legacy/expanded form (the default), where the
+        tool step is rendered via ``WorkflowRunDefaultStep`` — this is the
+        component we wired ``onLoadMore`` / ``onSearchChange`` into. Seeds 60
+        HDAs so the default 50-per-page cap is in effect, then types a query
+        and asserts the dropdown narrows to the backend-matched options."""
+        history_id = self.current_history_id()
+        self.dataset_populator.fetch_hdas(history_id, [{"src": "pasted", "paste_content": "x"}] * 60)
+        # Sentinel-named HDA so we can prove options are *actually rendering*
+        # (a vacuous pass — empty dropdown — would clear the ``<= 50`` upper bound).
+        legacy_sentinel = "unique-pagination-sentinel"
+        self.dataset_populator.fetch_hdas(
+            history_id,
+            [{"src": "pasted", "paste_content": "y", "name": legacy_sentinel}],
+        )
+        self.home()
+        # A single cat1 step with no workflow-level inputs — the step's
+        # ``input1`` is unconnected, so it renders as a dropdown the user
+        # picks from. This lands us in ``WorkflowRunDefaultStep``.
+        self.workflow_run_open_workflow(WORKFLOW_CAT1_NO_INPUTS)
+        self.workflow_run_ensure_expanded()
+        select_field = self.components.tool_form.parameter_data_select(parameter="input1").wait_for_visible()
+        # Open the dropdown so its options render in the DOM, then type into
+        # the multiselect's search input. The debounced ``search-change``
+        # bubbles through ``FormDisplay → WorkflowRunDefaultStep`` and refetches
+        # via ``getTool`` with ``options_pagination[input1][hda].search="1"``.
+        select_field.find_element(By.CSS_SELECTOR, ".multiselect__select").click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+        baseline_options = select_field.find_elements(By.CSS_SELECTOR, "[role='option']")
+        assert len(baseline_options) <= 50, f"Expected default page to cap at 50 options, got {len(baseline_options)}"
+        # Positive lower-bound: the sentinel HDA is newest (hid=61) so it must
+        # appear in the first page of (newest-first) options. Without this the
+        # ``<= 50`` upper bound passes vacuously on an empty dropdown.
+        baseline_labels = [opt.text for opt in baseline_options]
+        assert any(legacy_sentinel in label for label in baseline_labels), baseline_labels
+        search_input = select_field.find_element(By.CSS_SELECTOR, "input.multiselect__input")
+        search_input.send_keys("1")
+        # Wait past the FormSelect search debounce (300 ms) plus the network
+        # round-trip — UX_TRANSITION is a generous ~1s.
+        self.sleep_for(self.wait_types.UX_TRANSITION)
+
+        @retry_assertion_during_transitions
+        def assert_search_narrowed():
+            options = select_field.find_elements(By.CSS_SELECTOR, "[role='option']")
+            assert len(options) > 0, "Expected at least one match for query '1' (e.g. hid=1)"
+            # All visible labels should contain '1' somewhere — either in the
+            # numeric hid prefix (hid=1, 10, 11, ...) or in the name.
+            labels = [opt.text for opt in options]
+            assert all("1" in label for label in labels), labels
+
+        assert_search_narrowed()
+
+    @selenium_test
+    def test_workflow_run_pagination_simplified_form(self):
+        """The simplified workflow run form (``WorkflowRunFormSimple``) only
+        renders workflow-level inputs. With 60 datasets in history and the
+        backend's default 50-per-page cap, the dropdown for a workflow
+        ``input1: data`` step must show no more than 50 options — proves
+        pagination is in effect even though the simplified form's step
+        component doesn't yet wire interactive load-more."""
+        history_id = self.current_history_id()
+        self.dataset_populator.fetch_hdas(history_id, [{"src": "pasted", "paste_content": "x"}] * 60)
+        # Sentinel for positive lower-bound (see legacy-form test).
+        simplified_sentinel = "unique-simplified-sentinel"
+        self.dataset_populator.fetch_hdas(
+            history_id,
+            [{"src": "pasted", "paste_content": "y", "name": simplified_sentinel}],
+        )
+        self.home()
+        self.workflow_run_open_workflow(WORKFLOW_SIMPLE_CAT_TWICE)
+        # Ensure the legacy/expanded form is fully rendered before reaching for
+        # its toggle button — otherwise the form may still be loading when the
+        # XPath wait fires (the default 10s window isn't always enough on CI).
+        # ``workflow_run_ensure_expanded`` is a no-op when already in legacy
+        # mode but waits on ``run_workflow`` and ``expanded_form`` first.
+        self.workflow_run_ensure_expanded()
+        # Click the "Simple Form" toggle to switch to ``WorkflowRunFormSimple``.
+        # Use a text-based XPath because ``v-g-tooltip`` rewrites the title
+        # attribute and the button isn't yet in ``navigation.yml`` — and
+        # ``wait_for_xpath`` works on both Selenium and Playwright backends,
+        # unlike ``self.driver.find_element`` which is Selenium-only.
+        self.wait_for_xpath('//button[contains(., "Simple Form")]').click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+        # The simplified form renders workflow inputs via ``FormDisplay``; the
+        # ``input1`` data dropdown lands in a multiselect we can locate by
+        # the parameter's data-label.
+        select_field = self.components.workflow_run.input_select_field(label="input1").wait_for_visible()
+        select_field.find_element(By.CSS_SELECTOR, ".multiselect__select").click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+        options = select_field.find_elements(By.CSS_SELECTOR, "[role='option']")
+        assert (
+            len(options) <= 50
+        ), f"Simplified form dropdown must respect the 50-per-page cap; got {len(options)} options"
+        # Positive lower-bound: the sentinel HDA is newest (hid=61) so it must
+        # appear in the first page of options. Without this the ``<= 50`` upper
+        # bound passes vacuously on an empty dropdown.
+        labels = [opt.text for opt in options]
+        assert any(simplified_sentinel in label for label in labels), labels
+
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_expanded_execution_of_simple_workflow(self):
@@ -243,6 +360,7 @@ class TestWorkflowRun(SeleniumTestCase, UsesHistoryItemAssertions, RunsWorkflows
             sample_sheet.select_picker.wait_for_and_click()
             sample_sheet.select_item(item=control).wait_for_and_click()
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_collection_input_sample_sheet_chipseq_example_from_uris(self):
@@ -313,6 +431,7 @@ SRR5681005\tinput\t\t
             contents == expected_contents
         ), f"Expected chipseq sample sheet table:\n{expected_contents}\nGot:\n{contents}"
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_collection_input_sample_sheet_chipseq_example_from_list_pairs(self):
@@ -375,6 +494,7 @@ SRR5681005\tinput\t\t
         self.workflow_run_submit()
         self._expect_chipseq_table(history_id, 51)
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_runtime_parameters_simple(self):
@@ -389,11 +509,11 @@ SRR5681005\tinput\t\t
 
         self._assert_has_3_lines_after_run(hid=2)
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_runtime_parameters_simple_optional(self):
-        self.workflow_run_open_workflow(
-            """
+        self.workflow_run_open_workflow("""
 class: GalaxyWorkflow
 inputs: {}
 steps:
@@ -401,8 +521,7 @@ steps:
     tool_id: expression_null_handling_integer
     runtime_inputs:
       - int_input
-"""
-        )
+""")
         self.tool_parameter_div("int_input")
         self._set_num_lines_to_3("int_input")
         self.screenshot("workflow_run_optional_runtime_parameters_modified")
@@ -412,6 +531,7 @@ steps:
         content = self.dataset_populator.get_history_dataset_content(history_id, hid=1)
         assert json.loads(content) == 3
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_subworkflows_expanded(self):
@@ -424,6 +544,7 @@ steps:
         self.components.workflow_run.subworkflow_step_icon.wait_for_and_click()
         self.screenshot("workflow_run_nested_open")
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_subworkflow_runtime_parameters(self):
@@ -440,6 +561,7 @@ steps:
 
         self._assert_has_3_lines_after_run(hid=2)
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_replacement_parameters(self):
@@ -457,13 +579,13 @@ steps:
         details = self.dataset_populator.get_history_dataset_details(history_id, hid=output_hid)
         assert details["name"] == "moocow suffix", details
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_step_parameter_inputs(self):
         self.perform_upload(self.get_filename("1.txt"))
         self.wait_for_history()
-        self.workflow_run_open_workflow(
-            """
+        self.workflow_run_open_workflow("""
 class: GalaxyWorkflow
 inputs:
   input_int: integer
@@ -475,8 +597,7 @@ steps:
     in:
       inttest: input_int
       files_0|file: input_data
-"""
-        )
+""")
         self.workflow_run_ensure_expanded()
         workflow_run = self.components.workflow_run
         input_div_element = workflow_run.input_div(label="input_int").wait_for_visible()
@@ -493,6 +614,7 @@ steps:
         assert "12345" in content, content
         assert "chr6_hla_hap2" in content
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_replacement_parameters_on_subworkflows(self):
@@ -510,6 +632,7 @@ steps:
         details = self.dataset_populator.get_history_dataset_details(history_id, hid=output_hid)
         assert details["name"] == "moocow suffix", details
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     def test_execution_with_tool_upgrade(self):
         name = self.workflow_upload_yaml_with_random_name(WORKFLOW_WITH_OLD_TOOL_VERSION, exact_tools=True)
@@ -519,6 +642,7 @@ steps:
         self.assert_message(self.components.workflow_run.warning, contains="tools which have changed")
         self.screenshot("workflow_run_tool_upgrade")
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     def test_run_form_safe_upgrade_handling(self):
         workflow_with_rules = yaml.safe_load(WORKFLOW_WITH_RULES_1)
@@ -551,11 +675,11 @@ steps:
         content = self.dataset_populator.get_history_dataset_content(history_id, hid=7)
         assert "10.0\n30.0\n20.0\n40.0\n" == content
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_execution_with_text_default_value_connected_to_restricted_select(self):
-        self.workflow_run_open_workflow(
-            """
+        self.workflow_run_open_workflow("""
 class: GalaxyWorkflow
 inputs:
   text_param:
@@ -569,8 +693,7 @@ steps:
     in:
       select_ex:
         source: text_param
-"""
-        )
+""")
         element = self.components.workflow_run.input_select_field(label="text_param").wait_for_present()
         assert element.text == "Ex2"
         self.workflow_run_submit()
@@ -638,8 +761,7 @@ steps:
     @selenium_test
     @managed_history
     def test_workflow_run_button_disabled_when_required_input_missing(self):
-        self.workflow_run_open_workflow(
-            """
+        self.workflow_run_open_workflow("""
 class: GalaxyWorkflow
 inputs:
   text_param:
@@ -650,8 +772,7 @@ inputs:
   collection_param:
     type: data_collection
 steps: {}
-"""
-        )
+""")
         workflow_run = self.components.workflow_run
         # None of the required parameters are present
         workflow_run.run_workflow_disabled.wait_for_present()
@@ -682,6 +803,7 @@ steps: {}
         invocation = self.workflow_populator.get_invocation(invocations[-1]["id"])
         assert invocation["inputs"]["0"]["id"] == dataset["id"]
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_workflow_run_list_paired_or_unpaired_with_paired_list(self):
@@ -703,6 +825,7 @@ steps: {}
         content = self.dataset_populator.get_history_dataset_content(history_id, hid=6)
         assert content.strip() == "forward content\nreverse content"
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_workflow_run_list_paired_or_unpaired_with_flat_list(self):
@@ -724,6 +847,7 @@ steps: {}
         content = self.dataset_populator.get_history_dataset_content(history_id, hid=6)
         assert content.strip() == "reverse content\nforward content"
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_workflow_run_list_paired_or_unpaired_with_mixed_list(self):
@@ -746,6 +870,7 @@ steps: {}
         content = self.dataset_populator.get_history_dataset_content(history_id, hid=8)
         assert content.strip() == "forward content\nreverse content\nunpaired content"
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_upload_dataset_from_workflow_simple(self):
@@ -760,6 +885,7 @@ steps: {}
         content = self.dataset_populator.get_history_dataset_content(history_id, hid=2)
         assert content.strip() == "hello world\nhello world"
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_modal_upload_updates_form(self):
@@ -792,6 +918,7 @@ steps: {}
         content = self.dataset_populator.get_history_dataset_content(history_id, hid=6)
         assert content.strip() == "hello world"
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_upload_list_from_workflow_simple(self):
@@ -806,6 +933,7 @@ steps: {}
         self.workflow_run_submit()
         self.history_panel_wait_for_hid_ok(6)
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_upload_list_paired_from_workflow(self):
@@ -823,6 +951,7 @@ steps: {}
         content = self.dataset_populator.get_history_dataset_content(history_id, hid=7)
         assert content.strip() == "hello world\nhello world"
 
+    @selenium_only("Not yet migrated to support Playwright backend")
     @selenium_test
     @managed_history
     def test_upload_list_paired_or_unpaired_from_workflow(self):

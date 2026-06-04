@@ -8,7 +8,7 @@
             <div v-if="title" class="popper-header px-2 py-1 rounded-top d-flex justify-content-between">
                 <span class="px-1">{{ title }}</span>
                 <span class="popper-close align-items-center cursor-pointer" @click="visible = false">
-                    <FontAwesomeIcon icon="fa-times-circle" />
+                    <FontAwesomeIcon :icon="faTimesCircle" />
                 </span>
             </div>
             <slot />
@@ -17,26 +17,37 @@
 </template>
 
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faTimesCircle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import type { Placement } from "@popperjs/core";
-import type { PropType } from "vue";
 import { ref } from "vue";
+
+import { DEFAULT_TOOLTIP_HOVER_DELAY_MS } from "@/utils/tooltipTiming";
 
 import { type Trigger, usePopper } from "./usePopper";
 
-library.add(faTimesCircle);
+interface Props {
+    arrow?: boolean;
+    disabled?: boolean;
+    hoverDelay?: number;
+    interactive?: boolean;
+    mode?: string;
+    placement?: Placement;
+    referenceEl?: HTMLElement;
+    title?: string;
+    trigger?: Trigger;
+}
 
-const props = defineProps({
-    arrow: { type: Boolean, default: true },
-    disabled: { type: Boolean, default: false },
-    interactive: { type: Boolean, default: false },
-    mode: { type: String, default: "dark" },
-    placement: String as PropType<Placement>,
-    referenceEl: HTMLElement,
-    title: String,
-    trigger: String as PropType<Trigger>,
+const props = withDefaults(defineProps<Props>(), {
+    arrow: true,
+    disabled: false,
+    hoverDelay: DEFAULT_TOOLTIP_HOVER_DELAY_MS,
+    interactive: false,
+    mode: "dark",
+    placement: "bottom",
+    referenceEl: undefined,
+    title: undefined,
+    trigger: "hover",
 });
 
 const reference = props.referenceEl ? ref(props.referenceEl) : ref();
@@ -44,6 +55,7 @@ const reference = props.referenceEl ? ref(props.referenceEl) : ref();
 const popper = ref();
 
 const { visible } = usePopper(reference, popper, {
+    hoverDelay: props.hoverDelay,
     interactive: props.interactive,
     placement: props.placement,
     trigger: props.trigger,
@@ -57,7 +69,7 @@ defineExpose({
 </script>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 @function popper-border($border-color) {
     @return 1px solid $border-color;

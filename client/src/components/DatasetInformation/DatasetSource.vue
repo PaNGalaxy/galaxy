@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faCopy, faExternalLinkAlt } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { computed } from "vue";
@@ -9,8 +8,6 @@ import { copy } from "@/utils/clipboard";
 import localize from "@/utils/localization";
 
 import DatasetSourceTransform from "@/components/DatasetInformation/DatasetSourceTransform.vue";
-
-library.add(faCopy, faExternalLinkAlt);
 
 interface Props {
     source: DatasetSource;
@@ -32,7 +29,7 @@ function copyLink() {
 
 <template>
     <li class="dataset-source">
-        <a v-if="browserCompatUri" v-b-tooltip.hover title="Dataset Source URL" :href="sourceUri" target="_blank">
+        <a v-if="browserCompatUri" v-g-tooltip.hover title="Dataset Source URL" :href="sourceUri" target="_blank">
             {{ source.source_uri }}
             <FontAwesomeIcon :icon="faExternalLinkAlt" />
         </a>
@@ -40,7 +37,7 @@ function copyLink() {
             {{ source.source_uri }}
         </span>
 
-        <span v-b-tooltip.hover title="Copy URI">
+        <span v-g-tooltip.hover title="Copy URI">
             <FontAwesomeIcon :icon="faCopy" style="cursor: pointer" @click="copyLink" />
         </span>
 

@@ -3,13 +3,16 @@ This module *does not* contain API routes. It exclusively contains dependencies 
 """
 
 import inspect
-from collections.abc import AsyncGenerator
+from collections.abc import (
+    AsyncGenerator,
+    Callable,
+)
 from enum import Enum
 from string import Template
 from typing import (
     Any,
-    Callable,
     cast,
+    Literal,
     NamedTuple,
     Optional,
     TypeVar,
@@ -50,13 +53,15 @@ from routes import (
     Mapper,
     request_config,
 )
-from starlette.datastructures import Headers
+from starlette.datastructures import (
+    Headers,
+    URL,
+)
 from starlette.routing import (
     Match,
     NoMatchFound,
 )
 from starlette.types import Scope
-from typing_extensions import Literal
 
 try:
     from starlette_context import context as request_context
@@ -79,6 +84,11 @@ from galaxy.model import User
 from galaxy.schema.fields import DecodedDatabaseIdField
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.structured_app import StructuredApp
+from galaxy.tool_util.parameters import (
+    HasToolParameters,
+    to_json_schema_string,
+    ToolState,
+)
 from galaxy.web.framework.decorators import require_admin_message
 from galaxy.webapps.base.controller import BaseAPIController
 from galaxy.webapps.galaxy.api.cbv import cbv
@@ -213,15 +223,38 @@ class UrlBuilder:
                 else:
                     url = str(self.request.url_for(name, **path_params))
             else:
-                url = self.request.app.url_path_for(name, **path_params)
+                url = self._url_path_for(name, **path_params)
             if query_params:
                 url = f"{url}?{urlencode(query_params)}"
             return url
         except NoMatchFound:
-            # Fallback to legacy url_for
+            # Fallback to legacy WSGI url_for for routes not registered with FastAPI
             if query_params:
                 path_params.update(query_params)
-            return web.url_for(name, **path_params)
+            url = web.url_for(name, **path_params)
+            if qualified and not url.startswith(("http://", "https://")):
+                # routes.url_for has no thread-local request_config in an ASGI
+                # request, so qualify the URL using the FastAPI request base_url.
+                url = str(self.request.base_url).rstrip("/") + url
+            return url
+
+    def _url_path_for(self, name: str, **path_params) -> str:
+        """O(1) route lookup using the app's pre-built name index.
+
+        The index is built once at startup in initialize_fast_app and maps
+        route names to their route objects, replacing Starlette's O(n)
+        linear scan with a direct dict lookup.
+        """
+        candidates = self.request.app.state.route_name_index.get(name)
+        if candidates is not None:
+            for route in candidates:
+                try:
+                    return route.url_path_for(name, **path_params)
+                except NoMatchFound:
+                    pass
+            raise NoMatchFound(name, path_params)
+        # Fallback for names not in the index (e.g. Mount sub-routes)
+        return self.request.app.url_path_for(name, **path_params)
 
 
 class GalaxyASGIRequest(GalaxyAbstractRequest):
@@ -247,6 +280,10 @@ class GalaxyASGIRequest(GalaxyAbstractRequest):
         if root_path := scope.get("root_path"):
             url = urljoin(url, root_path)
         return url
+
+    @property
+    def url(self) -> URL:
+        return self.__request.url
 
     @property
     def host(self) -> str:
@@ -522,6 +559,15 @@ class FrameworkRouter(APIRouter):
             openapi_extra["security"] = []
         if openapi_extra:
             kwd["openapi_extra"] = openapi_extra
+
+        unstable = kwd.pop("unstable", False)
+        if unstable:
+            warning = "**Warning**: This API is unstable and may change without notice.\n\n"
+            if "description" in kwd:
+                kwd["description"] = warning + kwd["description"]
+            else:
+                kwd["description"] = warning
+
         return kwd
 
     @property
@@ -625,6 +671,14 @@ def as_form(cls: type[BaseModel]):
     return cls
 
 
+def json_schema_response_for_tool_state_model(
+    state_type: type[ToolState], has_parameters: HasToolParameters
+) -> Response:
+    pydantic_model = state_type.parameter_model_for(has_parameters)
+    json_str = to_json_schema_string(pydantic_model)
+    return Response(content=json_str, media_type="application/json")
+
+
 async def try_get_request_body_as_json(request: Request) -> Optional[Any]:
     """Returns the request body as a JSON object if the content type is JSON."""
     if "application/json" in request.headers.get("content-type", ""):
@@ -633,8 +687,7 @@ async def try_get_request_body_as_json(request: Request) -> Optional[Any]:
     return None
 
 
-search_description_template = Template(
-    """A mix of free text and GitHub-style tags used to filter the index operation.
+search_description_template = Template("""A mix of free text and GitHub-style tags used to filter the index operation.
 
 ## Query Structure
 
@@ -659,8 +712,7 @@ ${tags}
 Free text search terms will be searched against the following attributes of the
 ${model_name}s: ${freetext}.
 
-"""
-)
+""")
 
 
 class IndexQueryTag(NamedTuple):

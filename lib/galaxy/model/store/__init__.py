@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 from collections import defaultdict
 from collections.abc import (
+    Callable,
     Iterable,
     Iterator,
 )
@@ -22,7 +23,6 @@ from tempfile import mkdtemp
 from types import TracebackType
 from typing import (
     Any,
-    Callable,
     cast,
     Literal,
     Optional,
@@ -48,6 +48,7 @@ from sqlalchemy.orm.scoping import scoped_session
 from sqlalchemy.sql import expression
 from typing_extensions import Protocol
 
+from galaxy import model
 from galaxy.datatypes.registry import Registry
 from galaxy.exceptions import (
     MalformedContents,
@@ -122,7 +123,6 @@ from ..item_attrs import (
     add_item_annotation,
     get_item_annotation_str,
 )
-from ... import model
 
 if TYPE_CHECKING:
     from galaxy.managers.workflows import WorkflowContentsManager
@@ -435,13 +435,15 @@ class ModelImportStore(metaclass=abc.ABCMeta):
         dataset_or_file_attrs: dict[str, Any],
         dataset_instance: model.DatasetInstance,
     ) -> None:
+        dataset = dataset_instance.dataset
+        assert dataset is not None
         if "hashes" in dataset_or_file_attrs:
             for hash_attrs in dataset_or_file_attrs["hashes"]:
                 hash_obj = model.DatasetHash()
                 hash_obj.hash_value = hash_attrs["hash_value"]
                 hash_obj.hash_function = hash_attrs["hash_function"]
                 hash_obj.extra_files_path = hash_attrs["extra_files_path"]
-                dataset_instance.dataset.hashes.append(hash_obj)
+                dataset.hashes.append(hash_obj)
 
     def _attach_dataset_sources(
         self,
@@ -472,6 +474,7 @@ class ModelImportStore(metaclass=abc.ABCMeta):
                     hash_obj.hash_function = hash_attrs["hash_function"]
                     source_obj.hashes.append(hash_obj)
 
+                assert dataset_instance.dataset is not None
                 dataset_instance.dataset.sources.append(source_obj)
 
     def _import_datasets(
@@ -611,6 +614,7 @@ class ModelImportStore(metaclass=abc.ABCMeta):
                     dataset_instance.metadata = metadata
                 self._attach_raw_id_if_editing(dataset_instance, dataset_attrs)
 
+                assert dataset_instance.dataset is not None
                 # Older style...
                 if self.import_options.allow_edit:
                     if "uuid" in dataset_attrs:
@@ -671,7 +675,6 @@ class ModelImportStore(metaclass=abc.ABCMeta):
                         dataset_instance.deleted = False
                         if isinstance(dataset_instance, model.HistoryDatasetAssociation):
                             dataset_instance.purged = False
-                        assert dataset_instance.dataset
                         dataset_instance.dataset.deleted = False
                         dataset_instance.dataset.purged = False
                     elif (
@@ -688,7 +691,6 @@ class ModelImportStore(metaclass=abc.ABCMeta):
                         dataset_instance.deleted = deleted
                         if isinstance(dataset_instance, model.HistoryDatasetAssociation):
                             dataset_instance.purged = deleted
-                        assert dataset_instance.dataset
                         dataset_instance.dataset.state = target_state
                         dataset_instance.dataset.deleted = deleted
                         dataset_instance.dataset.purged = deleted
@@ -899,6 +901,11 @@ class ModelImportStore(metaclass=abc.ABCMeta):
                 for attribute in attributes:
                     if attribute in collection_attrs:
                         setattr(dc, attribute, collection_attrs.get(attribute))
+                # Clear existing elements to avoid duplicates when re-importing
+                if "elements" in collection_attrs:
+                    for element in list(dc.elements):
+                        self.sa_session.delete(element)
+                    dc.elements.clear()
                 materialize_elements(dc)
             else:
                 # create collection
@@ -1272,6 +1279,29 @@ class ModelImportStore(metaclass=abc.ABCMeta):
 
             if object_key in invocation_attrs:
                 object_import_tracker.invocations_by_key[invocation_attrs[object_key]] = imported_invocation
+
+        # Second pass: link subworkflow invocations after all invocations are imported
+        for invocation_attrs in invocations_attrs:
+            if object_key not in invocation_attrs:
+                continue
+            parent_invocation = object_import_tracker.invocations_by_key.get(invocation_attrs[object_key])
+            if not parent_invocation:
+                continue
+            for subworkflow_invocation_attrs in invocation_attrs.get("subworkflow_invocations", []):
+                subworkflow_invocation_link = subworkflow_invocation_attrs.get("subworkflow_invocation", {})
+                subworkflow_invocation_key = subworkflow_invocation_link.get(object_key)
+                if not subworkflow_invocation_key:
+                    continue
+                subworkflow_invocation = object_import_tracker.invocations_by_key.get(subworkflow_invocation_key)
+                if not subworkflow_invocation:
+                    continue
+                order_index = subworkflow_invocation_attrs.get("order_index")
+                workflow_step = parent_invocation.workflow.step_by_index(order_index)
+                assoc = model.WorkflowInvocationToSubworkflowInvocationAssociation()
+                assoc.workflow_invocation_id = parent_invocation.id
+                assoc.subworkflow_invocation_id = subworkflow_invocation.id
+                assoc.workflow_step = workflow_step
+                self._session_add(assoc)
 
     def _import_jobs(self, object_import_tracker: "ObjectImportTracker", history: Optional[model.History]) -> None:
         self._flush()
@@ -1661,6 +1691,7 @@ class BaseDirectoryImportModelStore(ModelImportStore):
             "job_stdout",
             "job_stderr",
             "galaxy_version",
+            "tool_state",
             "object_store_id",
             "object_store_id_overrides",
         )
@@ -1691,14 +1722,8 @@ class BaseDirectoryImportModelStore(ModelImportStore):
 def restore_times(
     model_object: Union[model.Job, model.WorkflowInvocation, model.WorkflowInvocationStep], attrs: dict[str, Any]
 ) -> None:
-    try:
-        model_object.create_time = datetime.datetime.strptime(attrs["create_time"], "%Y-%m-%dT%H:%M:%S.%f")
-    except Exception:
-        pass
-    try:
-        model_object.update_time = datetime.datetime.strptime(attrs["update_time"], "%Y-%m-%dT%H:%M:%S.%f")
-    except Exception:
-        pass
+    model_object.create_time = datetime.datetime.fromisoformat(attrs["create_time"])
+    model_object.update_time = datetime.datetime.fromisoformat(attrs["update_time"])
 
 
 class DirectoryImportModelStore1901(BaseDirectoryImportModelStore):
@@ -1943,6 +1968,7 @@ class DirectoryModelExportStore(ModelExportStore):
         strip_metadata_files: bool = True,
         serialize_jobs: bool = True,
         user_context=None,
+        ignore_errors: Optional[bool] = False,
     ) -> None:
         """
         :param export_directory: path to export directory. Will be created if it does not exist.
@@ -1979,6 +2005,7 @@ class DirectoryModelExportStore(ModelExportStore):
             serialize_dataset_objects=serialize_dataset_objects,
             strip_metadata_files=strip_metadata_files,
             serialize_files_handler=self,
+            ignore_errors=ignore_errors,
         )
         self.export_files = export_files
         self.included_datasets: dict[model.DatasetInstance, tuple[model.DatasetInstance, bool]] = {}
@@ -2039,6 +2066,7 @@ class DirectoryModelExportStore(ModelExportStore):
         dir_name = "datasets"
         dir_path = os.path.join(export_directory, dir_name)
 
+        assert dataset.dataset is not None
         if dataset.dataset.id in self.dataset_id_to_path:
             file_name, extra_files_path = self.dataset_id_to_path[dataset.dataset.id]
             if file_name is not None:
@@ -2345,6 +2373,14 @@ class DirectoryModelExportStore(ModelExportStore):
                     assoc.dataset_collection, include_hidden=include_hidden, include_deleted=include_deleted
                 )
 
+        # Recursively export subworkflow invocations
+        for subworkflow_invocation_assoc in workflow_invocation.subworkflow_invocations:
+            subworkflow_invocation = subworkflow_invocation_assoc.subworkflow_invocation
+            if subworkflow_invocation:
+                self.export_workflow_invocation(
+                    subworkflow_invocation, include_hidden=include_hidden, include_deleted=include_deleted
+                )
+
     def add_job_output_dataset_associations(
         self, job_id: int, name: str, dataset_instance: model.DatasetInstance
     ) -> None:
@@ -2401,6 +2437,7 @@ class DirectoryModelExportStore(ModelExportStore):
         self.included_datasets[dataset] = (dataset, include_files)
 
     def _ensure_dataset_file_exists(self, dataset: model.DatasetInstance) -> None:
+        assert dataset.dataset is not None
         state = dataset.dataset.state
         if state in [model.Dataset.states.OK] and not dataset.get_file_name():
             log.error(
@@ -2542,7 +2579,7 @@ class DirectoryModelExportStore(ModelExportStore):
             if not self.app:
                 raise Exception(f"Missing self.app in {self}.")
             self.app.workflow_contents_manager.store_workflow_artifacts(
-                workflows_directory, workflow_key, workflow, user=history.user, history=history
+                workflows_directory, workflow_key, workflow, history=history, user=history.user
             )
             invocations_attrs.append(invocation_attrs)
 
@@ -2577,7 +2614,7 @@ class WriteCrates:
 
     def _generate_markdown_readme(self) -> str:
         markdown_parts: list[str] = []
-        if self._is_single_invocation_export():
+        if self._is_invocation_export():
             invocation = self.included_invocations[0]
             name = invocation.workflow.name
             create_time = invocation.create_time
@@ -2589,11 +2626,13 @@ class WriteCrates:
 
         return "\n".join(markdown_parts)
 
-    def _is_single_invocation_export(self) -> bool:
-        return len(self.included_invocations) == 1
+    def _is_invocation_export(self) -> bool:
+        # Maybe we need to have more complicated logic here to discriminate a history export from a workflow invocation export.
+        # But for now we only populate included_invocations when exporting a workflow invocation, so this is fine.
+        return bool(self.included_invocations)
 
     def _init_crate(self) -> ROCrate:
-        is_invocation_export = self._is_single_invocation_export()
+        is_invocation_export = self._is_invocation_export()
         if is_invocation_export:
             invocation_crate_builder = WorkflowRunCrateProfileBuilder(self)
             return invocation_crate_builder.build_crate()
@@ -2611,7 +2650,7 @@ class WriteCrates:
         with open(markdown_path, "w") as f:
             f.write(self._generate_markdown_readme())
 
-        properties = {
+        properties: dict[str, Any] = {
             "name": "README.md",
             "encodingFormat": "text/markdown",
             "about": {"@id": "./"},
@@ -2623,6 +2662,7 @@ class WriteCrates:
         )
 
         for dataset, _ in self.included_datasets.values():
+            assert dataset.dataset is not None
             if dataset.dataset.id in self.dataset_id_to_path:
                 file_name, _ = self.dataset_id_to_path[dataset.dataset.id]
                 if file_name is None:
@@ -3008,6 +3048,7 @@ def get_export_store_factory(
     export_files=None,
     bco_export_options: Optional[BcoExportOptions] = None,
     user_context=None,
+    ignore_errors: Optional[bool] = False,
 ) -> Callable[[StrPath], FileSourceModelExportStore]:
     export_store_class: type[FileSourceModelExportStore]
     export_store_class_kwds = {
@@ -3015,6 +3056,7 @@ def get_export_store_factory(
         "export_files": export_files,
         "serialize_dataset_objects": False,
         "user_context": user_context,
+        "ignore_errors": ignore_errors,
     }
     if download_format in ["tar.gz", "tgz"]:
         export_store_class = TarModelExportStore
@@ -3050,7 +3092,7 @@ def get_export_dataset_filename(name: str, ext: str, encoded_id: str, conversion
     """
     Builds a filename for a dataset using its name an extension.
     """
-    base = "".join(c in FILENAME_VALID_CHARS and c or "_" for c in name)
+    base = "".join(c in FILENAME_VALID_CHARS and c or "_" for c in name)[:150]
     if not conversion_key:
         return f"{base}_{encoded_id}.{ext}"
     else:

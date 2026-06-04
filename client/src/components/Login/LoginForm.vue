@@ -15,6 +15,8 @@ import {
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router/composables";
 
+import { SKIP_PENDING_REQUESTS_HEADER } from "@/api/pendingRequests";
+import { discardActiveConnectionsBeforeAuthNavigation } from "@/composables/useAuthNavigation";
 import localize from "@/utils/localization";
 import { withPrefix } from "@/utils/redirect";
 import { errorMessageAsString } from "@/utils/simple-error";
@@ -55,8 +57,10 @@ const login = ref("");
 const password = ref(null);
 const passwordState = ref<boolean | null>(null);
 const loading = ref(false);
-const messageText = ref("");
-const messageVariant = ref<"info" | "danger">("info");
+const networkMessage = urlParams.get("message") || "";
+const messageText = ref(networkMessage);
+const statusParam = urlParams.get("status");
+const messageVariant = ref<"info" | "danger">(statusParam === "info" ? "info" : "danger");
 const connectExternalEmail = ref(urlParams.get("connect_external_email"));
 const connectExternalLabel = ref(urlParams.get("connect_external_label"));
 const connectExternalProvider = ref(urlParams.get("connect_external_provider"));
@@ -84,13 +88,22 @@ async function submitLogin() {
         redirect = props.redirect ?? null;
     }
 
+    // Stop polling and abort in-flight axios/GalaxyApi before sending the
+    // login POST — otherwise a late anonymous-cookie response can overwrite
+    // the authenticated cookie we're about to receive.
+    discardActiveConnectionsBeforeAuthNavigation();
+
     try {
-        const response = await axios.post(withPrefix("/user/login"), {
-            login: login.value,
-            password: password.value,
-            redirect: redirect,
-            session_csrf_token: props.sessionCsrfToken,
-        });
+        const response = await axios.post(
+            withPrefix("/user/login"),
+            {
+                login: login.value,
+                password: password.value,
+                redirect: redirect,
+                session_csrf_token: props.sessionCsrfToken,
+            },
+            { headers: { [SKIP_PENDING_REQUESTS_HEADER]: "1" } },
+        );
 
         if (response.data.message && response.data.status) {
             alert(response.data.message);

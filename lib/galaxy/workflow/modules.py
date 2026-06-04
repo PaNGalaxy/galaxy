@@ -31,6 +31,8 @@ from galaxy.job_execution.actions.post import ActionBox
 from galaxy.job_execution.compute_environment import ComputeEnvironment
 from galaxy.managers.credentials import _build_user_credentials_query
 from galaxy.model import (
+    DatasetInstance,
+    HistoryDatasetCollectionAssociation,
     Job,
     PostJobAction,
     Workflow,
@@ -40,9 +42,11 @@ from galaxy.model import (
 )
 from galaxy.model.base import ensure_object_added_to_session
 from galaxy.model.dataset_collections import matching
+from galaxy.model.dataset_collections.adapters import PromoteCollectionElementToCollectionAdapter
 from galaxy.model.dataset_collections.query import HistoryQuery
 from galaxy.model.dataset_collections.type_description import COLLECTION_TYPE_DESCRIPTION_FACTORY
 from galaxy.model.dataset_collections.types.sample_sheet_util import validate_column_definitions
+from galaxy.objectstore import ObjectStorePopulator
 from galaxy.schema.credentials import (
     CredentialsContext,
     SelectedGroup,
@@ -55,6 +59,7 @@ from galaxy.schema.invocation import (
     InvocationFailureDatasetFailed,
     InvocationFailureExpressionEvaluationFailed,
     InvocationFailureOutputNotFound,
+    InvocationFailureStepInputDeleted,
     InvocationFailureWhenNotBoolean,
     InvocationFailureWorkflowParameterInvalid,
 )
@@ -65,7 +70,10 @@ from galaxy.tool_util.parser.output_objects import (
     ToolOutput,
     ToolOutputCollection,
 )
-from galaxy.tool_util_models.dynamic_tool_models import DynamicToolCreatePayload
+from galaxy.tool_util_models.dynamic_tool_models import (
+    DynamicToolCreatePayload,
+    DynamicUnprivilegedToolCreatePayload,
+)
 from galaxy.tools import (
     DatabaseOperationTool,
     DefaultToolState,
@@ -93,6 +101,7 @@ from galaxy.tools.parameters.basic import (
     HiddenToolParameter,
     IntegerToolParameter,
     parameter_types,
+    ParameterValueError,
     raw_to_galaxy,
     SelectToolParameter,
     TextToolParameter,
@@ -122,6 +131,7 @@ from galaxy.util.json import safe_loads
 from galaxy.util.rules_dsl import RuleSet
 from galaxy.util.template import fill_template
 from galaxy.util.tool_shed.common_util import get_tool_shed_url_from_tool_shed_registry
+from galaxy.util.tool_version import remove_version_from_guid
 from galaxy.workflow.workflow_parameter_input_definitions import (
     get_default_parameter,
     INPUT_PARAMETER_TYPES,
@@ -166,6 +176,7 @@ def to_cwl(
         element_identifier = value.element_identifier
         value = value.element_object
     if isinstance(value, model.HistoryDatasetAssociation):
+        assert value.dataset is not None
         # I think the following two checks are needed but they may
         # not be needed.
         if step:
@@ -173,6 +184,12 @@ def to_cwl(
                 why = f"dataset [{value.id}] is needed for valueFrom expression and is non-ready"
                 raise DelayedWorkflowEvaluation(why=why)
             if not value.is_ok:
+                raise FailWorkflowEvaluation(
+                    why=InvocationFailureDatasetFailed(
+                        reason=FailureReason.dataset_failed, hda_id=value.id, workflow_step_id=step.id
+                    )
+                )
+            if value.dataset.purged:
                 raise FailWorkflowEvaluation(
                     why=InvocationFailureDatasetFailed(
                         reason=FailureReason.dataset_failed, hda_id=value.id, workflow_step_id=step.id
@@ -501,7 +518,9 @@ class WorkflowModule:
 
             def update_value(input, context, prefixed_name, **kwargs):
                 if prefixed_name in step_updates:
-                    value, error = check_param(trans, input, step_updates.get(prefixed_name), context)
+                    value, error = check_param(
+                        trans, input, step_updates.get(prefixed_name), context, simple_errors=False
+                    )
                     if error is not None:
                         step_errors[prefixed_name] = error
                     return value
@@ -638,6 +657,20 @@ class WorkflowModule:
 
                 subcollection_type_description = history_query.can_map_over(data) or None
                 if subcollection_type_description:
+                    # Translate paired_or_unpaired to concrete mapping type for
+                    # flat collections. Mirrors logic in basic.py:2675-2679 that
+                    # the API tool execution path uses.
+                    _sub_ct = subcollection_type_description.collection_type
+                    _hdca_ct = data.collection.collection_type
+                    if _sub_ct == "paired_or_unpaired" and not _hdca_ct.endswith("paired_or_unpaired"):
+                        if _hdca_ct.endswith("paired"):
+                            subcollection_type_description = dataset_collection_type_descriptions.for_collection_type(
+                                "paired"
+                            )
+                        else:
+                            subcollection_type_description = dataset_collection_type_descriptions.for_collection_type(
+                                "single_datasets"
+                            )
                     subcollection_type_list = subcollection_type_description.collection_type.split(":")
                     for collection_type in reversed(subcollection_type_list):
                         if type_list:
@@ -748,7 +781,7 @@ class SubWorkflowModule(WorkflowModule):
         return self._modules
 
     @property
-    def version_changes(self):
+    def version_changes(self) -> list[str]:
         version_changes = []
         for m in self.get_modules():
             if hasattr(m, "version_changes"):
@@ -1166,8 +1199,7 @@ class InputDataCollectionModule(InputModule):
                 fields=fields,
             )
             collection_type_description.validate()
-        column_definitions = state.get("column_definitions")
-        if column_definitions:
+        if column_definitions := state.get("column_definitions"):
             validate_column_definitions(column_definitions)
         return None
 
@@ -1921,6 +1953,334 @@ class PauseModule(WorkflowModule):
         return bool(action)
 
 
+class PickValueModule(WorkflowModule):
+    """Workflow module that selects among conditional branch outputs.
+
+    Accepts N inputs from conditional steps and produces a single output
+    based on the configured selection mode. Supports first_non_null,
+    first_or_skip, the_only_non_null, and all_non_null modes.
+    """
+
+    type = "pick_value"
+    name = "Pick Value"
+
+    MODES = ("first_non_null", "first_or_skip", "the_only_non_null", "all_non_null")
+
+    def __init__(self, trans, content_id=None, **kwds):
+        super().__init__(trans, content_id=content_id, **kwds)
+        self.post_job_actions: dict[str, Any] = {}
+
+    @classmethod
+    def from_dict(Class, trans, d, **kwds):
+        module = super().from_dict(trans, d, **kwds)
+        module.post_job_actions = d.get("post_job_actions", {})
+        return module
+
+    @classmethod
+    def from_workflow_step(Class, trans, step, **kwds):
+        module = super().from_workflow_step(trans, step, **kwds)
+        module.post_job_actions = {}
+        for pja in step.post_job_actions:
+            module.post_job_actions[pja.action_type + pja.output_name] = pja
+        return module
+
+    def get_post_job_actions(self, incoming):
+        return self.post_job_actions
+
+    def get_inputs(self):
+        # State managed by frontend Vue component, not backend forms
+        return {}
+
+    def validate_state(self, inputs: dict[str, Any]) -> None:
+        mode = inputs.get("mode")
+        if mode and mode not in self.MODES:
+            raise ValueError(f"Invalid pick_value mode: {mode}")
+
+    def get_export_state(self):
+        return self._get_state_dict()
+
+    def _get_state_dict(self):
+        mode = self.state.inputs.get("mode", "first_non_null")
+        num_inputs = self.state.inputs.get("num_inputs", 2)
+        return {"mode": mode, "num_inputs": num_inputs}
+
+    def save_to_step(self, step, detached=False):
+        step.type = self.type
+        step.tool_inputs = self._get_state_dict()
+        if not detached:
+            for k, v in self.post_job_actions.items():
+                pja = self._to_pja(k, v, step)
+                self.trans.sa_session.add(pja)
+
+    @property
+    def _num_inputs(self):
+        """Number of input terminals — at least 2, grows with connections."""
+        num_from_state = self.state.inputs.get("num_inputs", 2)
+        num_from_connections = 0
+        if hasattr(self, "workflow_step") and self.workflow_step:
+            num_from_connections = len(self.workflow_step.input_connections_by_name)
+        return max(2, num_from_state, num_from_connections)
+
+    def get_all_inputs(self, data_only=False, connectable_only=False):
+        inputs = []
+        # N connected terminals + 1 empty terminal for grow-on-connect
+        for i in range(self._num_inputs + 1):
+            inputs.append(
+                dict(
+                    name=f"input_{i}",
+                    label=f"Input {i}",
+                    multiple=False,
+                    extensions=["input"],
+                    input_type="dataset",
+                    optional=True,
+                )
+            )
+        return inputs
+
+    def get_all_outputs(self, data_only=False):
+        mode = self.state.inputs.get("mode", "first_non_null")
+        if mode == "all_non_null":
+            return [
+                dict(
+                    name="output",
+                    label="Picked values",
+                    extensions=["input"],
+                    collection=True,
+                    collection_type="list",
+                )
+            ]
+        return [
+            dict(
+                name="output",
+                label="Picked value",
+                extensions=["input"],
+            )
+        ]
+
+    def get_runtime_state(self):
+        state = DefaultToolState()
+        state.inputs = {}
+        return state
+
+    @staticmethod
+    def _is_null_or_skipped(value) -> bool:
+        """Check if a replacement value represents a skipped/null output."""
+        if value is NO_REPLACEMENT:
+            return True
+        if isinstance(value, model.HistoryDatasetAssociation):
+            if value.extension == "expression.json" and value.blurb == "skipped":
+                return True
+        return False
+
+    def _pick_from_replacements(self, trans, invocation_step, mode, replacements):
+        """Apply pick logic to a list of replacement values. Returns the picked output."""
+        step = invocation_step.workflow_step
+        non_null = [r for r in replacements if not self._is_null_or_skipped(r)]
+
+        if mode == "first_non_null":
+            if not non_null:
+                raise FailWorkflowEvaluation(
+                    why=InvocationFailureExpressionEvaluationFailed(
+                        reason=FailureReason.expression_evaluation_failed,
+                        workflow_step_id=step.id,
+                    )
+                )
+            return non_null[0]
+
+        elif mode == "first_or_skip":
+            if not non_null:
+                return self._create_skipped_output(trans, invocation_step)
+            return non_null[0]
+
+        elif mode == "the_only_non_null":
+            if len(non_null) != 1:
+                raise FailWorkflowEvaluation(
+                    why=InvocationFailureExpressionEvaluationFailed(
+                        reason=FailureReason.expression_evaluation_failed,
+                        workflow_step_id=step.id,
+                    )
+                )
+            return non_null[0]
+
+        elif mode == "all_non_null":
+            return self._create_collection_from_list(trans, invocation_step, non_null)
+
+        else:
+            raise ValueError(f"Unknown pick_value mode: {mode}")
+
+    def execute(
+        self, trans, progress: "WorkflowProgress", invocation_step, use_cached_job: bool = False
+    ) -> Optional[bool]:
+        step = invocation_step.workflow_step
+        mode = step.tool_inputs.get("mode", "first_non_null") if step.tool_inputs else "first_non_null"
+        all_inputs = self.get_all_inputs()
+
+        collection_info = self.compute_collection_info(progress, step, all_inputs)
+
+        if collection_info:
+            output = self._execute_mapped(trans, invocation_step, mode, all_inputs, collection_info)
+        else:
+            # Gather replacements from each named input terminal, in order
+            replacements = []
+            for input_dict in all_inputs:
+                replacement = progress.replacement_for_input(trans, step, input_dict)
+                if replacement is not NO_REPLACEMENT:
+                    replacements.append(replacement)
+            output = self._pick_from_replacements(trans, invocation_step, mode, replacements)
+
+        progress.set_step_outputs(invocation_step, {"output": output})
+        self._apply_post_job_actions(trans, step, output, progress.effective_replacement_dict())
+        return None
+
+    def _execute_mapped(self, trans, invocation_step, mode, all_inputs, collection_info):
+        """Execute pick_value mapped over collection inputs."""
+        invocation = invocation_step.workflow_invocation
+        history = invocation.history
+
+        # Build a map of input_name -> input_dict for quick lookup
+        input_names = {d["name"] for d in all_inputs}
+
+        per_element_outputs: list[tuple[str, Any]] = []
+        for iteration_elements, _when_value in collection_info.slice_collections():
+            # For each slice, extract per-element replacements
+            replacements = []
+            for input_dict in all_inputs:
+                name = input_dict["name"]
+                if iteration_elements and name in iteration_elements:
+                    dce = iteration_elements[name]
+                    replacement = dce.hda if hasattr(dce, "hda") and dce.hda else dce.child_collection
+                else:
+                    # Input not part of the mapped collection — not connected
+                    replacement = NO_REPLACEMENT
+                if replacement is not NO_REPLACEMENT:
+                    replacements.append(replacement)
+
+            element_output = self._pick_from_replacements(trans, invocation_step, mode, replacements)
+            # Track the identifier from the first mapped input for naming
+            first_mapped = (
+                next(
+                    (iteration_elements[n] for n in sorted(iteration_elements) if n in input_names),
+                    None,
+                )
+                if iteration_elements
+                else None
+            )
+            identifier = first_mapped.element_identifier if first_mapped else str(len(per_element_outputs))
+            per_element_outputs.append((identifier, element_output))
+
+        # Build the output collection from per-element outputs
+        return self._create_mapped_output_collection(trans, history, mode, per_element_outputs)
+
+    def _create_skipped_output(self, trans, invocation_step):
+        """Create a skipped HDA for first_or_skip when all inputs are null."""
+        invocation = invocation_step.workflow_invocation
+        history = invocation.history
+        hda = model.HistoryDatasetAssociation(
+            name="Pick Value - skipped",
+            history=history,
+            create_dataset=True,
+            flush=False,
+        )
+        history.add_dataset(hda)
+        object_store_populator = ObjectStorePopulator(trans.app, trans.user)
+        hda.set_skipped(object_store_populator, replace_dataset=False)
+        trans.sa_session.add(hda)
+        return hda
+
+    def _create_collection_from_list(self, trans, invocation_step, hdas):
+        """Create an HDCA from a list of non-null HDAs for all_non_null mode."""
+        invocation = invocation_step.workflow_invocation
+        history = invocation.history
+        elements = []
+        for i, hda in enumerate(hdas):
+            elements.append(
+                dict(
+                    name=str(i),
+                    src="hda",
+                    id=hda.id,
+                )
+            )
+        collection_manager = trans.app.dataset_collection_manager
+        hdca = collection_manager.create(
+            trans,
+            history,
+            name="Pick Value - all non-null",
+            collection_type="list",
+            element_identifiers=elements,
+        )
+        return hdca
+
+    def _create_mapped_output_collection(self, trans, history, mode, per_element_outputs):
+        """Create an implicit output collection from per-element pick results.
+
+        For single-value modes (first_non_null, etc.), creates a flat list of HDAs.
+        For all_non_null mode, creates a list:list where each element is a sub-collection.
+        """
+        collection_manager = trans.app.dataset_collection_manager
+        if mode == "all_non_null":
+            # Each element is an HDCA — build list:list
+            elements = []
+            for identifier, hdca in per_element_outputs:
+                elements.append(
+                    dict(
+                        name=identifier,
+                        src="hdca",
+                        id=hdca.id,
+                    )
+                )
+            return collection_manager.create(
+                trans,
+                history,
+                name="Pick Value - mapped all non-null",
+                collection_type="list:list",
+                element_identifiers=elements,
+            )
+        else:
+            # Each element is an HDA — build flat list
+            elements = []
+            for identifier, hda in per_element_outputs:
+                elements.append(
+                    dict(
+                        name=identifier,
+                        src="hda",
+                        id=hda.id,
+                    )
+                )
+            return collection_manager.create(
+                trans,
+                history,
+                name="Pick Value - mapped",
+                collection_type="list",
+                element_identifiers=elements,
+            )
+
+    def _apply_post_job_actions(self, trans, step, output, replacement_dict):
+        """Apply post job actions directly to module output via ActionBox.
+
+        Uses execute_on_mapped_over which operates on step_outputs dict
+        rather than requiring a Job object. Skipped outputs are left untouched.
+        """
+        if self._is_null_or_skipped(output):
+            return
+        step_outputs = {"output": output}
+        step_inputs: dict[str, Any] = {}
+        for pja in step.post_job_actions:
+            ActionBox.execute_on_mapped_over(trans, trans.sa_session, pja, step_inputs, step_outputs, replacement_dict)
+
+    @staticmethod
+    def _to_pja(key, value, step):
+        if isinstance(value, PostJobAction):
+            return value
+        if not isinstance(value, dict):
+            raise TypeError(f"Expected PostJobAction or dict for PJA '{key}', got {type(value)}")
+        return PostJobAction(
+            value["action_type"],
+            step,
+            value.get("output_name"),
+            value.get("action_arguments"),
+        )
+
+
 class ToolModule(WorkflowModule):
     type = "tool"
     name = "Tool"
@@ -1967,13 +2327,34 @@ class ToolModule(WorkflowModule):
         if tool_version:
             tool_version = str(tool_version)
         tool_uuid = d.get("tool_uuid", None)
+        if tool_version == "latest":
+            # Resolve to the actual latest installed version via lineage rather than matching the exact GUID.
+            # This mirrors what &version=latest does in the tool form.
+            tool_version = None
+            if tool_id:
+                tool_id = remove_version_from_guid(tool_id) or tool_id
+            kwds = dict(kwds, exact_tools=False)
         if tool_id is None and tool_uuid is None:
             tool_representation = d.get("tool_representation")
             if tool_representation:
-                create_request = DynamicToolCreatePayload(src="representation", representation=tool_representation)
-                if not trans.user_is_admin:
-                    raise exceptions.AdminRequiredException("Only admin users can create tools dynamically.")
-                dynamic_tool = trans.app.dynamic_tool_manager.create_tool(create_request)
+                if tool_representation.get("class") == "GalaxyUserTool":
+                    # User-defined tool embedded in the workflow: create it as a
+                    # private UDT owned by the importing user. Requires
+                    # USER_TOOL_EXECUTE; create_unprivileged_tool raises
+                    # InsufficientPermissionsException otherwise.
+                    if trans.user is None:
+                        raise exceptions.InsufficientPermissionsException(
+                            "User is not allowed to run unprivileged tools"
+                        )
+                    unprivileged_request = DynamicUnprivilegedToolCreatePayload(representation=tool_representation)
+                    dynamic_tool = trans.app.dynamic_tool_manager.create_unprivileged_tool(
+                        trans.user, unprivileged_request
+                    )
+                else:
+                    if not trans.user_is_admin:
+                        raise exceptions.AdminRequiredException("Only admin users can create tools dynamically.")
+                    create_request = DynamicToolCreatePayload(src="representation", representation=tool_representation)
+                    dynamic_tool = trans.app.dynamic_tool_manager.create_tool(create_request)
                 tool_uuid = dynamic_tool.uuid
         if tool_id is None and tool_uuid is None:
             raise exceptions.RequestParameterInvalidException(f"No content id could be located for for step [{d}]")
@@ -2375,9 +2756,12 @@ class ToolModule(WorkflowModule):
             # TODO: why do we even create an invocation, seems like something we could check on submit?
             message = f"Specified tool [{tool.id}] in step {step.order_index + 1} is not workflow-compatible."
             raise exceptions.MessageException(message)
-        self.state, _ = self.compute_runtime_state(
+        self.state, step_errors = self.compute_runtime_state(
             trans, step, step_updates=progress.param_map.get(step.id), replace_default_values=True
         )
+        if step_errors:
+            failure = self._build_step_error_failure(trans, step, step_errors, progress)
+            raise FailWorkflowEvaluation(why=failure)
         step.state = self.state
         tool_state = step.state
         assert tool_state is not None
@@ -2415,9 +2799,25 @@ class ToolModule(WorkflowModule):
             def callback(input, prefixed_name: str, **kwargs):
                 input_dict = all_inputs_by_name[prefixed_name]
 
-                replacement: Union[model.Dataset, NoReplacement] = NO_REPLACEMENT
+                replacement: Union[model.Dataset, NoReplacement, PromoteCollectionElementToCollectionAdapter] = (
+                    NO_REPLACEMENT
+                )
                 if iteration_elements and prefixed_name in iteration_elements:  # noqa: B023
                     replacement = iteration_elements[prefixed_name]  # noqa: B023
+                    # When mapping flat collections over paired_or_unpaired via
+                    # single_datasets, wrap each element in an adapter so the
+                    # tool sees a paired_or_unpaired collection.
+                    if (
+                        collection_info  # noqa: B023
+                        and isinstance(replacement, model.DatasetCollectionElement)
+                        and not replacement.child_collection
+                    ):
+                        mapping_type = collection_info.subcollection_mapping_type(prefixed_name)  # noqa: B023
+                        if (
+                            hasattr(mapping_type, "collection_type")
+                            and mapping_type.collection_type == "single_datasets"
+                        ):
+                            replacement = PromoteCollectionElementToCollectionAdapter(replacement)
                 else:
                     replacement = progress.replacement_for_input(trans, step, input_dict)
 
@@ -2575,6 +2975,36 @@ class ToolModule(WorkflowModule):
 
         return complete
 
+    @staticmethod
+    def _build_step_error_failure(trans, step, step_errors, progress):
+        """Build the appropriate invocation failure message for step parameter errors.
+
+        Inspects the ParameterValueError objects to determine whether the error
+        is due to a deleted dataset/collection input or a generic validation failure.
+        """
+        for error in step_errors.values():
+            if isinstance(error, ParameterValueError):
+                pv = error.parameter_value
+                if isinstance(pv, DatasetInstance) and pv.deleted:
+                    return InvocationFailureStepInputDeleted(
+                        reason=FailureReason.step_input_deleted,
+                        workflow_step_id=step.id,
+                        hda_id=pv.id,
+                        details=str(error),
+                    )
+                if isinstance(pv, HistoryDatasetCollectionAssociation) and pv.deleted:
+                    return InvocationFailureStepInputDeleted(
+                        reason=FailureReason.step_input_deleted,
+                        workflow_step_id=step.id,
+                        hdca_id=pv.id,
+                        details=str(error),
+                    )
+        return InvocationFailureWorkflowParameterInvalid(
+            reason=FailureReason.workflow_parameter_invalid,
+            workflow_step_id=step.id,
+            details=str({k: str(v) for k, v in step_errors.items()}),
+        )
+
     def _effective_post_job_actions(self, step):
         effective_post_job_actions = step.post_job_actions[:]
         for key, value in self.runtime_post_job_actions.items():
@@ -2701,6 +3131,7 @@ module_types = dict(
     data_collection_input=InputDataCollectionModule,
     parameter_input=InputParameterModule,
     pause=PauseModule,
+    pick_value=PickValueModule,
     tool=ToolModule,
     subworkflow=SubWorkflowModule,
 )
@@ -2809,7 +3240,8 @@ def populate_module_and_state(
         step_errors = module_injector.compute_runtime_state(step, step_args=step_args)
         if step_errors:
             raise exceptions.MessageException(
-                "Error computing workflow step runtime state", err_data={step.order_index: step_errors}
+                "Error computing workflow step runtime state",
+                err_data={step.order_index: {k: str(v) for k, v in step_errors.items()}},
             )
         if step.upgrade_messages:
             if allow_tool_state_corrections:

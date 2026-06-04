@@ -12,7 +12,6 @@ There are currently 3 supported backends.
 | Backend     | Description                                                                                                                                                                                                                                                                                                                                   |
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | hashicorp   | Hashicorp Vault is a secrets and encryption management system. https://www.vaultproject.io/                                                                                                                                                                                                                                                   |
-| custos      | Custos is an NSF-funded project, backed by open source software that provides science gateways such as Galaxy with single sign-on, group management, and management of secrets such as access keys and OAuth2 access tokens. Custos secrets management is backed by Hashicorp's vault, but provides a convenient, always-on ReST API service. |
 | database    | The database backend stores secrets in an encrypted table in the Galaxy database itself. It is a convenient way to get started with a vault, and while it supports basic key rotation, we recommend using one of the other options in production.                                                                                           |
 
 ## Configuring Galaxy
@@ -36,7 +35,7 @@ path_prefix: /galaxy  # optional
 ...
 ```
 
-The `type` must be a valid backend type: `hashicorp`, `custos`, or `database`. At present, only a single vault backend
+The `type` must be a valid backend type: `hashicorp`, or `database`. At present, only a single vault backend
 is supported. The `path_prefix` property indicates  the root path under which to store all vault keys. If multiple
 Galaxy instances are using the same vault, a prefix can  be used to uniquely identify the Galaxy instance.
 If no path_prefix is provided, the prefix defaults to `/galaxy`.
@@ -50,18 +49,32 @@ vault_address: http://localhost:8200
 vault_token: vault_application_token
 ```
 
-## Vault configuration for Custos
+### Token Renewal
+
+Galaxy supports automatic renewal of Hashicorp Vault tokens via a Celery Beat periodic task. This is the recommended approach for production deployments using renewable tokens with a short TTL.
+
+On startup, Galaxy checks whether the configured token is renewable and logs a warning if it is not.
+
+To enable automatic renewal, set `vault_token_renewal_interval` in `galaxy.yml`:
 
 ```yaml
-type: custos
-custos_host: service.staging.usecustos.org
-custos_port: 30170
-custos_client_id: custos-jeREDACTEDye-10000001
-custos_client_sec: OGREDACTEDBSUDHn
+galaxy:
+  vault_token_renewal_interval: 1800  # renew every 30 minutes
 ```
 
-Obtaining the Custos client id and client secret requires first registering your Galaxy instance with Custos.
-Visit [usecustos.org](http://usecustos.org/) for more information.
+This requires Celery Beat to be running. The periodic task calls Vault's `renew-self` endpoint at the configured interval.
+
+**Recommended token creation for production use:**
+
+Create a renewable token with a short TTL but a long max TTL:
+
+```bash
+vault token create -policy=galaxy -ttl=1h -explicit-max-ttl=720h -renewable
+```
+
+This creates a token that must be renewed every hour, but can be renewed for up to 30 days. Set `vault_token_renewal_interval` to half the TTL (e.g. 1800 for a 1-hour TTL).
+
+If the token is not renewable, Galaxy logs a warning at startup but continues to operate normally. If renewal fails at runtime, the Celery task will retry at the next scheduled interval.
 
 ## Vault configuration for database
 

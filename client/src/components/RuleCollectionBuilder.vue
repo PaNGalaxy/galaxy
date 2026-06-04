@@ -56,7 +56,7 @@
                             :display-rule-type.sync="displayRuleType"
                             @saveRule="handleRuleSave">
                             <ColumnSelector :target.sync="addSortingTarget" :col-headers="activeRuleColHeaders" />
-                            <label v-b-tooltip.hover :title="titleNumericSort">
+                            <label v-g-tooltip.hover :title="titleNumericSort">
                                 <input v-model="addSortingNumeric" type="checkbox" />
                                 {{ l("Numeric sorting.") }}
                             </label>
@@ -141,7 +141,7 @@
                                 {{ l("Replacement Expression") }}
                                 <input v-model="addColumnRegexReplacement" type="text" class="rule-replacement" />
                             </label>
-                            <label v-b-tooltip.hover>
+                            <label v-g-tooltip.hover>
                                 <input v-model="addColumnRegexAllowUnmatched" type="checkbox" />
                                 {{ l("Allow regular expression unmatched.") }}
                             </label>
@@ -227,7 +227,7 @@
                             @saveRule="handleRuleSave">
                             <ColumnSelector :target.sync="addFilterRegexTarget" :col-headers="activeRuleColHeaders" />
                             <RegularExpressionInput :target.sync="addFilterRegexExpression" />
-                            <label v-b-tooltip.hover :title="titleInvertFilterRegex">
+                            <label v-g-tooltip.hover :title="titleInvertFilterRegex">
                                 <input v-model="addFilterRegexInvert" type="checkbox" />
                                 {{ l("Invert filter.") }}
                             </label>
@@ -238,7 +238,7 @@
                             @saveRule="handleRuleSave">
                             <ColumnSelector :target.sync="addFilterMatchesTarget" :col-headers="activeRuleColHeaders" />
                             <input v-model="addFilterMatchesValue" type="text" />
-                            <label v-b-tooltip.hover :title="titleInvertFilterMatches">
+                            <label v-g-tooltip.hover :title="titleInvertFilterMatches">
                                 <input v-model="addFilterMatchesInvert" type="checkbox" />
                                 {{ l("Invert filter.") }}
                             </label>
@@ -274,7 +274,7 @@
                                 Filter how many rows?
                                 <input v-model="addFilterCountN" type="number" />
                             </label>
-                            <label v-b-tooltip.hover :title="titleInvertFilterMatches">
+                            <label v-g-tooltip.hover :title="titleInvertFilterMatches">
                                 <input v-model="addFilterCountInvert" type="checkbox" />
                                 {{ l("Invert filter.") }}
                             </label>
@@ -284,7 +284,7 @@
                             :display-rule-type.sync="displayRuleType"
                             @saveRule="handleRuleSave">
                             <ColumnSelector :target.sync="addFilterEmptyTarget" :col-headers="activeRuleColHeaders" />
-                            <label v-b-tooltip.hover :title="titleInvertFilterEmpty">
+                            <label v-g-tooltip.hover :title="titleInvertFilterEmpty">
                                 <input v-model="addFilterEmptyInvert" type="checkbox" />
                                 {{ l("Invert filter.") }}
                             </label>
@@ -302,7 +302,7 @@
                                     :ordered="true"
                                     :value-as-list="true">
                                     <span
-                                        v-b-tooltip.hover
+                                        v-g-tooltip.hover
                                         :title="titleRemoveMapping"
                                         class="fa fa-times"
                                         @click="removeMapping(index)"></span>
@@ -359,7 +359,7 @@
                             <span class="title">
                                 {{ l("Rules") }}
                                 <span
-                                    v-b-tooltip.hover
+                                    v-g-tooltip.hover
                                     class="fa fa-wrench rule-builder-view-source"
                                     :title="titleViewSource"
                                     @click="viewSource"></span>
@@ -401,7 +401,7 @@
                             <div class="rules-buttons btn-group">
                                 <div class="dropup">
                                     <button
-                                        v-b-tooltip.hover.bottom
+                                        v-g-tooltip.hover.bottom
                                         type="button"
                                         :title="titleRulesMenu"
                                         class="rule-menu-rules-button primary-button dropdown-toggle"
@@ -425,7 +425,7 @@
                                 </div>
                                 <div class="dropup">
                                     <button
-                                        v-b-tooltip.hover.bottom
+                                        v-g-tooltip.hover.bottom
                                         type="button"
                                         :title="titleFilterMenu"
                                         class="rule-menu-filter-button primary-button dropdown-toggle"
@@ -444,7 +444,7 @@
                                 </div>
                                 <div class="dropup">
                                     <button
-                                        v-b-tooltip.hover.bottom
+                                        v-g-tooltip.hover.bottom
                                         type="button"
                                         :title="titleColumMenu"
                                         class="rule-menu-column-button primary-button dropdown-toggle"
@@ -520,24 +520,22 @@
                     <input v-if="elementsType == 'datasets'" v-model="hideSourceItems" type="checkbox" />
                     <div v-if="extension && showFileTypeSelector" class="rule-footer-extension-group">
                         <label>{{ l("Type") }}:</label>
-                        <Select2 v-model="extension" name="extension" class="extension-select">
-                            <option v-for="col in extensions" :key="col.id" :value="col['id']">
-                                {{ col["text"] }}
-                            </option>
-                        </Select2>
+                        <SelectBasic
+                            v-model="extension"
+                            name="extension"
+                            class="extension-select"
+                            :options="extensions" />
                     </div>
                     <div v-if="genome && showGenomeSelector" class="rule-footer-genome-group">
                         <label>{{ l("Genome") }}:</label>
-                        <Select2 v-model="genome" class="genome-select">
-                            <option v-for="col in genomes" :key="col.id" :value="col['id']">{{ col["text"] }}</option>
-                        </Select2>
+                        <SelectBasic v-model="genome" class="genome-select" :options="genomes" />
                     </div>
                     <label v-if="showAddNameTag">{{ l("Add nametag for name") }}:</label>
                     <input v-if="showAddNameTag" v-model="addNameTag" type="checkbox" />
                     <div v-if="showCollectionNameInput" class="rule-footer-name-group">
                         <b-input
                             v-model="collectionName"
-                            v-b-tooltip.hover
+                            v-g-tooltip.hover
                             class="collection-name"
                             :placeholder="namePlaceholder"
                             :title="namePlaceholder" />
@@ -608,52 +606,42 @@
 
 <script>
 import HotTable from "@handsontable/vue";
-import { ERROR_STATES, NON_TERMINAL_STATES } from "api/jobs";
-import { fetch, fetchJobErrorMessage } from "api/tools";
-import { getGalaxyInstance } from "app";
 import axios from "axios";
 import BootstrapVue from "bootstrap-vue";
-import ColumnSelector from "components/RuleBuilder/ColumnSelector";
-import IdentifierDisplay from "components/RuleBuilder/IdentifierDisplay";
-import RegularExpressionInput from "components/RuleBuilder/RegularExpressionInput";
-import RuleDefs from "components/RuleBuilder/rule-definitions";
-import RuleComponent from "components/RuleBuilder/RuleComponent";
-import RuleDisplay from "components/RuleBuilder/RuleDisplay";
-import RuleGrid from "components/RuleBuilder/RuleGrid";
-import RuleModalFooter from "components/RuleBuilder/RuleModalFooter";
-import RuleModalHeader from "components/RuleBuilder/RuleModalHeader";
-import RuleModalMiddle from "components/RuleBuilder/RuleModalMiddle";
-import RuleTargetComponent from "components/RuleBuilder/RuleTargetComponent";
-import SavedRulesSelector from "components/RuleBuilder/SavedRulesSelector";
-import SaveRules from "components/RuleBuilder/SaveRules";
-import StateDiv from "components/RuleBuilder/StateDiv";
-import Select2 from "components/Select2";
-import UploadUtils from "components/Upload/utils";
-import $ from "jquery";
-import { getAppRoot } from "onload/loadConfig";
+import { escape } from "lodash";
 import { mapActions } from "pinia";
-import _ from "underscore";
-import _l from "utils/localization";
 import Vue from "vue";
 
+import { ERROR_STATES, NON_TERMINAL_STATES } from "@/api/jobs";
+import { fetchDatasetsToJobId, fetchJobErrorMessage } from "@/api/tools";
+import RuleDefs from "@/components/RuleBuilder/rule-definitions";
+import UploadUtils from "@/components/Upload/utils";
+import { getAppRoot } from "@/onload/loadConfig";
 import { useHistoryStore } from "@/stores/historyStore";
+import _l from "@/utils/localization";
 import { errorMessageAsString } from "@/utils/simple-error";
 
 import GButton from "./BaseComponents/GButton.vue";
-import TooltipOnHover from "components/TooltipOnHover.vue";
+import ColumnSelector from "@/components/RuleBuilder/ColumnSelector.vue";
+import IdentifierDisplay from "@/components/RuleBuilder/IdentifierDisplay.vue";
+import RegularExpressionInput from "@/components/RuleBuilder/RegularExpressionInput.vue";
+import RuleComponent from "@/components/RuleBuilder/RuleComponent.vue";
+import RuleDisplay from "@/components/RuleBuilder/RuleDisplay.vue";
+import RuleGrid from "@/components/RuleBuilder/RuleGrid.vue";
+import RuleModalFooter from "@/components/RuleBuilder/RuleModalFooter.vue";
+import RuleModalHeader from "@/components/RuleBuilder/RuleModalHeader.vue";
+import RuleModalMiddle from "@/components/RuleBuilder/RuleModalMiddle.vue";
+import RuleTargetComponent from "@/components/RuleBuilder/RuleTargetComponent.vue";
+import SavedRulesSelector from "@/components/RuleBuilder/SavedRulesSelector.vue";
+import SaveRules from "@/components/RuleBuilder/SaveRules.vue";
+import SelectBasic from "@/components/RuleBuilder/SelectBasic.vue";
+import StateDiv from "@/components/RuleBuilder/StateDiv.vue";
+import TooltipOnHover from "@/components/TooltipOnHover.vue";
 
 Vue.use(BootstrapVue);
 
 const RULES = RuleDefs.RULES;
 const MAPPING_TARGETS = RuleDefs.MAPPING_TARGETS;
-
-// convert deferred backbone nonsense into a promise
-const deferredToPromise = (d) => {
-    return new Promise((resolve, reject) => {
-        d.done((_, result) => resolve(result));
-        d.fail((err) => reject(err));
-    });
-};
 
 export default {
     components: {
@@ -671,7 +659,7 @@ export default {
         RuleModalHeader,
         RuleModalMiddle,
         RuleModalFooter,
-        Select2,
+        SelectBasic,
         GButton,
     },
     mixins: [SaveRules],
@@ -689,14 +677,12 @@ export default {
             required: false,
             default: "datasets",
         },
-        // required if elementsType is "datasets" - hook into backbone code for creating
-        // collections from HDAs, etc...
+        // required if elementsType is "datasets" - hook for creating collections from HDAs, etc...
         creationFn: {
             required: false,
             type: Function,
         },
-        // required if elementsType is "collection_contents" - hook into tool form to update
-        // rule parameter
+        // required if elementsType is "collection_contents" - hook into tool form to update rule parameter
         saveRulesFn: {
             required: false,
             type: Function,
@@ -947,7 +933,7 @@ export default {
             }
         },
         hasActiveMappingEdit() {
-            const has = _.any(_.values(this.mapping), (mapping) => mapping.editing);
+            const has = Object.values(this.mapping).some((mapping) => mapping.editing);
             return has;
         },
         activeRule() {
@@ -1014,12 +1000,12 @@ export default {
             const formattedHeaders = [];
             for (const colIndex in this.colHeaders) {
                 const colHeader = this.colHeaders[colIndex];
-                formattedHeaders[colIndex] = `<b>${_.escape(colHeader)}</b>`;
+                formattedHeaders[colIndex] = `<b>${escape(colHeader)}</b>`;
                 const mappingDisplay = [];
                 for (const mapping of this.mapping) {
                     if (mapping.columns.indexOf(parseInt(colIndex)) !== -1) {
                         const mappingDef = MAPPING_TARGETS[mapping.type];
-                        mappingDisplay.push(`<i>${_.escape(mappingDef.columnHeader || mappingDef.label)}</i>`);
+                        mappingDisplay.push(`<i>${escape(mappingDef.columnHeader || mappingDef.label)}</i>`);
                     }
                 }
                 if (mappingDisplay.length == 1) {
@@ -1508,29 +1494,10 @@ export default {
                 this.errorMessage = "Unknown error encountered: " + error;
             }
         },
-        swapOrientation() {
-            this.orientation = this.orientation == "horizontal" ? "vertical" : "horizontal";
-            const hotTable = this.$refs.hotTable.table;
-            if (this.orientation == "horizontal") {
-                this.$nextTick(function () {
-                    const fullWidth = $(".rule-builder-body").width();
-                    hotTable.updateSettings({
-                        width: fullWidth,
-                    });
-                });
-            } else {
-                this.$nextTick(function () {
-                    const fullWidth = $(".rule-builder-body").width();
-                    hotTable.updateSettings({
-                        width: fullWidth - 270,
-                    });
-                });
-            }
-        },
         attemptCreate() {
             this.createCollection();
         },
-        createCollection() {
+        async createCollection() {
             const asJson = {
                 rules: this.rules,
                 mapping: this.mapping,
@@ -1548,15 +1515,12 @@ export default {
                 const elements = this.creationElementsFromDatasets();
                 if (this.state !== "error") {
                     if (this.creationFn) {
-                        const deferreds = Object.entries(elements).map(([name, els]) => {
-                            // This looks like a promise but it is not one because creationFn and
-                            // oncreate are references to function from the backbone models which means
-                            // they are expecting their arguments in a different order. So, looks like,
-                            // jQuery.Deferred and therefore jQuery are still dependencies
-                            return this.creationFn(els, collectionType, name, hideSourceItems).then(this.oncreate);
-                        });
-                        const promises = deferreds.map(deferredToPromise);
-                        return Promise.all(promises).catch((err) => this.renderFetchError(err));
+                        return Promise.all(
+                            Object.entries(elements).map(async ([name, els]) => {
+                                const result = await this.creationFn(els, collectionType, name, hideSourceItems);
+                                return this.oncreate(result);
+                            }),
+                        ).catch((err) => this.renderFetchError(err));
                     } else {
                         const request = Object.entries(elements).map(([name, els]) => {
                             return {
@@ -1579,8 +1543,8 @@ export default {
                     }
                 }
             } else {
-                const Galaxy = getGalaxyInstance();
-                const historyId = Galaxy.currHistoryPanel.model.id;
+                const { loadCurrentHistoryId } = useHistoryStore();
+                const historyId = await loadCurrentHistoryId();
                 let elements;
                 let targets;
                 if (collectionType) {
@@ -1615,7 +1579,7 @@ export default {
                         targets: targets,
                         auto_decompress: true,
                     };
-                    fetch(fetchPayload).then(this.refreshAndWait).catch(this.renderFetchError);
+                    fetchDatasetsToJobId(fetchPayload).then(this.refreshAndWait).catch(this.renderFetchError);
                 }
             }
         },
@@ -1871,16 +1835,16 @@ export default {
             return { data, sources };
         },
         highlightColumn(n) {
-            const headerSelection = $(`.htCore > thead > tr > th:nth-child(${n + 1})`);
-            headerSelection.addClass("ht__highlight");
-            const bodySelection = $(`.htCore > tbody > tr > td:nth-child(${n + 1})`);
-            bodySelection.addClass("rule-highlight");
+            const headerSelection = document.querySelectorAll(`.htCore > thead > tr > th:nth-child(${n + 1})`);
+            headerSelection.forEach((el) => el.classList.add("ht__highlight"));
+            const bodySelection = document.querySelectorAll(`.htCore > tbody > tr > td:nth-child(${n + 1})`);
+            bodySelection.forEach((el) => el.classList.add("rule-highlight"));
         },
         unhighlightColumn(n) {
-            const headerSelection = $(`.htCore > thead > tr > th:nth-child(${n + 1})`);
-            headerSelection.removeClass("ht__highlight");
-            const bodySelection = $(`.htCore > tbody > tr > td:nth-child(${n + 1})`);
-            bodySelection.removeClass("rule-highlight");
+            const headerSelection = document.querySelectorAll(`.htCore > thead > tr > th:nth-child(${n + 1})`);
+            headerSelection.forEach((el) => el.classList.remove("ht__highlight"));
+            const bodySelection = document.querySelectorAll(`.htCore > tbody > tr > td:nth-child(${n + 1})`);
+            bodySelection.forEach((el) => el.classList.remove("rule-highlight"));
         },
         _datasetFor(dataIndex, data, mappingAsDict) {
             const res = {};
@@ -1991,7 +1955,7 @@ export default {
         width: 100%;
         overflow: hidden;
     }
-    .select2-container {
+    .select-basic {
         min-width: 60px;
     }
     .vertical #hot-table {
@@ -2081,13 +2045,12 @@ export default {
         font-style: italic;
         font-weight: bold;
     }
-    .rules-buttons {
-    }
     .rule-footer-inputs label {
-        padding-left: 20px;
+        margin-left: 1rem;
+        margin-right: 1rem;
         align-self: baseline;
     }
-    .rule-footer-inputs .select2-container {
+    .rule-footer-inputs .select-basic {
         align-self: baseline;
     }
     .rule-footer-inputs {
@@ -2095,19 +2058,20 @@ export default {
         justify-content: space-between;
         flex-wrap: wrap;
         align-items: baseline;
+        margin-top: 1rem;
     }
     .rule-footer-inputs input {
         align-self: baseline;
     }
     .extension-select {
         flex: 1;
-        max-width: 120px;
-        min-width: 60px;
+        max-width: 200px;
+        min-width: 200px;
     }
     .genome-select {
         flex: 1;
         max-width: 300px;
-        min-width: 120px;
+        min-width: 300px;
     }
     .collection-name {
         flex: 1;

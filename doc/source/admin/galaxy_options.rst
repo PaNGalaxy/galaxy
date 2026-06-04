@@ -281,6 +281,23 @@
 :Type: int
 
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``kombu_sqla_transport_cleanup_interval``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Time (in seconds) between attempts to delete fully-consumed rows
+    from the Kombu SQLAlchemy transport tables (``kombu_message``).
+    Only relevant when ``amqp_internal_connection`` uses a
+    ``sqlalchemy+*`` scheme (the default with an on-disk
+    control.sqlite); the SQLAlchemy transport has no built-in TTL, so
+    without this task the tables grow unbounded. The task no-ops on
+    non-SQLAlchemy brokers (RabbitMQ/Redis honor per-message
+    expiration natively). Set to 0 to disable the cleanup task.
+:Default: ``900``
+:Type: int
+
+
 ~~~~~~~~~~~~~
 ``file_path``
 ~~~~~~~~~~~~~
@@ -727,6 +744,56 @@
 :Type: int
 
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``bulk_storage_operation_dataset_minimum_days_to_expiration``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Minimum remaining lifetime, in days, required before a dataset can
+    be moved into an object store with automatic expiration. This
+    prevents moving data into a target store where it would be close
+    to expiring immediately. Defaults to 7 days.
+:Default: ``7``
+:Type: int
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``bulk_storage_operation_completed_run_retention_days``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    How long completed bulk dataset storage operation runs are kept in
+    the database before Galaxy prunes their run records. Snapshot
+    cleanup is handled separately. Defaults to 30 days.
+:Default: ``30``
+:Type: int
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``prune_expired_bulk_storage_operations_interval``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    How many seconds between attempts to prune expired bulk dataset
+    storage operation snapshots and old completed run records. Set to
+    0 to disable the periodic pruning task. Defaults to every 24
+    hours.
+:Default: ``86400``
+:Type: int
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``recover_stale_bulk_storage_operation_runs_interval``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    How many seconds between attempts to recover bulk dataset storage
+    operation runs that were left pending or running after a worker
+    stopped updating them. Defaults to every hour.
+:Default: ``3600``
+:Type: int
+
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``file_sources_config_file``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1051,8 +1118,7 @@
 ~~~~~~~~~~~~~~~~~
 
 :Description:
-    Directory where chrom len files are kept, currently mainly used by
-    trackster.
+    Directory where chrom len files are kept.
     The value of this option will be resolved with respect to
     <tool_data_path>.
 :Default: ``shared/ucsc/chrom``
@@ -3301,6 +3367,19 @@
 :Type: float
 
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``sentry_client_traces_sample_rate``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Sample rate for client-side (browser) performance tracing, between
+    0 and 1. Controls what fraction of page loads and navigations
+    generate performance traces sent to Sentry. Independent of
+    sentry_traces_sample_rate, which controls server-side tracing.
+:Default: ``0.0``
+:Type: float
+
+
 ~~~~~~~~~~~~~~~~~~~
 ``sentry_ca_certs``
 ~~~~~~~~~~~~~~~~~~~
@@ -3311,6 +3390,20 @@
     a self-signed certificate.
 :Default: ``None``
 :Type: str
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``enable_statsd_middleware``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Default is true if statsd_host is set. Enable the statsd
+    middleware. If false and statsd_host is also set, only timing of
+    certain performance-critical backend tasks (e.g. the job handler
+    monitor loop time) data will be sent to statsd, but not web
+    request timing.
+:Default: ``false``
+:Type: bool
 
 
 ~~~~~~~~~~~~~~~
@@ -3380,6 +3473,18 @@
     really. Do not set this in production environments.
 :Default: ``false``
 :Type: bool
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+``queue_metrics_interval``
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    How often (in seconds) the Celery beat task emits queue-depth,
+    SSE-connection, and WorkerProcess gauges. Only active when
+    statsd_host is set. Set to 0 to disable.
+:Default: ``15``
+:Type: int
 
 
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -3839,12 +3944,12 @@
 :Type: bool
 
 
-~~~~~~~~~~~~~~~~~~~~~~~
-``prefer_custos_login``
-~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
+``prefer_oidc_login``
+~~~~~~~~~~~~~~~~~~~~~
 
 :Description:
-    Controls the order of the login page to prefer Custos-based login
+    Controls the order of the login page to prefer OIDC-based login
     and registration.
 :Default: ``false``
 :Type: bool
@@ -3857,7 +3962,7 @@
 :Description:
     Allow unregistered users to create new local (non-OIDC) accounts
     (otherwise, they will have to be created by an admin). This option
-    will be overridden to false in case disable_local_accounts  is set
+    will be overridden to false in case disable_local_accounts is set
     to true.
 :Default: ``true``
 :Type: bool
@@ -3869,7 +3974,7 @@
 
 :Description:
     Disable local accounts. If this option is set to true, at least
-    one OIDC provider needs  to be configured and will serve as the
+    one OIDC provider needs to be configured and will serve as the
     account provider. If this option is set to true,
     allow_local_account creation will be overridden with false.
 :Default: ``false``
@@ -4019,19 +4124,6 @@
     erasure.
     Please read the GDPR section under the special topics area of the
     admin documentation.
-:Default: ``false``
-:Type: bool
-
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-``enable_beta_workflow_modules``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-:Description:
-    Enable beta workflow modules that should not yet be considered
-    part of Galaxy's stable API. (The module state definitions may
-    change and workflows built using these modules may not function in
-    the future.)
 :Default: ``false``
 :Type: bool
 
@@ -4839,6 +4931,19 @@
 :Type: float
 
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``workflow_completion_monitor_sleep``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Time in seconds between workflow completion monitor iterations.
+    The completion monitor checks for workflows that have all jobs
+    completed and triggers completion hooks (e.g., exports,
+    notifications). Float values are allowed.
+:Default: ``5.0``
+:Type: float
+
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``calculate_dataset_hash``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -5437,6 +5542,20 @@
 :Type: bool
 
 
+~~~~~~~~~~~~~~~~~~~~~~~~
+``enable_tool_requests``
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Submit tool jobs through the asynchronous tool requests API
+    (`/api/jobs`) when available. The client falls back to the legacy
+    `/api/tools` endpoint when this is disabled, when Celery is not
+    enabled, or when the tool does not provide a typed parameter
+    schema.
+:Default: ``true``
+:Type: bool
+
+
 ~~~~~~~~~~~~~~~
 ``celery_conf``
 ~~~~~~~~~~~~~~~
@@ -5469,6 +5588,21 @@
     be executed per user per second.
 :Default: ``0.0``
 :Type: float
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``celery_user_concurrency_limit``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Maximum number of Celery tasks that can execute concurrently for a
+    single user. If set to 0 (default), no concurrency limit is
+    enforced. When a user exceeds this limit, new tasks are deferred
+    and retried until a slot becomes available. A periodic cleanup
+    task reclaims slots from crashed workers by inspecting active
+    tasks on all workers.
+:Default: ``0``
+:Type: int
 
 
 ~~~~~~~~~~~~~~
@@ -5539,9 +5673,31 @@
 ~~~~~~~~~~~~
 
 :Description:
-    AI model to enable the wizard.
+    AI model to enable the wizard. Global fallback for all AI agents.
 :Default: ``gpt-4o``
 :Type: str
+
+
+~~~~~~~~~~~~~~~~~~~~~~
+``inference_services``
+~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Configuration for AI inference services used by agents and
+    visualization plugins. Supports per-agent or per-plugin model,
+    temperature, max_tokens, api_key, api_base_url, and enabled
+    settings. Valid keys include agent types (e.g. router,
+    error_analysis) and plugin names (e.g. jupyterlite). Agents and
+    plugins inherit from 'default' configuration, which itself falls
+    back to global ai_model/ai_api_key settings. All agents are
+    enabled by default. Example: inference_services: { default: {
+    model: gpt-4o-mini, temperature: 0.7 }, custom_tool: { enabled:
+    false }, jupyterlite: { model: gpt-4o } } Set static_responses to
+    a YAML file path to replace all LLM calls with deterministic
+    responses for testing: inference_services: { static_responses:
+    test/integration/static_agents.yml }
+:Default: ``None``
+:Type: any
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -5657,6 +5813,41 @@
 :Type: str
 
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``vault_token_renewal_interval``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Time (in seconds) between Hashicorp Vault token renewal attempts.
+    Set to 0 to disable automatic token renewal (the default). When
+    enabled, a Celery Beat periodic task will call Vault's renew-self
+    endpoint at this interval. Recommended value: half the token TTL
+    (e.g. 1800 for a 1-hour TTL token). Requires Celery Beat to be
+    running.
+:Default: ``0``
+:Type: int
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``url_headers_config_file``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Configuration file for URL request headers allow-list with URL
+    pattern matching. This file defines which HTTP headers are allowed
+    in URL fetch requests based on URL patterns, and whether they
+    should be treated as sensitive (encrypted in the vault) or not. If
+    no allow-list is specified, no headers will be allowed in URL
+    requests. This provides fine-grained security control over what
+    headers can be sent when Galaxy fetches external URLs on behalf of
+    users, allowing different headers for different target domains or
+    services.
+    The value of this option will be resolved with respect to
+    <config_dir>.
+:Default: ``url_headers_conf.yml``
+:Type: str
+
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``display_builtin_converters``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -5738,6 +5929,41 @@
 :Type: str
 
 
+~~~~~~~~~~~~~~~~~~~~~~
+``enable_sse_updates``
+~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Enables real-time updates via Server-Sent Events (SSE), replacing
+    the history (3 s), entry-point (10 s) and notification (30 s)
+    polling loops with push events delivered over a single
+    ``/api/events/stream`` connection per browser tab. A background
+    monitor watches for history changes (via PostgreSQL LISTEN/NOTIFY,
+    or audit-table polling as a fallback for SQLite); entry-point
+    changes are dispatched directly from the code paths that mutate
+    them; in-app notifications and broadcasts are pushed when
+    ``enable_notification_system`` is also true. When disabled,
+    polling remains the source of updates for all three. See the admin
+    guide "Server-Sent Events for real-time updates" for the full
+    architecture, monitoring guidance and proxy configuration.
+:Default: ``false``
+:Type: bool
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``history_audit_monitor_poll_interval``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    The interval in seconds between history audit table polls when
+    using the polling fallback (SQLite or when PostgreSQL
+    LISTEN/NOTIFY is unavailable). Only used when enable_sse_updates
+    is true. Lower values mean faster updates but more database
+    queries. Recommended range: 1-5 seconds.
+:Default: ``2``
+:Type: int
+
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``enable_notification_system``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -5749,12 +5975,46 @@
     finished, etc.
     The system allows notification scheduling and expiration, and
     users can opt-out of specific notification categories or channels.
+    Delivery is push-based via Server-Sent Events when
+    ``enable_sse_updates`` is also true, and falls back to 30-second
+    polling against ``/api/notifications/status`` otherwise.
     Admins can schedule and broadcast notifications that will be
     visible to all users, including special server-wide announcements
     such as scheduled maintenance, high load warnings, and event
     announcements, to name a few examples.
 :Default: ``false``
 :Type: bool
+
+
+~~~~~~~~~~~~~~~~~~~~~
+``enable_mcp_server``
+~~~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    Enable the Model Context Protocol (MCP) server integration.
+    MCP allows AI assistants (like Claude, ChatGPT, etc.) to interact
+    with Galaxy programmatically through a standardized protocol. When
+    enabled, Galaxy exposes an MCP endpoint that provides tools for
+    searching, executing tools, managing histories, and more.
+    The MCP server requires API key authentication and uses the
+    existing Galaxy REST API internally. This feature is experimental
+    and disabled by default.
+:Default: ``false``
+:Type: bool
+
+
+~~~~~~~~~~~~~~~~~~~
+``mcp_server_path``
+~~~~~~~~~~~~~~~~~~~
+
+:Description:
+    URL path where the MCP server endpoint will be mounted (default:
+    /api/mcp).
+    This setting only takes effect when 'enable_mcp_server' is true.
+    The MCP endpoint will be accessible at this path relative to the
+    Galaxy base URL.
+:Default: ``/api/mcp``
+:Type: str
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -5831,8 +6091,8 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 :Description:
-    Default value for use_temp_files for webdav plugins that don't
-    explicitly declare this.
+    Deprecated. This option is ignored by the fsspec-based WebDAV file
+    source.
 :Default: ``true``
 :Type: bool
 

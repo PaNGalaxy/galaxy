@@ -25,16 +25,18 @@ from jwt import (
     InvalidIssuerError,
     InvalidSignatureError,
 )
+from social_core.backends.open_id_connect import OpenIdConnectAuth
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from galaxy import model
 from galaxy.authnz.managers import AuthnzManager
+from galaxy.authnz.oidc_utils import decode_access_token as decode_access_token_oidc
 from galaxy.authnz.psa_authnz import (
-    _decode_access_token_helper,
     AUTH_PIPELINE,
     decode_access_token,
     PSAAuthnz,
+    sync_user_profile,
 )
 
 
@@ -63,6 +65,7 @@ def mock_oidc_backend_config_file(tmp_path):
             <redirect_uri>$galaxy_url/authnz/$provider_name/callback</redirect_uri>
             <enable_idp_logout>true</enable_idp_logout>
             <accepted_audiences>gxyclient</accepted_audiences>
+            <domain>example.com</domain>
         </provider>
     </OIDC>
     """
@@ -189,11 +192,14 @@ def test_decode_access_token():
     dummy_access_token = create_access_token()
     mock_social = MagicMock()
     mock_social.extra_data.get.return_value = dummy_access_token.access_token_str
+    # Create a mock backend that's recognized as an OIDC backend
     mock_backend = MagicMock()
     public_key_data = get_jwk_data(dummy_access_token.public_key)
     mock_backend.find_valid_key.return_value = public_key_data
     mock_backend.strategy.config = {"accepted_audiences": dummy_access_token.access_token_data["aud"]}
     mock_backend.id_token_issuer.return_value = dummy_access_token.access_token_data["iss"]
+    # Make isinstance() checks pass by setting __class__ after configuring the mock
+    mock_backend.__class__ = OpenIdConnectAuth  # type: ignore[assignment]
     # Check that access token is decoded successfully to return the original data
     data = decode_access_token(social=mock_social, backend=mock_backend)
     assert data["access_token"] == dummy_access_token.access_token_data
@@ -208,17 +214,20 @@ def test_decode_access_token_invalid_key():
     incorrect_public_key, incorrect_private_key = generate_public_private_key_pair()
     mock_social = MagicMock()
     mock_social.extra_data.get.return_value = dummy_access_token.access_token_str
+    # Create a mock backend that's recognized as an OIDC backend
     mock_backend = MagicMock()
     incorrect_public_key_data = get_jwk_data(incorrect_public_key)
     mock_backend.find_valid_key.return_value = incorrect_public_key_data
     mock_backend.strategy.config = {"accepted_audiences": dummy_access_token.access_token_data["aud"]}
     mock_backend.id_token_issuer.return_value = dummy_access_token.access_token_data["iss"]
+    # Make isinstance() checks pass by setting __class__ after configuring the mock
+    mock_backend.__class__ = OpenIdConnectAuth  # type: ignore[assignment]
     # Test that the decode function returns None for the access token
     result = decode_access_token(social=mock_social, backend=mock_backend)
     assert result["access_token"] is None
     # Test the actual decoding raises expected error
     with pytest.raises(InvalidSignatureError):
-        _decode_access_token_helper(token_str=dummy_access_token.access_token_str, backend=mock_backend)
+        decode_access_token_oidc(token_str=dummy_access_token.access_token_str, backend=mock_backend)
 
 
 def test_decode_access_token_invalid_issuer():
@@ -230,17 +239,20 @@ def test_decode_access_token_invalid_issuer():
     dummy_access_token = create_access_token(iss="https://invalid.url")
     mock_social = MagicMock()
     mock_social.extra_data.get.return_value = dummy_access_token.access_token_str
+    # Create a mock backend that's recognized as an OIDC backend
     mock_backend = MagicMock()
     public_key_data = get_jwk_data(dummy_access_token.public_key)
     mock_backend.find_valid_key.return_value = public_key_data
     mock_backend.strategy.config = {"accepted_audiences": dummy_access_token.access_token_data["aud"]}
     mock_backend.id_token_issuer.return_value = "https://validissuer.com"
+    # Make isinstance() checks pass by setting __class__ after configuring the mock
+    mock_backend.__class__ = OpenIdConnectAuth  # type: ignore[assignment]
     # Test that the decode function returns None for the access token
     result = decode_access_token(social=mock_social, backend=mock_backend)
     assert result["access_token"] is None
     # Test the actual decoding raises expected error
     with pytest.raises(InvalidIssuerError):
-        _decode_access_token_helper(token_str=dummy_access_token.access_token_str, backend=mock_backend)
+        decode_access_token_oidc(token_str=dummy_access_token.access_token_str, backend=mock_backend)
 
 
 def test_decode_access_token_invalid_audience():
@@ -252,17 +264,20 @@ def test_decode_access_token_invalid_audience():
     dummy_access_token = create_access_token(aud="https://invalidaudience.url")
     mock_social = MagicMock()
     mock_social.extra_data.get.return_value = dummy_access_token.access_token_str
+    # Create a mock backend that's recognized as an OIDC backend
     mock_backend = MagicMock()
     public_key_data = get_jwk_data(dummy_access_token.public_key)
     mock_backend.find_valid_key.return_value = public_key_data
     mock_backend.strategy.config = {"accepted_audiences": ["https://validaudience.url"]}
     mock_backend.id_token_issuer.return_value = dummy_access_token.access_token_data["iss"]
+    # Make isinstance() checks pass by setting __class__ after configuring the mock
+    mock_backend.__class__ = OpenIdConnectAuth  # type: ignore[assignment]
     # Test that the decode function returns None for the access token
     result = decode_access_token(social=mock_social, backend=mock_backend)
     assert result["access_token"] is None
     # Test the actual decoding raises expected error
     with pytest.raises(InvalidAudienceError):
-        _decode_access_token_helper(token_str=dummy_access_token.access_token_str, backend=mock_backend)
+        decode_access_token_oidc(token_str=dummy_access_token.access_token_str, backend=mock_backend)
 
 
 def test_decode_access_token_opaque_token():
@@ -292,6 +307,7 @@ def test_oidc_config_custom_auth_pipeline(mock_oidc_config_file, mock_oidc_backe
         oidc_auth_pipeline=custom_auth_pipeline,
         oidc_auth_pipeline_extra=None,
         oidc=defaultdict(dict),
+        fixed_delegated_auth=False,
     )
     manager = AuthnzManager(
         app=mock_app, oidc_config_file=mock_oidc_config_file, oidc_backends_config_file=mock_oidc_backend_config_file
@@ -305,6 +321,29 @@ def test_oidc_config_custom_auth_pipeline(mock_oidc_config_file, mock_oidc_backe
     assert psa_authnz.config["SOCIAL_AUTH_PIPELINE"] == custom_auth_pipeline
 
 
+def test_oidc_backend_config_file_parsing(mock_oidc_config_file, mock_oidc_backend_config_file):
+    """Basic test of backend config XML parsing"""
+    mock_app = MagicMock()
+    mock_app.config = SimpleNamespace(
+        oidc_auth_pipeline=None,
+        oidc_auth_pipeline_extra=None,
+        oidc=defaultdict(dict),
+        fixed_delegated_auth=False,
+    )
+    manager = AuthnzManager(
+        app=mock_app, oidc_config_file=mock_oidc_config_file, oidc_backends_config_file=mock_oidc_backend_config_file
+    )
+
+    parsed = manager.oidc_backends_config["oidc"]
+    assert parsed["url"] == "login.example.com"
+    assert parsed["client_id"] == "gxyclient"
+    assert parsed["client_secret"] == "dummyclientsecret"
+    assert parsed["redirect_uri"] == "$galaxy_url/authnz/$provider_name/callback"
+    assert parsed["enable_idp_logout"] is True
+    assert parsed["accepted_audiences"] == "gxyclient"
+    assert parsed["domain"] == "example.com"
+
+
 def test_oidc_config_auth_pipeline_extra(mock_oidc_config_file, mock_oidc_backend_config_file):
     """
     Test that the oidc_auth_pipeline_extra config option is used to extend the auth pipeline.
@@ -315,6 +354,7 @@ def test_oidc_config_auth_pipeline_extra(mock_oidc_config_file, mock_oidc_backen
         oidc_auth_pipeline=None,
         oidc_auth_pipeline_extra=custom_auth_pipeline_extra,
         oidc=defaultdict(dict),
+        fixed_delegated_auth=False,
     )
     manager = AuthnzManager(
         app=mock_app, oidc_config_file=mock_oidc_config_file, oidc_backends_config_file=mock_oidc_backend_config_file
@@ -340,6 +380,7 @@ def test_oidc_config_custom_auth_pipeline_and_extra(mock_oidc_config_file, mock_
         oidc_auth_pipeline=custom_auth_pipeline,
         oidc_auth_pipeline_extra=custom_auth_pipeline_extra,
         oidc=defaultdict(dict),
+        fixed_delegated_auth=False,
     )
     manager = AuthnzManager(
         app=mock_app, oidc_config_file=mock_oidc_config_file, oidc_backends_config_file=mock_oidc_backend_config_file
@@ -351,3 +392,84 @@ def test_oidc_config_custom_auth_pipeline_and_extra(mock_oidc_config_file, mock_
         app_config=mock_app.config,
     )
     assert psa_authnz.config["SOCIAL_AUTH_PIPELINE"] == custom_auth_pipeline + tuple(custom_auth_pipeline_extra)
+
+
+def make_psa_authnz(mock_oidc_config_file, mock_oidc_backend_config_file):
+    mock_app = MagicMock()
+    mock_app.config = SimpleNamespace(
+        oidc_auth_pipeline=None,
+        oidc_auth_pipeline_extra=None,
+        oidc=defaultdict(dict),
+        fixed_delegated_auth=False,
+    )
+    manager = AuthnzManager(
+        app=mock_app, oidc_config_file=mock_oidc_config_file, oidc_backends_config_file=mock_oidc_backend_config_file
+    )
+    return PSAAuthnz(
+        provider="oidc",
+        oidc_config=manager.oidc_config,
+        oidc_backend_config=manager.oidc_backends_config,
+        app_config=mock_app.config,
+    )
+
+
+def test_sync_user_profile_skips_when_account_interface_enabled():
+    manager = MagicMock()
+    session = MagicMock()
+    notify = MagicMock()
+    app_config = SimpleNamespace(enable_account_interface=True, enable_notification_system=True)
+    notification_manager = SimpleNamespace(send_notification_internal=notify)
+    app = SimpleNamespace(config=app_config, user_manager=manager, notification_manager=notification_manager)
+    trans = SimpleNamespace(app=app, sa_session=session)
+    strategy = SimpleNamespace(config={"GALAXY_TRANS": trans, "FIXED_DELEGATED_AUTH": True})
+    user = SimpleNamespace(id=1, preferences={})
+    details = {"email": "new@example.com", "username": "newname"}
+
+    sync_user_profile(strategy=strategy, details=details, user=user)
+
+    manager.update_email.assert_not_called()
+    manager.update_username.assert_not_called()
+    session.commit.assert_not_called()
+    notify.assert_not_called()
+
+
+def test_sync_user_profile_skips_when_fixed_delegated_auth_disabled():
+    manager = MagicMock()
+    session = MagicMock()
+    notify = MagicMock()
+    app_config = SimpleNamespace(enable_account_interface=False, enable_notification_system=True)
+    notification_manager = SimpleNamespace(send_notification_internal=notify)
+    app = SimpleNamespace(config=app_config, user_manager=manager, notification_manager=notification_manager)
+    trans = SimpleNamespace(app=app, sa_session=session)
+    strategy = SimpleNamespace(config={"GALAXY_TRANS": trans, "FIXED_DELEGATED_AUTH": False})
+    user = SimpleNamespace(id=2, email="old@example.com", username="oldname", preferences={})
+    details = {"email": "new@example.com", "username": "newname"}
+
+    sync_user_profile(strategy=strategy, details=details, user=user)
+
+    manager.update_email.assert_not_called()
+    manager.update_username.assert_not_called()
+    session.commit.assert_not_called()
+    notify.assert_not_called()
+
+
+def test_sync_user_profile_updates_when_account_interface_disabled():
+    manager = MagicMock()
+    session = MagicMock()
+    notify = MagicMock()
+    app_config = SimpleNamespace(enable_account_interface=False, enable_notification_system=True)
+    notification_manager = SimpleNamespace(notifications_enabled=True, send_notification_internal=notify)
+    app = SimpleNamespace(config=app_config, user_manager=manager, notification_manager=notification_manager)
+    trans = SimpleNamespace(app=app, sa_session=session)
+    strategy = SimpleNamespace(config={"GALAXY_TRANS": trans, "FIXED_DELEGATED_AUTH": True})
+    user = SimpleNamespace(id=2, email="old@example.com", username="oldname", preferences={})
+    details = {"email": "new@example.com", "username": "newname"}
+
+    sync_user_profile(strategy=strategy, details=details, user=user)
+
+    manager.update_email.assert_called_once_with(
+        trans, user, "new@example.com", commit=False, send_activation_email=False
+    )
+    manager.update_username.assert_called_once_with(trans, user, "newname", commit=False)
+    assert session.commit.call_count == 1
+    notify.assert_called_once()

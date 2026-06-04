@@ -275,6 +275,13 @@ export interface AnonymousUser extends AnonymousUserModel {
 /** Represents any user, including anonymous users or session-less (null) users.**/
 export type AnyUser = RegisteredUser | AnonymousUser | null;
 
+export function toAnyUser(user: UserModel): AnyUser {
+    if ("email" in user) {
+        return { ...user, isAnonymous: false } as RegisteredUser;
+    }
+    return { ...user, isAnonymous: true } as AnonymousUser;
+}
+
 export function isRegisteredUser(user: AnyUser | UserModel): user is RegisteredUser {
     return user !== null && "email" in user;
 }
@@ -308,7 +315,7 @@ export function canMutateHistory(history: AnyHistory): boolean {
     return !history.purged && !history.archived;
 }
 
-export type DatasetHash = components["schemas"]["DatasetHash-Output"];
+export type DatasetHash = components["schemas"]["DatasetHash"];
 
 export type DatasetSource = components["schemas"]["DatasetSource"];
 export type DatasetTransform = components["schemas"]["DatasetSourceTransform"];

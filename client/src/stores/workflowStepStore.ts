@@ -1,6 +1,7 @@
 import { computed, del, ref, set } from "vue";
 
 import type { FieldDict, SampleSheetColumnDefinitions } from "@/api";
+import { isWorkflowInput } from "@/components/Workflow/constants";
 import type { CollectionTypeDescriptor } from "@/components/Workflow/Editor/modules/collectionTypeDescription";
 import { getConnectionId, useConnectionStore } from "@/stores/workflowConnectionStore";
 import { assertDefined } from "@/utils/assertions";
@@ -112,7 +113,7 @@ export interface NewStep {
     tool_state: Record<string, unknown>;
     tool_version?: string;
     tooltip?: string | null;
-    type: "tool" | "data_input" | "data_collection_input" | "subworkflow" | "parameter_input" | "pause";
+    type: "tool" | "data_input" | "data_collection_input" | "subworkflow" | "parameter_input" | "pause" | "pick_value";
     uuid?: string;
     when?: string | null;
     workflow_id?: string;
@@ -150,6 +151,15 @@ interface StepInputMapOver {
 
 export type WorkflowStepStore = ReturnType<typeof useWorkflowStepStore>;
 
+/**
+ * Returns combined step inputs: extra inputs (e.g., "when" conditionals) followed by regular inputs.
+ * This is the single source of truth for all step inputs.
+ */
+export function getCombinedStepInputs(step: Step, stepStore: WorkflowStepStore): InputTerminalSource[] {
+    const extraInputs = stepStore.getStepExtraInputs(step.id);
+    return [...extraInputs, ...step.inputs];
+}
+
 export const useWorkflowStepStore = defineScopedStore("workflowStepStore", (workflowId) => {
     const steps = ref<Steps>({});
     const stepMapOver = ref<{ [index: number]: CollectionTypeDescriptor }>({});
@@ -175,6 +185,10 @@ export const useWorkflowStepStore = defineScopedStore("workflowStepStore", (work
 
     const hasActiveOutputs = computed(() =>
         Boolean(Object.values(steps.value).find((step) => step.workflow_outputs?.length)),
+    );
+
+    const hasInputSteps = computed(() =>
+        Boolean(Object.values(steps.value).find((step) => isWorkflowInput(step.type))),
     );
 
     const workflowOutputs = computed(() => {
@@ -349,22 +363,31 @@ export const useWorkflowStepStore = defineScopedStore("workflowStepStore", (work
         );
 
         const inputConnections = inputStep.input_connections[connection.input.name];
+        const newInputConnections = { ...inputStep.input_connections };
 
         if (getStepExtraInputs.value(inputStep.id).find((input) => connection.input.name === input.name)) {
-            inputStep.input_connections[connection.input.name] = undefined;
+            newInputConnections[connection.input.name] = undefined;
         } else {
             if (Array.isArray(inputConnections)) {
-                inputStep.input_connections[connection.input.name] = inputConnections.filter(
+                const filtered = inputConnections.filter(
                     (outputLink) =>
-                        !(outputLink.id === connection.output.stepId,
-                        outputLink.output_name === connection.output.name),
+                        !(
+                            outputLink.id === connection.output.stepId &&
+                            outputLink.output_name === connection.output.name
+                        ),
                 );
+
+                if (filtered.length === 0) {
+                    delete newInputConnections[connection.input.name];
+                } else {
+                    newInputConnections[connection.input.name] = filtered;
+                }
             } else {
-                del(inputStep.input_connections, connection.input.name);
+                delete newInputConnections[connection.input.name];
             }
         }
 
-        updateStep(inputStep);
+        updateStep({ ...inputStep, input_connections: newInputConnections });
     }
 
     const { deleteStepPosition, deleteStepTerminals } = useWorkflowStateStore(workflowId);
@@ -394,6 +417,7 @@ export const useWorkflowStepStore = defineScopedStore("workflowStepStore", (work
         getStepExtraInputs,
         getStepIndex,
         hasActiveOutputs,
+        hasInputSteps,
         workflowOutputs,
         duplicateLabels,
         addStep,

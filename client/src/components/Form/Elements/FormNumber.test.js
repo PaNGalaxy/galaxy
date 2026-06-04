@@ -1,8 +1,9 @@
+import { getLocalVue } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
-import { getLocalVue } from "tests/jest/helpers";
+import { describe, expect, it, vi } from "vitest";
 
-import FormNumber from "./FormNumber";
+import FormNumber from "./FormNumber.vue";
 
 const localVue = getLocalVue();
 
@@ -106,7 +107,7 @@ describe("FormNumber", () => {
         const integerWrapper = await mountFormNumber({ value: "", type: "integer" });
         const integerInput = await getInput(integerWrapper);
 
-        const preventDefaultInteger = jest.fn();
+        const preventDefaultInteger = vi.fn();
         await integerInput.trigger("keypress", {
             key: ".",
             preventDefault: preventDefaultInteger,
@@ -120,7 +121,7 @@ describe("FormNumber", () => {
         const floatWrapper = await mountFormNumber({ value: "", type: "float" });
         const floatInput = await getInput(floatWrapper);
 
-        const preventDefaultFloat = jest.fn();
+        const preventDefaultFloat = vi.fn();
         await floatInput.trigger("keypress", {
             key: ".",
             preventDefault: preventDefaultFloat,
@@ -135,7 +136,7 @@ describe("FormNumber", () => {
         const wrapper = await mountFormNumber(props);
         const input = await getInput(wrapper);
 
-        const preventDefault = jest.fn();
+        const preventDefault = vi.fn();
         await input.trigger("keypress", {
             key: "-",
             preventDefault,
@@ -150,7 +151,7 @@ describe("FormNumber", () => {
         const wrapper = await mountFormNumber(props);
         const input = await getInput(wrapper);
 
-        const preventDefault = jest.fn();
+        const preventDefault = vi.fn();
         await input.trigger("keypress", {
             key: "-",
             preventDefault,

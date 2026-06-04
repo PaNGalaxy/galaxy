@@ -1,7 +1,6 @@
 import os
 from typing import (
     Any,
-    Dict,
     Optional,
 )
 
@@ -57,9 +56,9 @@ class TourGenerator:
         self._trans = trans
         self._tool: Tool = self._get_and_ensure_tool(tool_id, tool_version)
         self._use_datasets = True
-        self._data_inputs: Dict[str, Any] = {}
+        self._data_inputs: dict[str, Any] = {}
         self._tour: Optional[TourDetails] = None
-        self._hids: Dict[str, Any] = {}
+        self._hids: dict[str, Any] = {}
         self._test: ToolTestDescription
         self._upload_test_data(performs_upload=performs_upload)
         self._generate_tour(performs_upload=performs_upload)
@@ -215,7 +214,8 @@ class TourGenerator:
                     step.content = f"Select dataset: <b>{hid}: {dataset}</b>"
                 else:
                     step.content = "Select a dataset"
-            elif input.type == "conditional" and isinstance(input, Conditional):
+            elif input.type == "conditional":
+                assert isinstance(input, Conditional)
                 test_param = input.test_param
                 if test_param is None:
                     param_id = f"{input.name}|"
@@ -234,7 +234,7 @@ class TourGenerator:
                                 if test_option == option[1]:
                                     params.append(option[0])
                     # Conditional param cases
-                    cases: Dict[str, str] = {}
+                    cases: dict[str, str] = {}
                     for case in input.cases:
                         if case.inputs is not None:
                             for key, value in case.inputs.items():
@@ -248,7 +248,10 @@ class TourGenerator:
                                 dataset = self._test.inputs[tour_id][0]
                                 step_msg = f"Select dataset: <b>{hid}: {dataset}</b>"
                             else:
-                                case_params = ", ".join(self._test.inputs[tour_id])
+                                case_params = ", ".join(
+                                    ("Yes" if v is True else "No" if v is False else str(v))
+                                    for v in self._test.inputs[tour_id]
+                                )
                                 step_msg = f"Select parameter(s): <b>{case_params}</b>"
                             cond_case_steps.append(
                                 TourStep(

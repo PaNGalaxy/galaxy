@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { faBurn } from "@fortawesome/free-solid-svg-icons";
 import { ref } from "vue";
 import { useRouter } from "vue-router/composables";
 
@@ -12,7 +13,6 @@ import { byteFormattingForChart, useDataLoading } from "./util";
 
 import BarChart from "./Charts/BarChart.vue";
 import OverviewPage from "./OverviewPage.vue";
-import RecoverableItemSizeTooltip from "./RecoverableItemSizeTooltip.vue";
 import SelectedItemActions from "./SelectedItemActions.vue";
 import WarnDeletedHistories from "./WarnDeletedHistories.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
@@ -24,8 +24,7 @@ const { confirm } = useConfirmDialog();
 const historiesSizeSummaryMap = new Map<string, ItemSizeSummary>();
 const topTenHistoriesBySizeData = ref<DataValuePoint[] | null>(null);
 const activeVsArchivedVsDeletedTotalSizeData = ref<DataValuePoint[] | null>(null);
-const numberOfHistoriesToDisplayOptions = [10, 20, 50];
-const numberOfHistoriesToDisplay = ref(numberOfHistoriesToDisplayOptions[0]);
+const numberOfHistoriesToDisplay = 50;
 
 const { isLoading, loadDataOnMount } = useDataLoading();
 
@@ -45,7 +44,7 @@ function buildGraphsData() {
 function buildTopHistoriesBySizeData(historiesSizeSummary: ItemSizeSummary[]): DataValuePoint[] {
     const topTenHistoriesBySize = historiesSizeSummary
         .sort((a, b) => b.size - a.size)
-        .slice(0, numberOfHistoriesToDisplay.value);
+        .slice(0, numberOfHistoriesToDisplay);
     return topTenHistoriesBySize.map((history) => ({
         id: history.id,
         label: history.name,
@@ -122,10 +121,9 @@ async function onPermanentlyDeleteHistory(historyId: string) {
         localize("Are you sure you want to permanently delete this history? This action cannot be undone."),
         {
             title: localize("Permanently delete history?"),
-            okVariant: "danger",
-            okTitle: localize("Permanently delete"),
-            cancelTitle: localize("Cancel"),
-            cancelVariant: "outline-primary",
+            okText: localize("Permanently delete"),
+            okColor: "red",
+            okIcon: faBurn,
         },
     );
     if (!confirmed) {
@@ -159,7 +157,7 @@ async function onPermanentlyDeleteHistory(historyId: string) {
                 v-if="topTenHistoriesBySizeData"
                 :description="
                     localize(
-                        `These are the ${numberOfHistoriesToDisplay} histories that take the most space on your storage. Click on a bar to see more information about the history.`,
+                        'These are the 50 histories that take the most space on your storage. Click on a bar to see more information about the history.',
                     )
                 "
                 :data="topTenHistoriesBySizeData"
@@ -167,22 +165,6 @@ async function onPermanentlyDeleteHistory(historyId: string) {
                 v-bind="byteFormattingForChart">
                 <template v-slot:title>
                     <b>{{ localize(`Top ${numberOfHistoriesToDisplay} Histories by Size`) }}</b>
-                    <b-form-select
-                        v-model="numberOfHistoriesToDisplay"
-                        :options="numberOfHistoriesToDisplayOptions"
-                        :disabled="isLoading"
-                        title="Number of histories to show"
-                        class="float-right w-auto"
-                        size="sm"
-                        @change="buildGraphsData()">
-                    </b-form-select>
-                </template>
-                <template v-slot:tooltip="{ data }">
-                    <RecoverableItemSizeTooltip
-                        v-if="data"
-                        :data="data"
-                        :is-recoverable="isRecoverableDataPoint(data)"
-                        :is-archived="isArchivedDataPoint(data)" />
                 </template>
                 <template v-slot:selection="{ data }">
                     <SelectedItemActions
@@ -205,14 +187,8 @@ async function onPermanentlyDeleteHistory(historyId: string) {
                     )
                 "
                 :data="activeVsArchivedVsDeletedTotalSizeData"
-                v-bind="byteFormattingForChart">
-                <template v-slot:tooltip="{ data }">
-                    <RecoverableItemSizeTooltip
-                        v-if="data"
-                        :data="data"
-                        :is-recoverable="isRecoverableDataPoint(data)" />
-                </template>
-            </BarChart>
+                :enable-selection="false"
+                v-bind="byteFormattingForChart" />
         </div>
     </OverviewPage>
 </template>

@@ -15,10 +15,9 @@ from typing import (
     Any,
     cast,
     get_args,
+    Literal,
     Optional,
 )
-
-from typing_extensions import Literal
 
 from galaxy.model import (
     DatasetCollectionElement,
@@ -28,6 +27,7 @@ from galaxy.model import (
     MetadataFile,
     User,
 )
+from galaxy.model.dataset_collections.adapters import CollectionAdapter
 from galaxy.tools.expressions import do_eval
 from galaxy.tools.parameters.options import ParameterOption
 from galaxy.tools.parameters.workflow_utils import (
@@ -221,10 +221,10 @@ class DataMetaFilter(Filter):
             ref = _get_ref_data(other_values, self.ref_name)
         except KeyError:  # no such dataset
             log.warning(f"could not filter by metadata: {self.ref_name} unknown")
-            return []
+            return copy.deepcopy(options)
         except ValueError:  # not a valid dataset
             log.warning(f"could not filter by metadata: {self.ref_name} not a data or collection parameter")
-            return []
+            return copy.deepcopy(options)
         # get the metadata value.
         # - for lists: (of data sets) and collections the meta data values of all
         #   elements is determined
@@ -235,7 +235,9 @@ class DataMetaFilter(Filter):
         for r in ref:
             if not r.metadata.element_is_set(self.key):
                 continue
-            _add_meta(meta_value, r.metadata.get(self.key))
+            meta_val = r.metadata.get(self.key)
+            if meta_val is not None:
+                _add_meta(meta_value, meta_val)
 
         # if no meta data value could be determined just return a copy
         # of the original options
@@ -871,8 +873,6 @@ class DynamicOptions:
                 by_dbkey.update(table_entries)
             for data_table_entry in by_dbkey.values():
                 field_entry = []
-                if hda := data_table_entry.get("__hda__"):
-                    field_entry.append(hda)
                 missing_columns = False
                 for column_key in self.tool_data_table.columns.keys():
                     if column_key not in data_table_entry:
@@ -883,6 +883,13 @@ class DynamicOptions:
                         break
                     field_entry.append(data_table_entry[column_key])
                 if not missing_columns:
+                    # The HDA must be appended after the columns: get_options()
+                    # reads it from ``fields[-1]`` and indexes the other columns
+                    # by their declared positions. Prepending shifts every
+                    # column by one and leaks the HDA into the option ``value``
+                    # (#22674).
+                    if hda := data_table_entry.get("__hda__"):
+                        field_entry.append(hda)
                     fields.append(field_entry)
         return fields
 
@@ -986,9 +993,11 @@ class DynamicOptions:
             or self.missing_index_file
         ):
             options = self.get_fields(trans, other_values)
+            value_col = self.columns["value"]
+            name_col = self.columns.get("name", value_col)
             for fields in options:
-                name = fields[self.columns["name"]]
-                value = fields[self.columns["value"]]
+                name = fields[name_col]
+                value = fields[value_col]
                 hda = fields[-1] if isinstance(fields[-1], HistoryDatasetAssociation) else None
                 rval.append(ParameterOption(name, value, False, dataset=hda))
         else:
@@ -1053,35 +1062,60 @@ def template_or_none(template: Optional[str], context: dict[str, Any]) -> Option
 
 def _get_ref_data(other_values, ref_name):
     """
-    get the list of data sets from ref_name
-    - a KeyError is raised if no such element exists
-    - a ValueError is raised if the element is not of the type DatasetFilenameWrapper, HistoryDatasetAssociation, DatasetListWrapper, HistoryDatasetCollectionAssociation, list
+    Return a flat iterable of dataset instances for ``ref_name``.
+
+    - Raises ``KeyError`` if no such element exists.
+    - Raises ``ValueError`` if the element (or any member of a list
+      element) is not one of the supported types.
+
+    Lists originating from ``multiple="true"`` data inputs may contain
+    HDCAs / ``DatasetCollectionElement``s / ``CollectionAdapter``s (see
+    ``DataToolParameter.from_json``); those are flattened to their
+    dataset instances here so downstream filters can uniformly access
+    ``.metadata`` on an HDA.
+
+    TODO: ``DataToolParameter.from_json`` should not wrap
+    items that already represent multiple datasets (HDCAs, DCEs of a
+    collection) in a list.
     """
     from galaxy.tools.wrappers import (
         DatasetFilenameWrapper,
         DatasetListWrapper,
     )
 
-    ref = other_values[ref_name]
-    if not isinstance(
-        ref,
-        (
-            DatasetFilenameWrapper,
-            HistoryDatasetAssociation,
-            LibraryDatasetDatasetAssociation,
-            DatasetCollectionElement,
-            DatasetListWrapper,
-            HistoryDatasetCollectionAssociation,
-            list,
-        ),
-    ):
-        if is_runtime_value(ref):
-            return []
+    single_types = (
+        DatasetFilenameWrapper,
+        HistoryDatasetAssociation,
+        LibraryDatasetDatasetAssociation,
+    )
+
+    def _unwrap(item):
+        if isinstance(item, single_types):
+            return [item]
+        if isinstance(item, DatasetCollectionElement):
+            return item.dataset_instances
+        if isinstance(item, HistoryDatasetCollectionAssociation):
+            return item.to_hda_representative(multiple=True)
+        if isinstance(item, CollectionAdapter):
+            return item.dataset_instances
         raise ValueError
-    if isinstance(ref, DatasetCollectionElement) and ref.hda:
-        ref = ref.hda
-    if isinstance(ref, (DatasetFilenameWrapper, HistoryDatasetAssociation, LibraryDatasetDatasetAssociation)):
-        ref = [ref]
-    elif isinstance(ref, HistoryDatasetCollectionAssociation):
-        ref = ref.to_hda_representative(multiple=True)
-    return ref
+
+    ref = other_values[ref_name]
+    if isinstance(ref, single_types):
+        return [ref]
+    if isinstance(ref, DatasetCollectionElement):
+        return ref.dataset_instances
+    if isinstance(ref, HistoryDatasetCollectionAssociation):
+        return ref.to_hda_representative(multiple=True)
+    if isinstance(ref, CollectionAdapter):
+        return ref.dataset_instances
+    if isinstance(ref, (list, DatasetListWrapper)):
+        flattened: list = []
+        for item in ref:
+            if item is None:
+                continue
+            flattened.extend(_unwrap(item))
+        return flattened
+    if is_runtime_value(ref):
+        return []
+    raise ValueError

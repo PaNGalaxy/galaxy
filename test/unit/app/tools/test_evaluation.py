@@ -133,8 +133,8 @@ class TestToolEvaluator(TestCase, UsesApp):
         # splitting, config.outputs_to_working_directory). This tests that
         # functionality.
         self._setup_test_bwa_job()
-        job_path_1 = f"{self.test_directory}/dataset_1.dat"
-        job_path_2 = f"{self.test_directory}/dataset_2.dat"
+        job_path_1 = os.path.join(self.test_directory, "dataset_1.dat")
+        job_path_2 = os.path.join(self.test_directory, "dataset_2.dat")
         self._set_compute_environment(
             input_paths=[DatasetPath(1, "/galaxy/files/dataset_1.dat", false_path=job_path_1)],
             output_paths=[DatasetPath(2, "/galaxy/files/dataset_2.dat", false_path=job_path_2)],
@@ -167,12 +167,10 @@ class TestToolEvaluator(TestCase, UsesApp):
 
     def __test_arbitrary_path_rewriting(self):
         self.job.parameters = [JobParameter(name="index_path", value='"/old/path/human"')]
-        xml = XML(
-            """<param name="index_path" type="select">
+        xml = XML("""<param name="index_path" type="select">
             <option value="/old/path/human">Human</option>
             <option value="/old/path/mouse">Mouse</option>
-        </param>"""
-        )
+        </param>""")
         parameter = SelectToolParameter(cast("Tool", self.tool), xml)
 
         def get_field_by_name_for_value(name, value, trans, other_values):

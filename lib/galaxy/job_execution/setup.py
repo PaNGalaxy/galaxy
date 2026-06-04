@@ -157,7 +157,7 @@ class JobIO(UsesDictVisibleKeys):
             # Drop in 24.0
             io_dict.pop("model_class", None)
         job_id = io_dict.pop("job_id")
-        job = sa_session.query(Job).get(job_id)
+        job = sa_session.get(Job, job_id)
         return cls(sa_session=sa_session, job=job, **io_dict)
 
     @classmethod
@@ -245,6 +245,7 @@ class JobIO(UsesDictVisibleKeys):
     def get_input_path(self, dataset: DatasetInstance) -> DatasetPath:
         real_path = dataset.get_file_name(sync_cache=False)
         false_path = self.dataset_path_rewriter.rewrite_dataset_path(dataset, "input")
+        assert dataset.dataset is not None
         return DatasetPath(
             dataset.dataset.id,
             real_path=real_path,
@@ -290,6 +291,7 @@ class JobIO(UsesDictVisibleKeys):
                 with open(da_false_path, "ab"):
                     pass
             real_path = da.dataset.get_file_name(sync_cache=False)
+            assert da.dataset.dataset is not None
             false_extra_files_path = os.path.join(
                 os.path.dirname(da_false_path or real_path), da.dataset.dataset.extra_files_path_name
             )

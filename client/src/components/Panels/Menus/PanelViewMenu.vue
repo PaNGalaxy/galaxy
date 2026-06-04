@@ -21,6 +21,7 @@ const groupsDefinitions = [
     { type: "publication", title: "...from Publication" },
     { type: "training", title: "...for Training" },
 ];
+const groupedPanelViewTypes = new Set(groupsDefinitions.map((group) => group.type));
 
 const props = defineProps<{
     /** Whether the menu is compact: doesn't take up full width of the parent when `true`.
@@ -35,6 +36,8 @@ const { currentPanelView, loading, panels } = storeToRefs(toolStore);
 const panelName = ref("");
 
 const defaultPanelView = computed(() => panels.value["default"] || Object.values(panels.value)[0]);
+const currentPanel = computed(() => panels.value[currentPanelView.value]);
+const isFavoritesView = computed(() => currentPanel.value?.view_type === "favorites");
 
 const panelIcon = computed<IconDefinition | null>(() => {
     if (
@@ -58,12 +61,18 @@ const styleClasses = computed(() => {
 const toolPanelHeader = computed(() => {
     if (loading.value && panelName.value) {
         return localize(panelName.value);
-    } else if (currentPanelView.value !== "default" && panels.value && panels.value[currentPanelView.value]?.name) {
-        return localize(panels.value[currentPanelView.value]?.name);
+    } else if (currentPanelView.value !== "default" && panels.value && currentPanel.value?.name) {
+        return localize(currentPanel.value.name);
     } else {
         return localize("Tools");
     }
 });
+
+const headingClass = computed<Record<string, boolean>>(() => ({
+    "font-italic": currentPanelView.value !== "default" && !isFavoritesView.value,
+    "text-left": true,
+}));
+const showPanelIcon = computed(() => !!panelIcon.value && !loading.value);
 
 const groupedPanelViews = computed(() => {
     const groups = [];
@@ -81,7 +90,16 @@ const groupedPanelViews = computed(() => {
     return groups;
 });
 
-const ungroupedPanelViews = computed(() => panelViewsOfType("generic"));
+const ungroupedPanelViews = computed(() => {
+    const defaultPanelId = defaultPanelView.value?.id;
+    return Object.values(panels.value).filter((panel) => {
+        if (!panel || panel.id === defaultPanelId) {
+            return false;
+        }
+        const viewType = panel.view_type;
+        return viewType ? !groupedPanelViewTypes.has(viewType) : false;
+    });
+});
 
 function panelViewsOfType(panelViewType: string) {
     const panelViews = [];
@@ -103,12 +121,12 @@ async function updatePanelView(panel: Panel) {
 
 <template>
     <BDropdown
-        v-b-tooltip.hover.top.noninteractive
+        v-g-tooltip.hover.top
         right
         block
         no-caret
         :disabled="loading"
-        :title="!loading ? 'Show panel options' : 'Loading panel view'"
+        :title="!loading ? localize('Show panel options') : 'Loading panel view'"
         variant="link"
         toggle-class="text-decoration-none"
         role="menu"
@@ -119,18 +137,13 @@ async function updatePanelView(panel: Panel) {
         <template v-slot:button-content>
             <span class="sr-only">View all tool panel configurations</span>
             <div class="d-flex panel-view-selector justify-content-between flex-gapx-1">
-                <div>
+                <div class="d-flex flex-gapx-1">
                     <FontAwesomeIcon
-                        v-if="panelIcon && !loading"
-                        class="mr-1"
+                        v-if="showPanelIcon && !isFavoritesView"
+                        class="mr-1 mt-1"
                         :icon="panelIcon"
                         data-description="panel view header icon" />
-                    <Heading
-                        id="toolbox-heading"
-                        :class="toolPanelHeader !== 'Tools' && 'font-italic'"
-                        h2
-                        inline
-                        size="sm">
+                    <Heading id="toolbox-heading" :class="headingClass" h2 inline size="sm">
                         <span v-if="loading && panelName">
                             <LoadingSpan :message="toolPanelHeader" />
                         </span>
@@ -172,7 +185,7 @@ async function updatePanelView(panel: Panel) {
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .panel-view-selector {
     color: $panel-header-text-color;

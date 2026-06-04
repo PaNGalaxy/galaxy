@@ -76,12 +76,13 @@
 
 <script>
 import axios from "axios";
-import { getAppRoot } from "onload/loadConfig";
-import { debounce } from "underscore";
+import { debounce } from "lodash";
 
+import { getAppRoot } from "@/onload/loadConfig";
+
+import Alert from "@/components/Alert.vue";
 import GButton from "@/components/BaseComponents/GButton.vue";
 import GButtonGroup from "@/components/BaseComponents/GButtonGroup.vue";
-import Alert from "components/Alert.vue";
 
 export default {
     components: {

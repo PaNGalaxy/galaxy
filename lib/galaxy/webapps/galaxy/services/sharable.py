@@ -4,8 +4,6 @@ from typing import (
     Union,
 )
 
-from sqlalchemy import false
-
 from galaxy.managers import base
 from galaxy.managers.sharable import (
     SharableModelManager,
@@ -33,6 +31,7 @@ from galaxy.schema.schema import (
     ShareWithStatus,
     SharingOptions,
     SharingStatus,
+    UserEmail,
     UserIdentifier,
 )
 from galaxy.webapps.galaxy.services.notifications import NotificationService
@@ -110,7 +109,10 @@ class ShareableService:
         users, errors = self._get_users(trans, payload.user_ids)
         extra, users_to_notify = self._share_with_options(trans, item, users, errors, payload.share_option)
         base_status = self._get_sharing_status(trans, item)
-        status = self.share_with_status_cls.model_construct(**base_status.model_dump(), extra=extra)
+        # Use dict() for a shallow field copy so nested UserEmail instances in
+        # users_shared_with survive; model_dump() would deep-serialize them to
+        # dicts that model_construct won't re-validate back to UserEmail.
+        status = self.share_with_status_cls.model_construct(**dict(base_status), extra=extra)
         status.errors.extend(errors)
         galaxy_url = str(trans.url_builder("/", qualified=True)).rstrip("/") if trans.url_builder else None
         self._send_notification_to_users(users_to_notify, item, status, galaxy_url)
@@ -140,7 +142,7 @@ class ShareableService:
         status = self.serializer.serialize_to_view(
             item, user=trans.user, trans=trans, default_view="sharing", encode_id=False
         )
-        status["users_shared_with"] = [{"id": a.user.id, "email": a.user.email} for a in item.users_shared_with]
+        status["users_shared_with"] = [UserEmail(id=a.user.id, email=a.user.email) for a in item.users_shared_with]
         return SharingStatus(**status)
 
     def _get_users(self, trans, emails_or_ids: list[UserIdentifier]) -> tuple[set[User], set[str]]:
@@ -156,9 +158,12 @@ class ShareableService:
                 email_address = email_or_id.strip()
                 if not email_address:
                     continue
-                send_to_user = self.manager.user_manager.by_email(
-                    email_address, filters=[User.table.c.deleted == false()]
-                )
+                send_to_user = self.manager.user_manager.by_email(email_address, deleted=False)
+                if not send_to_user:
+                    # Try a case-insensitive match on the email
+                    send_to_user = self.manager.user_manager.by_email(
+                        email_address, case_sensitive=False, deleted=False
+                    )
 
             if not send_to_user:
                 send_to_err.add(f"{email_or_id} is not a valid Galaxy user.")
@@ -172,17 +177,13 @@ class ShareableService:
     def _send_notification_to_users(
         self, users_to_notify: set[User], item: SharableItem, status: ShareWithStatus, galaxy_url: Optional[str] = None
     ):
-        if (
-            self.notification_service.notification_manager.notifications_enabled
-            and not status.errors
-            and users_to_notify
-        ):
+        if self.notification_service.notifications_enabled and not status.errors and users_to_notify:
             request = SharedItemNotificationFactory.build_notification_request(
                 item, users_to_notify, status, galaxy_url
             )
             # We can set force_sync=True here because we already have the set of users to notify
             # and there is no need to resolve them asynchronously as no groups or roles are involved.
-            self.notification_service.send_notification_internal(request, force_sync=True)
+            self.notification_service.send_internal_notification(request, force_sync=True)
 
 
 class SharedItemNotificationFactory:

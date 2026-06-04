@@ -17,6 +17,7 @@ from galaxy.util import (
     unicodify,
 )
 from galaxy.util.hash_util import hmac_new
+from galaxy.web import url_for
 from galaxy.webapps.base.controller import BaseUIController
 
 log = logging.getLogger(__name__)
@@ -230,4 +231,6 @@ class ASync(BaseUIController):
 
             trans.sa_session.commit()
 
-        return trans.fill_template("root/tool_runner.mako", out_data={}, num_jobs=1, job_errors=[])
+        # Return the user to the Galaxy SPA; the frontend surfaces a toast
+        # based on the `notification` query parameter.
+        return trans.response.send_redirect(url_for("/?notification=tool-submitted"))

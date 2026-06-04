@@ -149,7 +149,6 @@ the tool menu immediately following the hyperlink for the tool (based on the
         <xs:element name="code" type="Code" minOccurs="0"/>
         <xs:element name="uihints" type="UIhints" minOccurs="0"/>
         <xs:element name="options" type="Options" minOccurs="0"/>
-        <xs:element name="trackster_conf" type="TracksterConf" minOccurs="0"/>
         <xs:element name="citations" type="Citations" minOccurs="0"/>
       </xs:all>
       <xs:attribute name="id" type="xs:string" use="required">
@@ -825,7 +824,7 @@ machine that is executing the job. Additionally, users could supply characters t
 In modern versions of the ``aws`` interface credentials can only be supplied via a file.
 
 In the postgres example we deliberately used environment variables that are picked up automatically by ``psql``,
-i.e. we do not need to set it on the command line (which would expose them on the process list). 
+i.e. we do not need to set it on the command line (which would expose them on the process list).
 ]]></xs:documentation>
     </xs:annotation>
     <xs:sequence>
@@ -1260,29 +1259,6 @@ The content of ``stdout`` and ``stderr`` are strings containing the output of th
       </xs:annotation>
     </xs:attribute>
   </xs:complexType>
-  <xs:complexType name="TracksterConf">
-    <xs:annotation>
-      <xs:documentation xml:lang="en">This directive is used to specify some rarely modified trackster options.</xs:documentation>
-    </xs:annotation>
-    <xs:sequence>
-      <xs:element name="action" type="TracksterAction" minOccurs="0" maxOccurs="unbounded"/>
-    </xs:sequence>
-  </xs:complexType>
-  <xs:complexType name="TracksterAction">
-    <xs:annotation>
-      <xs:documentation xml:lang="en"/>
-    </xs:annotation>
-    <xs:attribute name="name" type="xs:string">
-      <xs:annotation>
-        <xs:documentation xml:lang="en"/>
-      </xs:annotation>
-    </xs:attribute>
-    <xs:attribute name="output_name" type="xs:string">
-      <xs:annotation>
-        <xs:documentation xml:lang="en"/>
-      </xs:annotation>
-    </xs:attribute>
-  </xs:complexType>
   <xs:complexType name="Tests">
     <xs:annotation gxdocs:best_practices="tests">
       <xs:documentation xml:lang="en"><![CDATA[
@@ -1423,6 +1399,7 @@ that at least one of the assumptions of the test is not met. This is most useful
       <xs:element name="repeat" type="TestRepeat"/>
       <xs:element name="conditional" type="TestConditional"/>
       <xs:element name="section" type="TestSection"/>
+      <xs:element name="credentials" type="TestCredentials"/>
       <xs:element name="output" type="TestOutput" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="output_collection" type="TestOutputCollection"/>
       <xs:element name="assert_command" type="TestAssertions">
@@ -1463,6 +1440,72 @@ $assertions
       </xs:element>
     </xs:choice>
   </xs:group>
+  <xs:complexType name="TestCredentials">
+    <xs:annotation>
+      <xs:documentation xml:lang="en"><![CDATA[
+
+Specify test credentials for a service that requires authentication.
+This allows tool tests to provide credential values (variables and secrets)
+that will be injected as environment variables during test execution.
+
+This is intended for use with public test accounts/credentials only.
+
+### Example
+
+```xml
+<test>
+    <credentials name="ega_credentials">
+        <variable name="ega_username" value="test_user" />
+        <secret name="ega_password" value="test_password" />
+    </credentials>
+    <param name="input" value="test.txt" />
+    <output name="output" file="expected.txt" />
+</test>
+```
+
+]]></xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="variable" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:attribute name="name" type="xs:string" use="required">
+            <xs:annotation>
+              <xs:documentation xml:lang="en">Name of the credential variable (must match a variable defined in the tool's requirements/credentials)</xs:documentation>
+            </xs:annotation>
+          </xs:attribute>
+          <xs:attribute name="value" type="xs:string" use="required">
+            <xs:annotation>
+              <xs:documentation xml:lang="en">Test value for this variable</xs:documentation>
+            </xs:annotation>
+          </xs:attribute>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="secret" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:attribute name="name" type="xs:string" use="required">
+            <xs:annotation>
+              <xs:documentation xml:lang="en">Name of the credential secret (must match a secret defined in the tool's requirements/credentials)</xs:documentation>
+            </xs:annotation>
+          </xs:attribute>
+          <xs:attribute name="value" type="xs:string" use="required">
+            <xs:annotation>
+              <xs:documentation xml:lang="en">Test value for this secret (use public test credentials only)</xs:documentation>
+            </xs:annotation>
+          </xs:attribute>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+    <xs:attribute name="name" type="xs:string" use="required">
+      <xs:annotation>
+        <xs:documentation xml:lang="en">Name of the credentials group (must match the name defined in tool's requirements/credentials)</xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+    <xs:attribute name="version" type="xs:string" default="1.0">
+      <xs:annotation>
+        <xs:documentation xml:lang="en">Version of the credentials definition (must match the version defined in tool's requirements/credentials). Defaults to "1.0".</xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+  </xs:complexType>
   <xs:complexType name="TestSection">
     <xs:annotation>
       <xs:documentation xml:lang="en"><![CDATA[
@@ -2044,6 +2087,16 @@ This is available in Galaxy since release 17.05 and was introduced in [pull requ
         <xs:documentation xml:lang="en">Number or datasets for this output. Should be used for outputs with ``discover_datasets``</xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="min" type="xs:integer" gxdocs:added="26.0">
+      <xs:annotation>
+        <xs:documentation xml:lang="en">Minimum number or datasets for this output. Should be used for outputs with ``discover_datasets``</xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+    <xs:attribute name="max" type="xs:integer" gxdocs:added="26.0">
+      <xs:annotation>
+        <xs:documentation xml:lang="en">Maximum number or datasets for this output. Should be used for outputs with ``discover_datasets``</xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
     <xs:attribute name="location" type="xs:anyURI" gxdocs:added="23.1">
       <xs:annotation>
         <xs:documentation xml:lang="en">URL that points to a remote output file that will downloaded and used for output comparison.
@@ -2396,6 +2449,16 @@ This value is the same as the value of the ``name`` attribute of the
         <xs:documentation xml:lang="en">Number of elements in output collection.</xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="min" type="xs:integer" gxdocs:added="26.0">
+      <xs:annotation>
+        <xs:documentation xml:lang="en">Minimum number of elements in output collection.</xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+    <xs:attribute name="max" type="xs:integer" gxdocs:added="26.0">
+      <xs:annotation>
+        <xs:documentation xml:lang="en">Maximum number of elements in output collection.</xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
   </xs:complexType>
   <xs:complexType name="TestAssertions">
     <xs:annotation>
@@ -2469,7 +2532,7 @@ $attribute_list::5]]></xs:documentation>
         <xs:annotation>
           <xs:documentation xml:lang="en"><![CDATA[Asserts the specified output contains a line matching the
 regular expression specified by the argument expression. If n is given
-the assertion checks for exactly n occurences.
+the assertion checks for exactly n occurrences.
 
 $attribute_list::5]]></xs:documentation>
         </xs:annotation>
@@ -2590,8 +2653,8 @@ $attribute_list::5]]></xs:documentation>
         <xs:annotation>
           <xs:documentation xml:lang="en"><![CDATA[Asserts the specified output contains text matching the
 regular expression specified by the argument expression.
-If n is given the assertion checks for exacly n (nonoverlapping)
-occurences.
+If n is given the assertion checks for exactly n (nonoverlapping)
+occurrences.
 
 $attribute_list::5]]></xs:documentation>
         </xs:annotation>
@@ -2652,7 +2715,7 @@ number (``n``) of columns.
 
 For instance, ``<has_n_columns n="3"/>``. The assertion tests only the first line.
 Number of columns can optionally also be specified with ``delta``. Alternatively the
-range of expected occurences can be specified by ``min`` and/or ``max``.
+range of expected occurrences can be specified by ``min`` and/or ``max``.
 
 Optionally a column separator (``sep``, default is ``       ``) `and comment character(s)
 can be specified (``comment``, default is empty string). The first non-comment
@@ -2928,7 +2991,7 @@ For example:
 ```
 
 Alternatively to ``n`` and ``delta`` also the ``min`` and ``max`` attributes
-can be used to specify the range of the expected number of occurences.
+can be used to specify the range of the expected number of occurrences.
 With ``negate`` the result of the assertion can be inverted.
 
 $attribute_list::5]]></xs:documentation>
@@ -2980,7 +3043,7 @@ $attribute_list::5]]></xs:documentation>
         <xs:annotation>
           <xs:documentation xml:lang="en"><![CDATA[Assert if the XML file contains element(s) or tag(s) with the specified
 [XPath-like ``path``](https://lxml.de/xpathxslt.html).  If ``n`` and ``delta``
-or ``min`` and ``max`` are given also the number of occurences is checked.
+or ``min`` and ``max`` are given also the number of occurrences is checked.
 
 ```xml
 <assert_contents>
@@ -2990,7 +3053,7 @@ or ``min`` and ``max`` are given also the number of occurences is checked.
 </assert_contents>
 ```
 
-With ``negate="true"`` the outcome of the assertions wrt the precence and number
+With ``negate="true"`` the outcome of the assertions wrt the presence and number
 of ``path`` can be negated. If there are any sub assertions then check them against
 
 - the content of the attribute ``attribute``
@@ -3005,7 +3068,7 @@ of ``path`` can be negated. If there are any sub assertions then check them agai
 ```
 
 Sub-assertions are not subject to the ``negate`` attribute of ``xml_element``.
-If ``all`` is ``true`` then the sub assertions are checked for all occurences.
+If ``all`` is ``true`` then the sub assertions are checked for all occurrences.
 
 Note that all other XML assertions can be expressed by this assertion (Galaxy
 also implements the other assertions by calling this one).
@@ -5711,7 +5774,7 @@ For use with validator ``dataset_metadata_in_file``</xs:documentation>
       <xs:documentation xml:lang="en"><![CDATA[
 
 See
-[/tools/filters/grep.xml](https://github.com/galaxyproject/galaxy/blob/dev/tools/filters/grep.xml)
+[/tools/stats/filtering.xml](https://github.com/galaxyproject/galaxy/blob/dev/tools/stats/filtering.xml)
 for a typical example of how to use this tag set. This tag set is used to
 replace the basic parameter sanitization with custom directives. This tag set is
 contained within the ``<param>`` tag set - it contains a set of ``<valid>`` and
@@ -6566,7 +6629,7 @@ block to be executed to test whether to include this output in the outputs the
 tool ultimately creates. If the code of each of these filters, when executed, returns ``True``,
 the output dataset is retained, i.e. the output is excluded if at least one evaluates to ``False``.
 In these code blocks the tool parameters appear
-as Python variables and are thus referred to without the $ used for the Cheetah
+as Python variables and are thus referred to without the ``$`` used for the Cheetah
 template (used in the ``<command>`` tag). Variables that are part of
 conditionals are accessed using a dictionary named after the conditional. Boolean
 parameters appear as booleans, not the value of their ``truevalue`` and
@@ -8154,6 +8217,11 @@ and ``bibtex`` are the only supported options.</xs:documentation>
       <xs:enumeration value="shm_size">
         <xs:annotation>
           <xs:documentation xml:lang="en"><![CDATA[Size of /dev/shm. The format is `<number><unit>`. <number> must be greater than 0. Unit is optional and can be `b` (bytes), `k` (kilobytes), `m` (megabytes), or `g` (gigabytes). If you omit the unit, the default is bytes. If you omit the size entirely, the value is `64m`.]]></xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="timelimit">
+        <xs:annotation>
+          <xs:documentation xml:lang="en">Maximum time in seconds the tool is allowed to run. Job will be terminated if exceeded.</xs:documentation>
         </xs:annotation>
       </xs:enumeration>
     </xs:restriction>

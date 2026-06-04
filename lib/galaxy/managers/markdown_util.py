@@ -45,15 +45,17 @@ from galaxy.managers.jobs import (
     summarize_job_parameters,
 )
 from galaxy.managers.licenses import LicensesManager
-from galaxy.model import Job
+from galaxy.model import (
+    Job,
+)
 from galaxy.model.item_attrs import get_item_annotation_str
-from galaxy.model.orm.now import now
 from galaxy.schema import PdfDocumentType
 from galaxy.schema.tasks import GeneratePdfDownload
 from galaxy.short_term_storage import (
     ShortTermStorageMonitor,
     storage_context,
 )
+from galaxy.util import now
 from galaxy.util.markdown import literal_via_fence
 from galaxy.util.resources import resource_string
 from galaxy.util.sanitize_html import sanitize_html
@@ -141,7 +143,7 @@ class GalaxyInternalMarkdownDirectiveHandler(metaclass=abc.ABCMeta):
         hda_manager = trans.app.hda_manager
         history_manager = trans.app.history_manager
         workflow_manager = trans.app.workflow_manager
-        job_manager = JobManager(trans.app)
+        job_manager = JobManager(trans.app, history_manager)
         collection_manager = trans.app.dataset_collection_manager
 
         def _remap(container, line):
@@ -620,9 +622,7 @@ class ReadyForExportMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHand
         pass
 
     def handle_invocation_time(self, line, invocation):
-        self.ensure_rendering_data_for("invocations", invocation)["create_time"] = _database_time_to_str(
-            invocation.create_time
-        )
+        self.ensure_rendering_data_for("invocations", invocation)["create_time"] = invocation.create_time.isoformat()
 
     def handle_invocation_inputs(self, line, invocation):
         pass
@@ -676,6 +676,9 @@ def ready_galaxy_markdown_for_export(trans, internal_galaxy_markdown):
 class ToBasicMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHandler):
     def __init__(self, trans):
         self.trans = trans
+
+    def _format_printable_time(self, time):
+        return time.strftime("%Y-%m-%d, %H:%M:%S UTC")
 
     def handle_dataset_display(self, line, hda):
         name = hda.name or ""
@@ -852,7 +855,7 @@ class ToBasicMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHandler):
         return (content, True)
 
     def handle_generate_time(self, line, generate_time):
-        content = literal_via_fence(generate_time.isoformat())
+        content = literal_via_fence(self._format_printable_time(generate_time))
         return (content, True)
 
     def handle_instance_access_link(self, line, url):
@@ -884,7 +887,7 @@ class ToBasicMarkdownDirectiveHandler(GalaxyInternalMarkdownDirectiveHandler):
         return (content, True)
 
     def handle_invocation_time(self, line, invocation):
-        content = literal_via_fence(_database_time_to_str(invocation.create_time))
+        content = literal_via_fence(self._format_printable_time(invocation.create_time))
         return (content, True)
 
     def handle_invocation_inputs(self, line, invocation):
@@ -1088,7 +1091,7 @@ def resolve_invocation_markdown(trans, workflow_markdown):
     def get_invocation(trans, line):
         workflow_manager = trans.app.workflow_manager
         if invocation_id_match := re.search(INVOCATION_ID_PATTERN, line):
-            invocation_id = invocation_id_match.group(1)
+            invocation_id = int(invocation_id_match.group(1))
             invocation = workflow_manager.get_invocation(
                 trans, invocation_id, check_ownership=False, check_accessible=True
             )
@@ -1349,7 +1352,7 @@ def _remap_galaxy_markdown_containers(func, markdown):
         match = re.search(GALAXY_FENCED_BLOCK, from_markdown)
         if match is not None:
             replace = match.group(1)
-            (replacement, whole_block) = func(replace)
+            replacement, whole_block = func(replace)
             if whole_block:
                 start_pos = match.start()
                 end_pos = match.end()

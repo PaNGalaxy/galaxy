@@ -298,6 +298,9 @@ RequiredRepositoryChangesetRevisionParam: str = Query(..., title="Changeset Revi
 OptionalRepositoryIdParam: Optional[str] = Query(None, title="TSR ID")
 OptionalHexlifyParam: Optional[bool] = Query(True, title="Hexlify response")
 
+DryRunQueryParam: bool = Query(False, title="Dry Run", description="Preview changes without persisting to database")
+VerboseQueryParam: bool = Query(False, title="Verbose", description="Return detailed per-changeset information")
+
 CategoryIdPathParam: str = Path(
     ..., title="Category ID", description="The encoded database identifier of the category."
 )
@@ -305,6 +308,12 @@ CategoryRepositoriesInstallableQueryParam: bool = Query(False, title="Installabl
 CategoryRepositoriesSortKeyQueryParam: str = Query("name", title="Sort Key")
 CategoryRepositoriesSortOrderQueryParam: str = Query("asc", title="Sort Order")
 CategoryRepositoriesPageQueryParam: Optional[int] = Query(None, title="Page")
+
+FromTipQueryParam: bool = Query(
+    default=False,
+    title="From Tip",
+    description="If true, use repository tip as upper bound changeset revision.",
+)
 
 
 def ensure_valid_session(trans: SessionRequestContext) -> None:

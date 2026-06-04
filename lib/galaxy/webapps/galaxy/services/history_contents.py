@@ -5,23 +5,24 @@ from collections.abc import Iterable
 from typing import (
     Any,
     cast,
+    Literal,
     Optional,
     TYPE_CHECKING,
     Union,
 )
+from uuid import UUID
 
 from celery import chain
 from pydantic import (
     ConfigDict,
     Field,
 )
-from typing_extensions import (
-    Literal,
-    Protocol,
-)
+from typing_extensions import Protocol
 
 from galaxy import exceptions
+from galaxy.celery.helpers import async_task_summary
 from galaxy.celery.tasks import (
+    bulk_move_storage,
     change_datatype,
     materialize as materialize_task,
     prepare_dataset_collection_download,
@@ -29,7 +30,9 @@ from galaxy.celery.tasks import (
     touch,
     write_history_content_to,
 )
+from galaxy.config import GalaxyAppConfiguration
 from galaxy.managers import (
+    datasets,
     folders,
     hdas,
     hdcas,
@@ -45,6 +48,7 @@ from galaxy.managers.context import (
     ProvidesHistoryContext,
     ProvidesUserContext,
 )
+from galaxy.managers.dataset_storage_operations import DatasetStorageOperationManager
 from galaxy.managers.genomes import GenomesManager
 from galaxy.managers.history_contents import (
     HistoryContentsFilters,
@@ -106,7 +110,17 @@ from galaxy.schema.schema import (
     UpdateHistoryContentsBatchPayload,
     WriteStoreToPayload,
 )
+from galaxy.schema.storage_operations import (
+    StorageOperationExecuteRequest,
+    StorageOperationExecuteResponse,
+    StorageOperationPreviewRequest,
+    StorageOperationPreviewResponse,
+    StorageOperationRunItemStatus,
+    StorageOperationRunResponse,
+)
 from galaxy.schema.tasks import (
+    CopyDatasetsPayload,
+    CopyDatasetsResponse,
     GenerateHistoryContentDownload,
     MaterializeDatasetInstanceTaskRequest,
     PrepareDatasetCollectionDownload,
@@ -116,7 +130,6 @@ from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.short_term_storage import ShortTermStorageAllocator
 from galaxy.util.zipstream import ZipstreamWrapper
 from galaxy.webapps.galaxy.services.base import (
-    async_task_summary,
     ConsumesModelStores,
     ensure_celery_tasks_enabled,
     model_store_storage_target,
@@ -260,9 +273,11 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
     def __init__(
         self,
         security: IdEncodingHelper,
+        config: GalaxyAppConfiguration,
         object_store: BaseObjectStore,
         history_manager: histories.HistoryManager,
         history_contents_manager: HistoryContentsManager,
+        dataset_manager: datasets.DatasetManager,
         hda_manager: hdas.HDAManager,
         hdca_manager: hdcas.HDCAManager,
         dataset_collection_manager: DatasetCollectionManager,
@@ -278,6 +293,7 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
         super().__init__(security)
         self.history_manager = history_manager
         self.history_contents_manager = history_contents_manager
+        self.dataset_manager = dataset_manager
         self.hda_manager = hda_manager
         self.hdca_manager = hdca_manager
         self.dataset_collection_manager = dataset_collection_manager
@@ -291,6 +307,11 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
         self.short_term_storage_allocator = short_term_storage_allocator
         self.genomes_manager = genomes_manager
         self.object_store = object_store
+        self.storage_operation_manager = DatasetStorageOperationManager(
+            object_store,
+            config,
+            hdca_manager=self.hdca_manager,
+        )
 
     def index(
         self,
@@ -373,6 +394,8 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
             content_name = dataset_collection_instance.name
         else:
             raise exceptions.UnknownContentsType(f"Unknown contents type: {contents_type}")
+        if not content_name:
+            raise exceptions.RequestParameterInvalidException("Content must have a name")
         short_term_storage_target = model_store_storage_target(
             self.short_term_storage_allocator,
             content_name,
@@ -529,6 +552,21 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
             return self.__create_dataset_collection(trans, history, payload, serialization_params)
         raise exceptions.UnknownContentsType(f"Unknown contents type: {payload.type}")
 
+    def copy_contents(
+        self,
+        trans: ProvidesHistoryContext,
+        history_id: DecodedDatabaseIdField,
+        payload: CopyDatasetsPayload,
+    ) -> CopyDatasetsResponse:
+        """
+        Service wrapper for copying datasets and dataset collections between histories.
+        """
+        return self.history_contents_manager.copy_contents(
+            trans=trans,
+            history_id=history_id,
+            payload=payload,
+        )
+
     def create_from_store(
         self,
         trans,
@@ -599,6 +637,7 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
         payload_dict = payload.model_dump(by_alias=True)
         hda = self.hda_manager.get_owned(history_content_id, trans.user, current_history=trans.history, trans=trans)
         assert hda is not None
+        assert hda.history is not None
         self.history_manager.error_unless_mutable(hda.history)
         self.hda_manager.update_permissions(trans, hda, **payload_dict)
         roles = self.hda_manager.serialize_dataset_association_roles(hda)
@@ -626,9 +665,7 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
         """
         if history_id is None:
             if contents_type == HistoryContentType.dataset:
-                item: Union[HistoryDatasetAssociation, HistoryDatasetCollectionAssociation] = (
-                    self.hda_manager.get_owned(id, trans.user, current_history=trans.history)
-                )
+                item: HistoryItem = self.hda_manager.get_owned(id, trans.user, current_history=trans.history)
             else:
                 item = self.hdca_manager.get_owned(id, trans.user, current_history=trans.history)
             assert item.history
@@ -716,6 +753,107 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
         trans.sa_session.commit()
         success_count = len(contents) - len(errors)
         return HistoryContentBulkOperationResult(success_count=success_count, errors=errors)
+
+    def bulk_storage_operation_preview(
+        self,
+        trans: ProvidesHistoryContext,
+        history_id: DecodedDatabaseIdField,
+        filter_query_params: ValueFilterQueryParams,
+        payload: StorageOperationPreviewRequest,
+    ) -> StorageOperationPreviewResponse:
+        user = self.get_authenticated_user(trans)
+        history = self.history_manager.get_mutable(history_id, user, current_history=trans.history)
+        filters = self.history_contents_filters.parse_query_filters(filter_query_params)
+        if payload.items:
+            parsed_items = [HistoryContentItem.model_validate(item) for item in payload.items]
+            contents = self._get_contents_by_item_list(trans, history, parsed_items)
+        else:
+            contents = self.history_contents_manager.contents(history, filters)
+
+        return self.storage_operation_manager.build_preview_response(
+            sa_session=trans.sa_session,
+            security_agent=trans.app.security_agent,
+            quota_agent=trans.app.quota_agent,
+            history_id=history.id,
+            user=user,
+            contents=contents,
+            target_object_store_id=payload.target_object_store_id,
+            query_based_selection=not payload.items,
+        )
+
+    def bulk_storage_operation_execute(
+        self,
+        trans: ProvidesHistoryContext,
+        history_id: DecodedDatabaseIdField,
+        payload: StorageOperationExecuteRequest,
+    ) -> StorageOperationExecuteResponse:
+        user = self.get_authenticated_user(trans)
+        history = self.history_manager.get_mutable(history_id, user, current_history=trans.history)
+        snapshot = self.storage_operation_manager.get_snapshot(trans.sa_session, payload.snapshot_id)
+        self.storage_operation_manager.validate_snapshot_for_history(
+            snapshot,
+            history_id=history.id,
+            user_id=user.id,
+        )
+        run, _ = self.storage_operation_manager.create_run_and_summary(
+            sa_session=trans.sa_session,
+            snapshot=snapshot,
+            skip_ineligible=payload.execution_policy.skip_ineligible,
+            notify_on_completion=payload.notify_on_completion,
+        )
+
+        task_result = bulk_move_storage.delay(
+            run_db_id=run.id,
+            task_user_id=user.id,
+            notify_on_completion=payload.notify_on_completion,
+        )
+        run.task_id = UUID(task_result.id)
+        trans.sa_session.add(run)
+        trans.sa_session.commit()
+        return StorageOperationExecuteResponse(run=self.storage_operation_manager.to_run_summary(run))
+
+    def bulk_storage_operation_run(
+        self,
+        trans: ProvidesHistoryContext,
+        history_id: DecodedDatabaseIdField,
+        run_id: DecodedDatabaseIdField,
+    ) -> StorageOperationRunResponse:
+        user = self.get_authenticated_user(trans)
+        history = self.history_manager.get_mutable(history_id, user, current_history=trans.history)
+        run = self.storage_operation_manager.get_run(
+            sa_session=trans.sa_session,
+            run_id=run_id,
+            history_id=history.id,
+            user_id=user.id,
+        )
+        summary = self.storage_operation_manager.to_run_summary(run)
+        return StorageOperationRunResponse(run=summary)
+
+    def bulk_storage_operation_run_items(
+        self,
+        trans: ProvidesHistoryContext,
+        history_id: DecodedDatabaseIdField,
+        run_id: DecodedDatabaseIdField,
+        offset: int = 0,
+        limit: int = 50,
+        search: Optional[str] = None,
+    ) -> tuple[list[StorageOperationRunItemStatus], int]:
+        user = self.get_authenticated_user(trans)
+        history = self.history_manager.get_mutable(history_id, user, current_history=trans.history)
+        run = self.storage_operation_manager.get_run(
+            sa_session=trans.sa_session,
+            run_id=run_id,
+            history_id=history.id,
+            user_id=user.id,
+        )
+        return self.storage_operation_manager.get_run_items(
+            sa_session=trans.sa_session,
+            run=run,
+            decode_id=self.decode_id,
+            offset=offset,
+            limit=limit,
+            search=search,
+        )
 
     def validate(self, trans, history_id: DecodedDatabaseIdField, history_content_id: DecodedDatabaseIdField):
         """
@@ -867,6 +1005,7 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
 
     def __delete_dataset(self, trans, id: DecodedDatabaseIdField, purge: bool, stop_job: bool):
         hda = self.hda_manager.get_owned(id, trans.user, current_history=trans.history)
+        assert hda.history is not None
         self.history_manager.error_unless_mutable(hda.history)
         self.hda_manager.error_if_uploading(hda)
 
@@ -1223,6 +1362,7 @@ class HistoriesContentsService(ServiceBase, ServesExportStores, ConsumesModelSto
 
     def __create_hda_from_copy(self, trans, history: History, original_hda_id: int):
         original = self.hda_manager.get_accessible(original_hda_id, trans.user)
+        assert original.history is not None
         # check for access on history that contains the original hda as well
         self.history_manager.error_unless_accessible(original.history, trans.user, current_history=trans.history)
         hda = self.hda_manager.copy(original, history=history)
@@ -1494,6 +1634,7 @@ class HistoryItemOperator:
         self.hda_manager.ensure_can_change_datatype(item)
         self.hda_manager.ensure_can_set_metadata(item)
         is_deferred = item.has_deferred_data
+        assert item.dataset is not None
         item.state = item.dataset.states.SETTING_METADATA
         if is_deferred:
             if params.datatype == "auto":  # if `auto` just keep the original guessed datatype

@@ -1,16 +1,20 @@
 import createClient from "openapi-fetch";
 
+import { pendingRequestsMiddleware } from "@/api/client/pendingRequestsMiddleware";
 import { createRateLimiterMiddleware } from "@/api/client/rateLimiter";
 import type { GalaxyApiPaths } from "@/api/schema";
 import { getAppRoot } from "@/onload/loadConfig";
 
 function getBaseUrl() {
     const isTest = process.env.NODE_ENV === "test";
-    return isTest ? window.location.origin : getAppRoot(undefined, true);
+    return isTest ? window.location.origin : getAppRoot().replace(/\/$/, "");
 }
 
 function apiClientFactory() {
     const client = createClient<GalaxyApiPaths>({ baseUrl: getBaseUrl() });
+
+    // Registered first so aborted requests bypass the rate-limiter queue.
+    client.use(pendingRequestsMiddleware);
 
     // TODO: Adjust based on server limits (maybe this goes in Galaxy config?)
     client.use(

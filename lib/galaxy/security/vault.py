@@ -14,17 +14,6 @@ from cryptography.fernet import (
 from sqlalchemy import select
 
 try:
-    from custos.clients.resource_secret_management_client import ResourceSecretManagementClient
-    from custos.clients.utils.exceptions.CustosExceptions import KeyDoesNotExist
-    from custos.transport.settings import CustosServerClientSettings
-
-    logging.getLogger("custos.clients.resource_secret_management_client").setLevel(logging.CRITICAL)
-
-    custos_sdk_available = True
-except ImportError:
-    custos_sdk_available = False
-
-try:
     import hvac
 except ImportError:
     hvac = None
@@ -109,7 +98,7 @@ class NullVault(Vault):
 
 
 class HashicorpVault(Vault):
-    def __init__(self, config):
+    def __init__(self, config, token_renewal_enabled=False):
         if not hvac:
             raise InvalidVaultConfigException(
                 "Hashicorp vault library 'hvac' is not available. Make sure hvac is installed."
@@ -117,17 +106,85 @@ class HashicorpVault(Vault):
         self.vault_address = config.get("vault_address")
         self.vault_token = config.get("vault_token")
         self.client = hvac.Client(url=self.vault_address, token=self.vault_token)
+        if token_renewal_enabled:
+            self._check_token_renewable()
+
+    def _check_token_renewable(self):
+        try:
+            token_info = self.client.auth.token.lookup_self()
+            data = token_info.get("data", {})
+            renewable = data.get("renewable", False)
+            ttl = data.get("ttl", 0)
+            if not renewable:
+                log.error(
+                    "Hashicorp Vault token is not renewable, but vault_token_renewal_interval is set. "
+                    "The token will expire and cannot be renewed. "
+                    "Generate a renewable token with: vault token create -policy=<policy> -ttl=1h -explicit-max-ttl=720h -renewable"
+                )
+            elif ttl > 0:
+                log.info("Hashicorp Vault token is renewable (TTL: %ds).", ttl)
+            else:
+                log.info("Hashicorp Vault token is renewable (no TTL).")
+        except Exception:
+            log.exception("Failed to look up Hashicorp Vault token info.")
+
+    def renew_token(self):
+        """Renew the Vault token. Intended to be called periodically by a Celery Beat task."""
+        result = self.client.auth.token.renew_self()
+        auth_data = result.get("auth", {})
+        new_ttl = auth_data.get("lease_duration", 0)
+        renewable = auth_data.get("renewable", False)
+        if not renewable:
+            log.error(
+                "Hashicorp Vault token is no longer renewable (max TTL likely reached). "
+                "A new token must be configured."
+            )
+        else:
+            log.debug("Hashicorp Vault token renewed successfully (new TTL: %ds).", new_ttl)
 
     def read_secret(self, key: str) -> Optional[str]:
         try:
             response = self.client.secrets.kv.read_secret_version(path=key)
             return response["data"]["data"].get("value")
         except hvac.exceptions.InvalidPath:
-            log.exception(f"Failed to read secret from Hashicorp Vault at key: {key}")
+            return self._read_legacy_and_migrate(key)
+        except hvac.exceptions.Forbidden:
+            log.error(
+                "Permission denied reading secret at key: %s. "
+                "The Vault token may have expired. Check token renewal configuration.",
+                key,
+            )
             return None
 
+    def _read_legacy_and_migrate(self, key: str) -> Optional[str]:
+        # Galaxy <= 26.0 emitted a leading slash in Vault paths, which hvac's
+        # format_url turned into a double-slash KV v2 key. Vault 1.x accepted
+        # it silently; Vault 2.0 rejects it. Fall back to reading the legacy
+        # form and rewrite under the canonical key so the secret survives the
+        # Galaxy upgrade. This fallback can be removed after a deprecation
+        # window once operators have migrated.
+        legacy = f"/{key}"
+        try:
+            response = self.client.secrets.kv.read_secret_version(path=legacy)
+        except (hvac.exceptions.InvalidPath, hvac.exceptions.InvalidRequest):
+            log.exception(f"Failed to read secret from Hashicorp Vault at key: {key}")
+            return None
+        value = response["data"]["data"].get("value")
+        if value is not None:
+            log.warning("Migrating legacy non-canonical Vault secret to canonical path: %s", key)
+            self.client.secrets.kv.v2.create_or_update_secret(path=key, secret={"value": value})
+        return value
+
     def write_secret(self, key: str, value: str) -> None:
-        self.client.secrets.kv.v2.create_or_update_secret(path=key, secret={"value": value})
+        try:
+            self.client.secrets.kv.v2.create_or_update_secret(path=key, secret={"value": value})
+        except hvac.exceptions.Forbidden:
+            log.error(
+                "Permission denied writing secret at key: %s. "
+                "The Vault token may have expired. Check token renewal configuration.",
+                key,
+            )
+            raise
 
     def list_secrets(self, key: str) -> list[str]:
         raise NotImplementedError()
@@ -182,34 +239,6 @@ class DatabaseVault(Vault):
     def _get_vault_value(self, key):
         stmt = select(model.Vault).filter_by(key=key).limit(1)
         return self.sa_session.scalars(stmt).first()
-
-
-class CustosVault(Vault):
-    def __init__(self, config):
-        if not custos_sdk_available:
-            raise InvalidVaultConfigException(
-                "Custos sdk library 'custos-sdk' is not available. Make sure the custos-sdk is installed."
-            )
-        custos_settings = CustosServerClientSettings(
-            custos_host=config.get("custos_host"),
-            custos_port=config.get("custos_port"),
-            custos_client_id=config.get("custos_client_id"),
-            custos_client_sec=config.get("custos_client_sec"),
-        )
-        self.client = ResourceSecretManagementClient(custos_settings)
-
-    def read_secret(self, key: str) -> Optional[str]:
-        try:
-            response = self.client.get_kv_credential(key=key)
-            return response.get("value")
-        except KeyDoesNotExist:
-            return None
-
-    def write_secret(self, key: str, value: str) -> None:
-        self.client.set_kv_credential(key=key, value=value)
-
-    def list_secrets(self, key: str) -> list[str]:
-        raise NotImplementedError()
 
 
 class UserVaultWrapper(Vault):
@@ -273,13 +302,22 @@ class VaultKeyPrefixWrapper(Vault):
 
     def __init__(self, vault: Vault, prefix: str):
         self.vault = vault
-        self.prefix = prefix.strip("/")
+        # Strip conventional outer slashes so admins can write `/galaxy`,
+        # `galaxy`, or `/galaxy/` interchangeably in config. Reject anything
+        # that would still produce a non-canonical Vault path after stripping.
+        stripped = prefix.strip("/")
+        if not stripped or VAULT_KEY_INVALID_REGEX.search(stripped):
+            raise InvalidVaultConfigException(
+                f"Vault path_prefix {prefix!r} is invalid: must be non-empty and must not contain "
+                "double slashes or whitespace adjacent to a slash."
+            )
+        self.prefix = stripped
 
     def read_secret(self, key: str) -> Optional[str]:
-        return self.vault.read_secret(f"/{self.prefix}/{key}")
+        return self.vault.read_secret(f"{self.prefix}/{key}")
 
     def write_secret(self, key: str, value: str) -> None:
-        return self.vault.write_secret(f"/{self.prefix}/{key}", value)
+        return self.vault.write_secret(f"{self.prefix}/{key}", value)
 
     def list_secrets(self, key: str) -> list[str]:
         raise NotImplementedError()
@@ -297,11 +335,10 @@ class VaultFactory:
     def from_vault_type(app, vault_type: Optional[str], cfg: dict) -> Vault:
         vault: Vault
         if vault_type == "hashicorp":
-            vault = HashicorpVault(cfg)
+            token_renewal_enabled = app.config.vault_token_renewal_interval > 0
+            vault = HashicorpVault(cfg, token_renewal_enabled=token_renewal_enabled)
         elif vault_type == "database":
             vault = DatabaseVault(app.model.context, cfg)
-        elif vault_type == "custos":
-            vault = CustosVault(cfg)
         else:
             raise InvalidVaultConfigException(f"Unknown vault type: {vault_type}")
         vault_prefix = cfg.get("path_prefix") or "/galaxy"
@@ -318,3 +355,20 @@ class VaultFactory:
 
 def is_vault_configured(vault: Vault) -> bool:
     return not isinstance(vault, NullVault)
+
+
+def _unwrap_vault(vault: Vault) -> Vault:
+    """Unwrap decorator layers to get the underlying vault implementation."""
+    while hasattr(vault, "vault"):
+        vault = vault.vault
+    return vault
+
+
+def renew_vault_token_if_needed(vault: Vault) -> None:
+    """Renew the Hashicorp Vault token if the vault is a HashicorpVault.
+
+    Intended to be called from a Celery Beat periodic task.
+    """
+    inner = _unwrap_vault(vault)
+    if isinstance(inner, HashicorpVault):
+        inner.renew_token()

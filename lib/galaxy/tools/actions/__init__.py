@@ -7,7 +7,6 @@ from collections.abc import (
     Mapping,
     MutableMapping,
 )
-from json import dumps
 from typing import (
     Any,
     cast,
@@ -24,10 +23,12 @@ from galaxy.exceptions import (
     AuthenticationRequired,
     ItemAccessibilityException,
     RequestParameterInvalidException,
+    ToolInputsNotReadyException,
 )
 from galaxy.job_execution.actions.post import ActionBox
 from galaxy.managers.context import ProvidesHistoryContext
 from galaxy.model import (
+    Dataset,
     History,
     HistoryDatasetAssociation,
     HistoryDatasetCollectionAssociation,
@@ -309,6 +310,11 @@ class DefaultToolAction(ToolAction):
                 conversion_required = False
                 for ext in extensions:
                     if ext:
+                        if ext in ("auto", "_sniff_"):
+                            if set(summary.states) & set(Dataset.non_ready_states):
+                                raise ToolInputsNotReadyException(
+                                    f"Extension '{ext}' not yet resolved, cannot use dataset collection as input"
+                                )
                         datatype = trans.app.datatypes_registry.get_datatype_by_extension(ext)
                         if not datatype:
                             raise RequestParameterInvalidException(
@@ -504,7 +510,7 @@ class DefaultToolAction(ToolAction):
                 incoming[f"{name}|__identifier__"] = identifier
 
         # Collect chromInfo dataset and add as parameters to incoming
-        (chrom_info, db_dataset) = execution_cache.get_chrom_info(tool.id, input_dbkey)
+        chrom_info, db_dataset = execution_cache.get_chrom_info(tool.id, input_dbkey)
 
         if db_dataset:
             inp_data.update({"chromInfo": db_dataset})
@@ -585,6 +591,7 @@ class DefaultToolAction(ToolAction):
                 data = HistoryDatasetAssociation(
                     extension=ext, dataset=dataset, create_dataset=create_datasets, flush=False
                 )
+                assert data.dataset is not None
                 if create_datasets:
                     from_work_dir = output.from_work_dir
                     if from_work_dir is not None:
@@ -758,8 +765,6 @@ class DefaultToolAction(ToolAction):
         # execute immediate post job actions and associate post job actions that are to be executed after the job is complete
         if job_callback:
             job_callback(job)
-        if job_params:
-            job.params = dumps(job_params)
         if completed_job:
             job.set_copied_from_job_id(completed_job.id)
         trans.sa_session.add(job)
@@ -959,6 +964,7 @@ class DefaultToolAction(ToolAction):
             job.user = trans.user
         if history:
             job.history_id = model.cached_id(history)
+            job.history = history
         job.tool_id = tool.id
         try:
             # For backward compatibility, some tools may not have versions yet.
@@ -975,6 +981,7 @@ class DefaultToolAction(ToolAction):
         if credentials_context is None:
             return
 
+        # Create database associations for vault-based credentials
         for service_context in credentials_context.root:
             association = JobCredentialsContextAssociation(
                 job=job,

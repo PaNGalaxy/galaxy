@@ -1,10 +1,12 @@
-from typing import Optional
+from typing import (
+    Literal,
+    Optional,
+)
 
 from pydantic import (
     Field,
     RootModel,
 )
-from typing_extensions import Literal
 
 from galaxy.schema.fields import (
     DecodedDatabaseIdField,
@@ -66,6 +68,11 @@ class GroupCreatePayload(Model):
     role_ids: list[DecodedDatabaseIdField] = Field(
         [],
         title="role IDs",
+    )
+    auto_create_role: bool = Field(
+        False,
+        title="auto-create role",
+        description="If true, create a new role with the same name as the group and associate it.",
     )
 
 

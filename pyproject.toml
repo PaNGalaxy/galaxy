@@ -1,6 +1,6 @@
 [project]
 name = "galaxy"
-version = "0.1.0"  # Not the real version, which is instead defined in lib/galaxy/version.py
+version = "0.1.0"  # Not the real version, which is instead defined in lib/galaxy/version/__init__.py
 description = "Galaxy is an open, web-based platform for accessible, reproducible, and transparent computational research."
 authors = [
     {name = "Galaxy Contributors"},
@@ -10,7 +10,7 @@ maintainers = [
 ]
 license = {file = "LICENSE.txt"}
 readme = "README.rst"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "a2wsgi",
     "aiofiles",
@@ -37,14 +37,14 @@ dependencies = [
     "docutils!=0.17,!=0.17.1",
     "dparse",
     "edam-ontology",
-    "fastapi>=0.111.0",
+    "fastapi>=0.133.0",  # First version compatible with starlette>=1.0.0
     "fissix",
     "fs",
     "future>=1.0.0",  # Python 3.12 support
     "globus_sdk",
-    "gravity>=1.1.1",
-    "gunicorn",
-    "gxformat2>=0.21.0",
+    "gravity>=1.2.0",  # Python 3.14 support
+    "gunicorn!=25.1.0",  # https://github.com/benoitc/gunicorn/discussions/3509
+    "gxformat2>=0.27.0",
     "h5grove>=1.2.1",
     "h5py>=3.12",  # Python 3.13 support
     "httpx",
@@ -58,7 +58,7 @@ dependencies = [
     "Mako",
     "Markdown",
     "MarkupSafe",
-    "mercurial>=6.8.2",  # Python 3.13 support
+    "mercurial>=7.2",  # Python 3.14 support
     "mrcfile",
     "more-itertools",
     "msal",
@@ -76,10 +76,12 @@ dependencies = [
     "pulsar-galaxy-lib>=0.15.10",
     "pycryptodome",
     "pydantic[email]>=2.7.4",  # https://github.com/pydantic/pydantic/pull/9639
+    "pydantic-ai>=1.56.0",  # https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-2jrp-274c-jhv3
+    "pydicom; python_version >= '3.10'",
     "PyJWT",
     "pykwalify",
     "pylibmagic",
-    "pyparsing",
+    "pyparsing>=3.0.0",
     "pypng",
     "pysam>=0.21",  # for Python 3.11 support on macOS
     "python-dateutil",
@@ -87,10 +89,10 @@ dependencies = [
     "python-multipart",  # required to support form parsing in FastAPI/Starlette
     "python-slugify",
     "PyYAML",
-    "refgenconf>=0.12.0",
+    "refgenconf>=0.13.0",  # https://github.com/refgenie/refgenconf/pull/149
     "regex",
     "requests",
-    "rocrate",
+    "rocrate<0.15.0",  # https://github.com/crs4/rocrate-validator/issues/107
     "Routes",
     "s3fs>=2023.1.0",
     "schema-salad>=8.7.20240905150001",  # Python 3.13 support
@@ -99,12 +101,12 @@ dependencies = [
     "sortedcontainers",
     "SQLAlchemy>=2.0.37,<2.1,!=2.0.41",  # https://github.com/sqlalchemy/sqlalchemy/issues/12019 , https://github.com/sqlalchemy/sqlalchemy/issues/12600
     "sqlparse",
-    "starlette",
+    "starlette>=1.0.1",  # CVE-2026-48710 BadHost
     "starlette-context",
     "svgwrite",
     "tifffile",
-    "tuswsgi",
     "typing-extensions",
+    "tuspyserver",
     "uvicorn!=0.28.0",  # https://github.com/galaxyproject/galaxy/issues/17669
     "uvloop>=0.21.0",  # Python 3.13 support
     "WebOb>=1.8.9",  # Python 3.13 support
@@ -121,11 +123,15 @@ Repository = "https://github.com/galaxyproject/galaxy"
 
 [dependency-groups]
 test = [
+    "aiocop",
     "ase>=3.18.1",
     "axe-selenium-python",
     "boto3",
     "cwltest>=2.5.20240906231108",  # Python 3.13 support
     "fluent-logger",
+    "gcsfs",
+    "htcondor ; sys_platform == 'linux'",
+    "hvac",
     "lxml!=4.2.2",
     "onedatafilerestclient==21.2.5.2",
     "pkce",
@@ -150,7 +156,6 @@ test = [
     "testfixtures",
     "total-perspective-vortex>=3.1.1,<4",  # https://github.com/galaxyproject/total-perspective-vortex/pull/173
     "tuspy",
-    "twill>=3.2.5",  # Python 3.13 support
     "watchdog",
     "Werkzeug",
 ]
@@ -173,6 +178,7 @@ typecheck = [
     "pydantic>=2.7.4",  # for pydantic.mypy plugin
     "types-bleach",
     "types-boto",
+    "types-cachetools",
     "types-contextvars",
     "types-dataclasses",
     "types-docutils",
@@ -188,7 +194,6 @@ typecheck = [
 
 [tool.black]
 line-length = 120
-target-version = ['py39']
 include = '\.pyi?$'
 extend-exclude = '''
 ^/(
@@ -201,10 +206,11 @@ extend-exclude = '''
 isort = true
 
 [tool.ruff]
-target-version = "py39"
 exclude = [
     "lib/tool_shed/test/test_data/repos"
 ]
+src = ["lib"]
+namespace-packages = ["lib/galaxy"]
 
 [tool.ruff.lint]
 # Enable: pycodestyle errors (E), Pyflakes (F), flake8-bugbear (B),
@@ -217,16 +223,20 @@ select = ["E", "F", "B", "C4", "G", "ISC", "NPY", "UP"]
 # E402 module level import not at top of file # TODO, we would like to improve this.
 # E501 is line length (delegated to black)
 # G* are TODOs
-# UP006 and UP035 are PEP 585 type annotations
-ignore = ["B008", "B9", "E402", "E501", "G001", "G002", "G004", "UP006", "UP035"]
+# UP007, UP045: Python >=3.10 type annotation improvements, to be revisited later
+ignore = ["B008", "B9", "E402", "E501", "G001", "G002", "G004", "UP007", "UP045"]
 
 [tool.ruff.lint.flake8-comprehensions]
 allow-dict-calls-with-keyword-arguments = true
 
 [tool.ruff.lint.isort]
-# We are not selecting "I" rules in ruff yet because support for all the isort
-# options we need is not complete, but these are the one currently implemented.
+# We are not selecting "I" rules in ruff yet because the isort option
+# force_grid_wrap=2 is not currently supported:
+# https://github.com/astral-sh/ruff/issues/2601
+case-sensitive = false
 combine-as-imports = true
+no-lines-before = ["local-folder"]
+order-by-type = false
 relative-imports-order = "closest-to-furthest"
 
 [tool.ruff.lint.pyupgrade]
@@ -242,21 +252,24 @@ keep-runtime-typing = true
 "lib/galaxy/schema/drs/*" = ["UP"]
 "lib/tool_shed_client/schema/trs.py" = ["UP"]
 "lib/tool_shed_client/schema/trs_service_info.py" = ["UP"]
-# Don't check some pyupgrade rules on packages for Pulsar, which need to stay compatible with Python 3.7
-"lib/galaxy/exceptions/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
-"lib/galaxy/job_metrics/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
-"lib/galaxy/objectstore/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
-"lib/galaxy/tool_util/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
-"lib/galaxy/util/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
-"scripts/check_python.py" = ["UP006", "UP007", "UP010", "UP032", "UP033", "UP035", "UP036"]
-"test/unit/job_metrics/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
-"test/unit/objectstore/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
-"test/unit/tool_util/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
-"test/unit/util/*" = ["UP006", "UP007", "UP033", "UP035", "UP036"]
+# Don't check some pyupgrade rules on packages for Pulsar, which need to stay compatible with Python 3.8
+"lib/galaxy/exceptions/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"lib/galaxy/job_metrics/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"lib/galaxy/objectstore/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"lib/galaxy/tool_util/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"lib/galaxy/tool_util_models/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"lib/galaxy/util/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"scripts/check_python.py" = ["UP006", "UP007", "UP010", "UP032", "UP033", "UP035", "UP036", "UP045"]
+"test/unit/job_metrics/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"test/unit/objectstore/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"test/unit/tool_util/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"test/unit/tool_util_models/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
+"test/unit/util/*" = ["UP006", "UP007", "UP033", "UP035", "UP036", "UP045"]
 
 [tool.uv]
 constraint-dependencies = [
     "limits>=2.5.0",  # prefer not downgrading this to upgrading packaging
+    "mirakuru!=3.0.0",  # https://github.com/dbfixtures/mirakuru/pull/949
     "setuptools<82",  # https://github.com/PyFilesystem/pyfilesystem2/issues/597
     "scipy>=1.14.1; python_version>='3.10'",  # Python 3.13 support
 ]

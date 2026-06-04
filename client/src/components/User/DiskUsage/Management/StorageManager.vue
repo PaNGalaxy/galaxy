@@ -2,6 +2,8 @@
 import { ref } from "vue";
 
 import { useConfig } from "@/composables/config";
+import { useQuotaUsageStore } from "@/stores/quotaUsageStore";
+import { useUserStore } from "@/stores/userStore";
 import localize from "@/utils/localization";
 import { wait } from "@/utils/utils";
 
@@ -12,6 +14,7 @@ import CleanupOperationSummary from "./Cleanup/CleanupOperationSummary.vue";
 import CleanupResultDialog from "./Cleanup/CleanupResultDialog.vue";
 import ReviewCleanupDialog from "./Cleanup/ReviewCleanupDialog.vue";
 import BreadcrumbHeading from "@/components/Common/BreadcrumbHeading.vue";
+import Heading from "@/components/Common/Heading.vue";
 
 interface ModalDialog {
     openModal: () => void;
@@ -19,11 +22,13 @@ interface ModalDialog {
 
 const breadcrumbItems = [
     { title: "Storage Dashboard", to: { name: "StorageDashboard" } },
-    { title: "Manage your account storage", superText: "(Beta)" },
+    { title: "Manage your account storage" },
 ];
 
 const { config } = useConfig();
 const { cleanupCategories } = useCleanupCategories();
+const quotaUsageStore = useQuotaUsageStore();
+const userStore = useUserStore();
 
 const currentOperation = ref<CleanupOperation>();
 const currentTotalItems = ref(0);
@@ -32,8 +37,6 @@ const refreshOperationId = ref<string>();
 
 const reviewModal = ref<ModalDialog | null>(null);
 const resultModal = ref<ModalDialog | null>(null);
-
-const issuesUrl = "https://github.com/galaxyproject/galaxy/issues";
 
 function onReviewItems(operation: CleanupOperation, totalItems: number) {
     currentOperation.value = operation;
@@ -50,6 +53,8 @@ async function onConfirmCleanupSelected(selectedItems: CleanableItem[]) {
         cleanupResult.value = await currentOperation.value.cleanupItems(selectedItems);
         if (cleanupResult.value.hasUpdatedResults) {
             refreshOperationId.value = currentOperation.value.id.toString();
+            quotaUsageStore.requestRefreshDebounced();
+            userStore.refreshUser();
         }
     }
 }
@@ -59,37 +64,23 @@ async function onConfirmCleanupSelected(selectedItems: CleanableItem[]) {
     <div>
         <BreadcrumbHeading :items="breadcrumbItems" />
 
-        <b-row class="justify-content-md-center">
-            <b-alert show dismissible variant="warning">
-                {{ localize("This feature is currently in Beta, if you find any issues please report them") }}
-                <b-link :href="issuesUrl" target="_blank">here</b-link>.
-            </b-alert>
-        </b-row>
-        <b-row class="justify-content-md-center mb-5">
-            <b-alert v-if="config?.enable_quotas" show>
-                {{ localize("The storage manager only shows elements that count towards your disk quota.") }}
-                <b-link :href="config.quota_url" target="_blank">{{ localize("Learn more") }}</b-link>
-            </b-alert>
-        </b-row>
+        <Heading v-if="config?.enable_quotas" h2 size="sm">
+            {{ localize("The storage manager only shows elements that count towards your disk quota.") }}
+            <a :href="config.quota_url" target="_blank">{{ localize("Click here to learn more.") }}</a>
+        </Heading>
 
-        <div id="categories-panel">
-            <b-container v-for="category in cleanupCategories" :key="category.id">
-                <b-row class="justify-content-md-center mb-2">
-                    <h3>
-                        <b>{{ category.name }}</b>
-                    </h3>
-                </b-row>
-                <b-row class="justify-content-md-center mb-5">
-                    <b-card-group deck>
-                        <CleanupOperationSummary
-                            v-for="operation in category.operations"
-                            :key="operation.id"
-                            :operation="operation"
-                            :refresh-operation-id="refreshOperationId"
-                            @onReviewItems="onReviewItems" />
-                    </b-card-group>
-                </b-row>
-            </b-container>
+        <div v-for="category in cleanupCategories" :key="category.id" class="mx-3 mb-4">
+            <h4 class="mb-3">
+                <b>{{ category.name }}</b>
+            </h4>
+            <b-card-group deck>
+                <CleanupOperationSummary
+                    v-for="operation in category.operations"
+                    :key="operation.id"
+                    :operation="operation"
+                    :refresh-operation-id="refreshOperationId"
+                    @onReviewItems="onReviewItems" />
+            </b-card-group>
         </div>
 
         <ReviewCleanupDialog

@@ -8,7 +8,7 @@
  *
  * - Filtering and searching histories with advanced filter options
  * - Pagination for large history collections
- * - Bulk operations (delete, restore, add tags)
+ * - Bulk operations (delete, restore, purge, add tags, open in multiview)
  * - Individual history selection and management
  * - View mode switching (grid/list)
  * - Sorting capabilities
@@ -19,9 +19,9 @@
  * <HistoryList activeList="shared" />
  */
 
-import { faBurn, faPlus, faTags, faTrash, faTrashRestore } from "@fortawesome/free-solid-svg-icons";
+import { faBurn, faColumns, faPlus, faTags, faTrash, faTrashRestore } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { BAlert, BButton, BNav, BNavItem, BOverlay, BPagination } from "bootstrap-vue";
+import { BAlert, BButton, BNav, BNavItem, BPagination } from "bootstrap-vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router/composables";
 
@@ -46,6 +46,7 @@ import { getHistoryListFilters } from "./historyList";
 
 import GButton from "@/components/BaseComponents/GButton.vue";
 import GLink from "@/components/BaseComponents/GLink.vue";
+import GOverlay from "@/components/BaseComponents/GOverlay.vue";
 import BreadcrumbHeading from "@/components/Common/BreadcrumbHeading.vue";
 import FilterMenu from "@/components/Common/FilterMenu.vue";
 import Heading from "@/components/Common/Heading.vue";
@@ -92,6 +93,7 @@ const limit = ref(24);
 const offset = ref(0);
 const loading = ref(true);
 const overlay = ref(false);
+let loadGeneration = 0;
 const filterText = ref("");
 const totalHistories = ref(0);
 const showAdvanced = ref(false);
@@ -142,6 +144,7 @@ const noItems = computed(() => !loading.value && historiesLoaded.value.length ==
 const noResults = computed(() => !loading.value && historiesLoaded.value.length === 0 && Boolean(filterText.value));
 const deleteButtonTitle = computed(() => (showDeleted.value ? "Hide deleted histories" : "Show deleted histories"));
 const showBulkPurge = computed(() => selectedHistories.value.some((h) => !h.purged));
+const showBulkMultiview = computed(() => selectedHistories.value.length > 1);
 
 const historyListFilters = computed(() => getHistoryListFilters(props.activeList));
 const rawFilters = computed(() =>
@@ -218,6 +221,8 @@ function onToggleDeleted() {
  * @param {boolean} silent - Whether to skip loading indicators
  */
 async function load(overlayLoading: boolean = false, silent: boolean = false) {
+    const thisGeneration = ++loadGeneration;
+
     if (!silent) {
         if (overlayLoading) {
             overlay.value = true;
@@ -241,32 +246,37 @@ async function load(overlayLoading: boolean = false, silent: boolean = false) {
     };
 
     try {
+        let data;
+        let total;
+
         if (myView.value) {
-            const { data, total } = await getMyHistories(options);
-
-            historiesLoaded.value = data;
-            totalHistories.value = total;
+            ({ data, total } = await getMyHistories(options));
         } else if (sharedView.value) {
-            const { data, total } = await getSharedHistories(options);
-
-            historiesLoaded.value = data;
-            totalHistories.value = total;
+            ({ data, total } = await getSharedHistories(options));
         } else if (publishedView.value) {
-            const { data, total } = await getPublishedHistories(options);
-
-            historiesLoaded.value = data;
-            totalHistories.value = total;
+            ({ data, total } = await getPublishedHistories(options));
         } else if (archivedView.value) {
-            const { data, total } = await getArchivedHistories(options);
+            ({ data, total } = await getArchivedHistories(options));
+        }
 
+        if (thisGeneration !== loadGeneration) {
+            return;
+        }
+
+        if (data !== undefined) {
             historiesLoaded.value = data;
-            totalHistories.value = total;
+            totalHistories.value = total!;
         }
     } catch (error) {
+        if (thisGeneration !== loadGeneration) {
+            return;
+        }
         Toast.error(`Failed to load histories: ${errorMessageAsString(error)}`);
     } finally {
-        loading.value = false;
-        overlay.value = false;
+        if (thisGeneration === loadGeneration) {
+            loading.value = false;
+            overlay.value = false;
+        }
     }
 }
 
@@ -328,12 +338,10 @@ async function onBulkDeleteOrPurge(purge: boolean = false) {
         `${hasPublished ? "Some of the selected histories are published and will be removed from public view. " : ""}
             Are you sure you want to ${purge ? "purge" : "delete"} ${totalSelected} histories?`,
         {
-            id: "bulk-delete-histories",
             title: purge ? "Purge histories" : "Delete histories",
-            okTitle: purge ? "Purge histories" : "Delete histories",
-            okVariant: "danger",
-            cancelVariant: "outline-primary",
-            centered: true,
+            okText: purge ? "Purge histories" : "Delete histories",
+            okColor: "red",
+            okIcon: purge ? faBurn : faTrash,
         },
     );
 
@@ -380,12 +388,9 @@ async function onBulkRestore() {
     const totalSelected = selectedHistories.value.length;
 
     const confirmed = await confirm(`Are you sure you want to restore ${totalSelected} histories?`, {
-        id: "bulk-restore-histories",
         title: "Restore histories",
-        okTitle: "Restore histories",
-        okVariant: "primary",
-        cancelVariant: "outline-primary",
-        centered: true,
+        okText: "Restore histories",
+        okIcon: faTrashRestore,
     });
 
     if (confirmed) {
@@ -455,6 +460,51 @@ async function onBulkTagsAdd(tags: string[]) {
 
         await load(true);
     }
+}
+
+const MULTIVIEW_MAX_HISTORIES = 10;
+
+/**
+ * Opens selected histories in the MultiviewPanel
+ * Pins the selected histories and navigates to the multiview page
+ */
+async function onBulkOpenInMultiview() {
+    const selectedHistoriesCount = selectedHistories.value.length;
+
+    if (selectedHistoriesCount === 0) {
+        return;
+    }
+
+    if (selectedHistoriesCount > MULTIVIEW_MAX_HISTORIES) {
+        const confirmed = await confirm(
+            `You have selected ${selectedHistoriesCount} histories to open in multiview.
+        However, the maximum number of histories allowed in multiview is ${MULTIVIEW_MAX_HISTORIES}.
+        Do you want to proceed with opening the first ${MULTIVIEW_MAX_HISTORIES} histories?`,
+            {
+                title: `You can only open ${MULTIVIEW_MAX_HISTORIES} histories in multiview`,
+                okText: "Proceed",
+            },
+        );
+        if (!confirmed) {
+            return;
+        }
+        selectedHistories.value.splice(MULTIVIEW_MAX_HISTORIES);
+    }
+
+    historyStore.clearPinnedHistories();
+    for (const history of selectedHistories.value) {
+        historyStore.pinHistory(history.id);
+    }
+
+    router.push("/histories/view_multiple");
+
+    const totalSelectedHistories = selectedHistories.value.length;
+
+    resetSelection();
+
+    Toast.success(
+        `Opened ${totalSelectedHistories} ${totalSelectedHistories === 1 ? "history" : "histories"} in multiview.`,
+    );
 }
 
 /**
@@ -564,7 +614,7 @@ onMounted(async () => {
                         Filter:
                         <BButton
                             id="show-deleted"
-                            v-b-tooltip.hover
+                            v-g-tooltip.hover
                             size="sm"
                             :title="deleteButtonTitle"
                             :pressed="showDeleted"
@@ -611,12 +661,11 @@ onMounted(async () => {
                 </GLink>
             </BAlert>
         </span>
-        <BOverlay
+        <GOverlay
             v-else
             id="history-list-overlay"
             :show="overlay"
-            class="h-100 d-flex flex-column history-list-overlay"
-            rounded="sm">
+            class="h-100 d-flex flex-column history-list-overlay">
             <HistoryCardList
                 :histories="historiesLoaded"
                 :shared-view="sharedView"
@@ -634,14 +683,14 @@ onMounted(async () => {
                 @on-history-card-click="onClick"
                 @updateFilter="updateFilterValue"
                 @tagClick="(tag) => updateFilterValue('tag', `'${tag}'`)" />
-        </BOverlay>
+        </GOverlay>
 
         <div class="d-flex mt-1 align-items-center">
             <div v-if="myView && selectedHistories.length" class="d-flex flex-gapx-1 w-100 position-absolute">
                 <BButton
                     v-if="!showDeleted"
                     id="history-list-footer-bulk-delete-button"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     :title="bulkDeleteOrRestoreLoading ? 'Deleting histories' : 'Delete selected histories'"
                     :disabled="bulkDeleteOrRestoreLoading"
                     size="sm"
@@ -656,7 +705,7 @@ onMounted(async () => {
                 <BButton
                     v-else
                     id="history-list-footer-bulk-restore-button"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     :title="bulkDeleteOrRestoreLoading ? 'Restoring histories' : 'Restore selected histories'"
                     :disabled="bulkDeleteOrRestoreLoading"
                     size="sm"
@@ -672,7 +721,7 @@ onMounted(async () => {
                 <BButton
                     v-if="showBulkPurge"
                     id="history-list-footer-bulk-purge-button"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     :title="bulkPurgeLoading ? 'Purging histories' : 'Purge selected histories'"
                     :disabled="bulkPurgeLoading"
                     size="sm"
@@ -688,7 +737,7 @@ onMounted(async () => {
                 <BButton
                     v-if="!showDeleted"
                     id="history-list-footer-bulk-add-tags-button"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     :title="bulkTagsLoading ? 'Adding tags' : 'Add tags to selected histories'"
                     :disabled="bulkTagsLoading"
                     size="sm"
@@ -699,6 +748,18 @@ onMounted(async () => {
                         Add tags ({{ selectedHistories.length }})
                     </span>
                     <LoadingSpan v-else message="Adding tags" />
+                </BButton>
+
+                <BButton
+                    v-if="showBulkMultiview"
+                    id="history-list-footer-bulk-open-multiview-button"
+                    v-g-tooltip.hover
+                    title="Open selected histories in multiview"
+                    size="sm"
+                    variant="primary"
+                    @click="onBulkOpenInMultiview">
+                    <FontAwesomeIcon :icon="faColumns" fixed-width />
+                    Open in Multiview ({{ selectedHistories.length }})
                 </BButton>
             </div>
 

@@ -62,7 +62,13 @@ class EmailAction(DefaultJobAction):
             to = job.get_user_email()
             subject = f"Galaxy job completion notification from history '{job.history.name}'"
             outdata = ",\n".join(ds.dataset.display_name() for ds in job.output_datasets)
-            body = f"Your Galaxy job generating dataset(s):\n\n{outdata}\n\nis complete as of {datetime.datetime.now().strftime('%I:%M')}. Click the link below to access your data: \n{link}"
+            body = (
+                f"Your Galaxy job generating dataset(s):\n\n{outdata}\n\nis complete as of {datetime.datetime.now().strftime('%H:%M')}. "
+                f"Click the link below to access your data: \n{link}\n\n"
+                "Please remember to cite Galaxy using our primary publication "
+                '(<a href="https://gxy.io/p/latest-nar">https://gxy.io/p/latest-nar</a>) '
+                "in any publication based on your analysis."
+            )
             if link_invocation:
                 body += f"\n\nWorkflow Invocation Report:\n{link_invocation}"
             send_mail(app.config.email_from, to, subject, body, app.config)
@@ -100,6 +106,21 @@ class ValidateOutputsAction(DefaultJobAction):
 class ChangeDatatypeAction(DefaultJobAction):
     name = "ChangeDatatypeAction"
     verbose_name = "Change Datatype"
+
+    @classmethod
+    def execute_on_mapped_over(
+        cls, trans, sa_session, action, step_inputs, step_outputs, replacement_dict, final_job_state=None
+    ):
+        if action.action_arguments and action.action_arguments.get("newtype"):
+            newtype = action.action_arguments["newtype"]
+            for name, step_output in step_outputs.items():
+                if action.output_name == "" or name == action.output_name:
+                    if hasattr(step_output, "dataset_instances"):
+                        for element in step_output.dataset_instances:
+                            if element:
+                                trans.app.datatypes_registry.change_datatype(element, newtype)
+                    else:
+                        trans.app.datatypes_registry.change_datatype(step_output, newtype)
 
     @classmethod
     def execute(cls, app, sa_session, action, job, replacement_dict=None, final_job_state=None):
@@ -324,18 +345,30 @@ class ColumnSetAction(DefaultJobAction):
     verbose_name = "Assign Columns"
 
     @classmethod
+    def _apply_column_set(cls, dataset, action_arguments):
+        for k, v in action_arguments.items():
+            if v:
+                if not isinstance(v, int):
+                    if v[0] == "c":
+                        v = v[1:]
+                    v = int(v)
+                if v != 0:
+                    setattr(dataset.metadata, k, v)
+
+    @classmethod
+    def execute_on_mapped_over(
+        cls, trans, sa_session, action, step_inputs, step_outputs, replacement_dict, final_job_state=None
+    ):
+        if action.action_arguments:
+            for name, step_output in step_outputs.items():
+                if action.output_name == "" or name == action.output_name:
+                    cls._apply_column_set(step_output, action.action_arguments)
+
+    @classmethod
     def execute(cls, app, sa_session, action, job, replacement_dict=None, final_job_state=None):
         for dataset_assoc in job.output_datasets:
             if action.output_name == "" or dataset_assoc.name == action.output_name:
-                for k, v in action.action_arguments.items():
-                    if v:
-                        # Try to use both pure integer and 'cX' format.
-                        if not isinstance(v, int):
-                            if v[0] == "c":
-                                v = v[1:]
-                            v = int(v)
-                        if v != 0:
-                            setattr(dataset_assoc.dataset.metadata, k, v)
+                cls._apply_column_set(dataset_assoc.dataset, action.action_arguments)
 
     @classmethod
     def get_short_str(cls, pja):

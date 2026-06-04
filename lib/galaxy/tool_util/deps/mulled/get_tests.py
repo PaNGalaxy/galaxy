@@ -5,9 +5,11 @@ searches for tests for packages in the bioconda-recipes repo and on Anaconda, lo
 
 A shallow search (default for singularity and conda generation scripts) just checks once on Anaconda for the specified version.
 """
+
 import json
 import logging
-from glob import glob
+import os.path
+from pathlib import Path
 from typing import (
     Any,
     Dict,
@@ -152,7 +154,7 @@ def open_recipe_file(file, recipes_path=None, github_repo="bioconda/bioconda-rec
     Open a file at a particular location and return contents as string
     """
     if recipes_path:
-        return open(f"{recipes_path}/{file}").read()
+        return open(os.path.join(recipes_path, file)).read()
     else:  # if no clone of the repo is available locally, download from GitHub
         r = requests.get(
             f"https://raw.githubusercontent.com/{github_repo}/master/{file}",
@@ -169,7 +171,7 @@ def get_alternative_versions(filepath, filename, recipes_path=None, github_repo=
     Return files that match ``filepath/*/filename`` in the bioconda-recipes repository
     """
     if recipes_path:
-        return [n.replace(f"{recipes_path}/", "") for n in glob(f"{recipes_path}/{filepath}/*/{filename}")]
+        return [str(p.relative_to(recipes_path)) for p in Path(recipes_path).glob(f"{filepath}/*/{filename}")]
     # else use the GitHub API:
     versions = []
     r = requests.get(

@@ -37,6 +37,7 @@ const emit = defineEmits(["invocation-clicked"]);
 const stateClasses: Record<string, string> = {
     ready: "waiting",
     scheduled: "ok",
+    completed: "ok",
     failed: "error",
 };
 
@@ -92,7 +93,7 @@ function getInvocationBadges(invocation: WorkflowInvocation) {
         {
             id: "state",
             label: invocation.state,
-            title: invocation.state,
+            title: "",
             class: stateClass(invocation.state),
             visible: true,
         },
