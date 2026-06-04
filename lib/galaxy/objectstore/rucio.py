@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 from typing import Optional
+import uuid
 
 try:
     import rucio.common
@@ -165,6 +166,7 @@ class RucioBroker:
             temp_directory = self.extra_dirs["temp"]
             self.rucio_config_path = os.path.join(temp_directory, "rucio.cfg")
             key_for_pass = "password"
+            os.makedirs(temp_directory, exist_ok=True)
             with open(self.rucio_config_path, "w") as f:
                 f.write(
                     f"""[client]
@@ -243,7 +245,10 @@ username = {self.config['username']}
 
     def download(self, key, dest_path, auth_token):
         key = _encode_key(key)
-        base_dir = os.path.dirname(dest_path)
+        random_id = uuid.uuid4().hex
+        base_dir = os.path.join(os.path.dirname(dest_path), random_id)
+        os.makedirs(base_dir, exist_ok=True)
+
         dids = [{"scope": self.scope, "name": key}]
         try:
             repl = next(self.get_rucio_client().list_replicas(dids))["rses"].keys()
@@ -280,6 +285,9 @@ username = {self.config['username']}
         except Exception as e:
             log.exception(f"Cannot download file: {str(e)}")
             return False
+        finally:
+            shutil.rmtree(base_dir, ignore_errors=True)
+
         return True
 
     def data_object_exists(self, key):

@@ -40,7 +40,7 @@ class IdentityProvider:
         """
         raise NotImplementedError()
 
-    def refresh(self, session, token, skip_old_tokens_threshold_days):
+    def refresh(self, trans, token):
         raise NotImplementedError()
 
     def authenticate(self, trans, idphint=None):

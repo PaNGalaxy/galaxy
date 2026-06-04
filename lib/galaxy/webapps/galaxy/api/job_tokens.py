@@ -63,7 +63,7 @@ class FastAPIJobTokens:
 
         # Verify job is active
         job = session.get(Job, job_id)
-        if job.state not in Job.non_ready_states:
+        if job.state not in Job.non_ready_states and job.state != Job.states.DELETING:
             error_message = "Attempting to get oidc token for a job that has already completed."
             raise exceptions.ItemAccessibilityException(error_message)
         return job

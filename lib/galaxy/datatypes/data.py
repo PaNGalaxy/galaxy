@@ -513,7 +513,7 @@ class Data(metaclass=DataMeta):
 
     def _serve_binary_file_contents_as_text(self, trans, data, headers, file_size, max_peek_size):
         headers["content-type"] = "text/html"
-        with open(data.get_file_name(), "rb") as fh:
+        with open(data.get_file_name(user=trans.user), "rb") as fh:
             return (
                 trans.fill_template_mako(
                     "/dataset/binary_file.mako",
@@ -530,9 +530,9 @@ class Data(metaclass=DataMeta):
 
         preview = util.string_as_bool(preview)
         if not preview or isinstance(data.datatype, images.Image) or file_size < max_peek_size:
-            return self._yield_user_file_content(trans, data, data.get_file_name(), headers), headers
+            return self._yield_user_file_content(trans, data, data.get_file_name(user=trans.user), headers), headers
 
-        with compression_utils.get_fileobj(data.get_file_name(), "rb") as fh:
+        with compression_utils.get_fileobj(data.get_file_name(user=trans.user), "rb") as fh:
             # preview large text file
             headers["content-type"] = "text/html"
             return (
