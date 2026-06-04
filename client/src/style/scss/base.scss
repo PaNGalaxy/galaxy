@@ -164,7 +164,6 @@ $galaxy-state-bg: (
     "failed": $state-danger-bg,
     "deleting": darken($state-default-bg, 30%),
     "stop": $state-default-border,
-    "stopped": darken($state-default-bg, 30%),
 );
 
 // Replace all occurrences of $search in $string with $replace.
