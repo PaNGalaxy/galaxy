@@ -1523,14 +1523,6 @@ class Tool(UsesDictVisibleKeys, MaybeToolParameterBundle):
         self.resource_requirements = resource_requirements
         self.javascript_requirements = javasscript_requirements
         self.credentials = credentials
-        if self.credentials:
-            if not self.docker_env_pass_through:
-                self.docker_env_pass_through = []
-            for credential in self.credentials:
-                for secret in credential.secrets:
-                    self.docker_env_pass_through.append(secret.inject_as_env)
-                for variable in credential.variables:
-                    self.docker_env_pass_through.append(variable.inject_as_env)
 
         # Add credential inject_as_env names to docker_env_pass_through
         # so they are passed into containerized environments (Docker -e, Singularity SINGULARITYENV_)
