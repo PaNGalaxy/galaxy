@@ -321,8 +321,6 @@ class AuthnzManager:
                 log.error(msg)
                 return {"refreshed": False, "reauthentication_required": False}
             refreshed = backend.refresh(trans, auth)
-            if refreshed:
-                log.debug(f"Refreshed user token via `{auth.provider}` identity provider")
             return {"refreshed": refreshed, "reauthentication_required": False}
         except (AuthTokenError, AuthCanceled, AuthForbidden):
             log.warning("Authentication session has expired or is invalid, reauth required.")
