@@ -16,5 +16,7 @@ COPY . /galaxy
 
 RUN /galaxy/scripts/common_startup.sh
 RUN mkdir -p /galaxy/database/dependencies
-RUN . /galaxy/.venv/bin/activate && python ./scripts/manage_tool_dependencies.py init_if_needed && pip install rucio-clients==40.2.0
-
+RUN . /galaxy/.venv/bin/activate \
+    && pip uninstall -y psycopg psycopg-binary \
+    && python ./scripts/manage_tool_dependencies.py init_if_needed \
+    && pip install rucio-clients==40.2.0
