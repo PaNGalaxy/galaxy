@@ -3,6 +3,8 @@ import logging
 import os
 import time
 
+from rucio.common.checksum import adler32, md5
+
 try:
     from rucio.client.uploadclient import UploadClient
     from rucio.common.exception import (
@@ -11,7 +13,7 @@ try:
         NotAllFilesUploaded,
         RSEWriteBlocked,
     )
-    from rucio.common.utils import generate_uuid, adler32, md5
+    from rucio.common.utils import generate_uuid
     from rucio.rse import rsemanager as rsemgr
 except ImportError:
     UploadClient = object
