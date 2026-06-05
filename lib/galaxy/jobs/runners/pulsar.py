@@ -984,16 +984,28 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
                 "type": "galaxy" if tool_provided_metadata_style == "default" else "legacy_galaxy",
             }
         ]
-        client_outputs = ClientOutputs(
-            working_directory=job_wrapper.tool_working_directory,
-            metadata_directory=metadata_directory,
-            work_dir_outputs=work_dir_outputs,
-            output_files=output_files,
-            version_file=job_wrapper.get_version_string_path(),
-            dynamic_outputs=dynamic_outputs,
-            dynamic_file_sources=dynamic_file_sources,
-            dataset_collector_descriptions=dataset_collector_descriptions,
-        )
+        if supports_dataset_collectors:
+            client_outputs = ClientOutputs(
+                working_directory=job_wrapper.tool_working_directory,
+                metadata_directory=metadata_directory,
+                work_dir_outputs=work_dir_outputs,
+                output_files=output_files,
+                version_file=job_wrapper.get_version_string_path(),
+                dynamic_outputs=dynamic_outputs,
+                dynamic_file_sources=dynamic_file_sources,
+                dataset_collector_descriptions=dataset_collector_descriptions,
+            )
+        else:
+            client_outputs = ClientOutputs(
+                working_directory=job_wrapper.tool_working_directory,
+                metadata_directory=metadata_directory,
+                work_dir_outputs=work_dir_outputs,
+                output_files=output_files,
+                version_file=job_wrapper.get_version_string_path(),
+                dynamic_outputs=dynamic_outputs,
+                dynamic_file_sources=dynamic_file_sources,
+            )
+
         return client_outputs
 
     @staticmethod
