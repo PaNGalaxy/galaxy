@@ -135,6 +135,7 @@ class InPlaceIngestClient(UploadClient):
             basename = file["basename"]
             logger(logging.INFO, "Preparing upload for file %s", basename)
 
+            no_register = False
             pfn = file.get("pfn")
 
             trace = copy.deepcopy(self.trace)
