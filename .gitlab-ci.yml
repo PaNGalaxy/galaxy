@@ -76,7 +76,7 @@ unit-tests:
   stage: test
   variables:
     # Tool Shed fixture SQLite database is not always available/extractable in CI.
-    GALAXY_UNIT_TEST_SKIP_EXPRESSION: "not test_build_index"
+    GALAXY_UNIT_TEST_SKIP_EXPRESSION: "not test_build_index and not postgres_app"
   script:
     - >    
       docker run
