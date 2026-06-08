@@ -140,7 +140,7 @@ onMounted(() => {
             <BNavbarBrand
                 id="analysis"
                 v-g-tooltip.hover
-                class="align-center d-flex ml-2 mr-2 p-0"
+                class="align-items-center d-flex ml-2 mr-2 p-0"
                 title="Home"
                 aria-label="homepage"
                 :href="withPrefix(logoUrl)">
