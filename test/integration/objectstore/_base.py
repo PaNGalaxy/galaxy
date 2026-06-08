@@ -6,6 +6,12 @@ import time
 
 from galaxy_test.base.populators import DatasetPopulator
 from galaxy_test.driver import integration_util
+from galaxy_test.driver.integration_util import (
+    docker_exec,
+    docker_ip_address,
+    docker_rm,
+    docker_run,
+)
 
 OBJECT_STORE_HOST = os.environ.get("GALAXY_INTEGRATION_OBJECT_STORE_HOST", "127.0.0.1")
 OBJECT_STORE_PORT = int(os.environ.get("GALAXY_INTEGRATION_OBJECT_STORE_PORT", 9000))
@@ -16,8 +22,7 @@ OBJECT_STORE_RUCIO_USERNAME = os.environ.get("GALAXY_INTEGRATION_OBJECT_STORE_RU
 OBJECT_STORE_RUCIO_RSE_NAME = "TEST"
 OBJECT_STORE_RUCIO_ACCESS = os.environ.get("GALAXY_INTEGRATION_OBJECT_STORE_RUCIO_ACCESS", "rucio")
 
-OBJECT_STORE_CONFIG = string.Template(
-    """
+OBJECT_STORE_CONFIG = string.Template("""
 <object_store type="hierarchical" id="primary">
     <backends>
         <object_store id="swifty" type="generic_s3" weight="1" order="0">
@@ -30,10 +35,8 @@ OBJECT_STORE_CONFIG = string.Template(
         </object_store>
     </backends>
 </object_store>
-"""
-)
-RUCIO_OBJECT_STORE_CONFIG = string.Template(
-    """
+""")
+RUCIO_OBJECT_STORE_CONFIG = string.Template("""
     type: rucio
     upload_rse_name: ${rucio_rse}
     upload_scheme: file
@@ -53,10 +56,8 @@ RUCIO_OBJECT_STORE_CONFIG = string.Template(
       path: ${temp_directory}/object_store_cache
       size: 1000
       cache_updated_data: ${cache_updated_data}
-"""
-)
-AZURE_OBJECT_STORE_CONFIG = string.Template(
-    """
+""")
+AZURE_OBJECT_STORE_CONFIG = string.Template("""
 type: distributed
 backends:
 - type: azure_blob
@@ -93,14 +94,12 @@ backends:
     path: "${temp_directory}/database/job_working_directory_azure_2"
   - type: temp
     path: "${temp_directory}/database/tmp_azure_2"
-"""
-)
+""")
 
 # Onedata setup for the test is done according to this documentation:
 # https://onedata.org/#/home/documentation/topic/stable/demo-mode
 ONEDATA_DEMO_SPACE_NAME = "demo-space"
-ONEDATA_OBJECT_STORE_CONFIG = string.Template(
-    """
+ONEDATA_OBJECT_STORE_CONFIG = string.Template("""
 <object_store type="onedata">
     <auth access_token="${access_token}" />
     <connection onezone_domain="${onezone_domain}" disable_tls_certificate_validation="True"/>
@@ -109,8 +108,7 @@ ONEDATA_OBJECT_STORE_CONFIG = string.Template(
     <extra_dir type="job_work" path="${temp_directory}/job_working_directory_onedata"/>
     <extra_dir type="temp" path="${temp_directory}/tmp_onedata"/>
 </object_store>
-"""
-)
+""")
 
 
 def wait_rucio_ready(container_name):
@@ -175,7 +173,7 @@ class BaseSwiftObjectStoreIntegrationTestCase(BaseObjectStoreIntegrationTestCase
         super().handle_galaxy_config_kwds(config)
         temp_directory = cls._test_driver.mkdtemp()
         cls.object_stores_parent = temp_directory
-        cls.object_store_cache_path = f"{temp_directory}/object_store_cache"
+        cls.object_store_cache_path = os.path.join(temp_directory, "object_store_cache")
         config_path = os.path.join(temp_directory, "object_store_conf.xml")
         config["object_store_store_by"] = "uuid"
         config["metadata_strategy"] = "extended"
@@ -218,7 +216,7 @@ class BaseAzureObjectStoreIntegrationTestCase(
         cls._disable_workflow_scheduling(config)
         temp_directory = cls._test_driver.mkdtemp()
         cls.object_stores_parent = temp_directory
-        cls.object_store_cache_path = f"{temp_directory}/object_store_cache"
+        cls.object_store_cache_path = os.path.join(temp_directory, "object_store_cache")
         config_path = os.path.join(temp_directory, "object_store_conf.yml")
         config["object_store_store_by"] = "uuid"
         config["metadata_strategy"] = "extended"
@@ -266,7 +264,7 @@ class BaseRucioObjectStoreIntegrationTestCase(BaseObjectStoreIntegrationTestCase
         super().handle_galaxy_config_kwds(config)
         temp_directory = cls._test_driver.mkdtemp()
         cls.object_stores_parent = temp_directory
-        cls.object_store_cache_path = f"{temp_directory}/object_store_cache"
+        cls.object_store_cache_path = os.path.join(temp_directory, "object_store_cache")
         config_path = os.path.join(temp_directory, "object_store_conf.yml")
         config["object_store_store_by"] = "uuid"
         config["metadata_strategy"] = "extended"
@@ -327,7 +325,7 @@ class BaseOnedataObjectStoreIntegrationTestCase(BaseObjectStoreIntegrationTestCa
         super().handle_galaxy_config_kwds(config)
         temp_directory = cls._test_driver.mkdtemp()
         cls.object_stores_parent = temp_directory
-        cls.object_store_cache_path = f"{temp_directory}/object_store_cache"
+        cls.object_store_cache_path = os.path.join(temp_directory, "object_store_cache")
         config_path = os.path.join(temp_directory, "object_store_conf.xml")
         config["object_store_store_by"] = "uuid"
         config["metadata_strategy"] = "extended"
@@ -377,49 +375,3 @@ def await_oneprovider_demo_readiness(op_container_name):
 
 def get_onedata_access_token(oz_container_name):
     return docker_exec(oz_container_name, "demo-access-token").decode("utf-8").strip()
-
-
-def docker_run(image, name, *args, detach=True, remove=True, ports=None):
-    cmd = ["docker", "run"]
-
-    if ports:
-        for container_port, host_port in ports:
-            cmd.extend(["-p", f"{container_port}:{host_port}"])
-
-    if detach:
-        cmd.append("-d")
-
-    cmd.extend(["--name", name])
-
-    if remove:
-        cmd.append("--rm")
-
-    cmd.append(image)
-    cmd.extend(args)
-
-    subprocess.check_call(cmd)
-
-
-def docker_exec(container_name, *args, output=True):
-    cmd = ["docker", "exec", container_name]
-    cmd.extend(args)
-
-    if output:
-        return subprocess.check_output(cmd)
-    else:
-        subprocess.check_call(cmd)
-
-
-def docker_ip_address(container_name):
-    cmd = [
-        "docker",
-        "inspect",
-        "-f",
-        "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-        container_name,
-    ]
-    return subprocess.check_output(cmd).decode("utf-8").strip()
-
-
-def docker_rm(container_name):
-    subprocess.check_call(["docker", "rm", "-f", container_name])

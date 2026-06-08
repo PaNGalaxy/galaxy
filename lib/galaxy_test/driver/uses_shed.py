@@ -22,11 +22,9 @@ CONDA_AUTO_INSTALL_JOB_TIMEOUT = DEFAULT_TIMEOUT * 3
 SCRIPT_DIRECTORY = os.path.abspath(os.path.dirname(__file__))
 TOOL_SHEDS_CONF = os.path.join(SCRIPT_DIRECTORY, "tool_sheds_conf.xml")
 
-SHED_TOOL_CONF = string.Template(
-    """<?xml version="1.0"?>
+SHED_TOOL_CONF = string.Template("""<?xml version="1.0"?>
 <toolbox tool_path="$shed_tools_path">
-</toolbox>"""
-)
+</toolbox>""")
 
 SHED_DATA_MANAGER_CONF = """<?xml version="1.0"?>
 <data_managers>
@@ -71,8 +69,7 @@ class UsesShed(UsesShedApi):
     @classmethod
     def configure_shed_and_conda(cls, config):
         cls.configure_shed(config)
-        cls.conda_tmp_prefix = tempfile.mkdtemp()
-        cls._test_driver.temp_directories.append(cls.conda_tmp_prefix)
+        cls.conda_tmp_prefix = cls._test_driver.mkdtemp()
         config["conda_auto_init"] = True
         config["conda_auto_install"] = True
         config["conda_prefix"] = os.environ.get("GALAXY_TEST_CONDA_PREFIX") or os.path.join(

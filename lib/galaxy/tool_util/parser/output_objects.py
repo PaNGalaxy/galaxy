@@ -15,7 +15,6 @@ from typing_extensions import TypedDict
 from galaxy.tool_util_models.tool_outputs import (
     ToolOutputBoolean as ToolOutputBooleanModel,
     ToolOutputCollection as ToolOutputCollectionModel,
-    ToolOutputCollectionStructure as ToolOutputCollectionStructureModel,
     ToolOutputDataset as ToolOutputDataModel,
     ToolOutputFloat as ToolOutputFloatModel,
     ToolOutputInteger as ToolOutputIntegerModel,
@@ -244,9 +243,8 @@ class ToolExpressionOutput(ToolOutputBase):
             model_class = ToolOutputIntegerModel
         elif self.output_type == "float":
             model_class = ToolOutputFloatModel
-        elif self.output_type == "bool":
+        elif self.output_type == "boolean":
             model_class = ToolOutputBooleanModel
-            model_type = "boolean"
         elif self.output_type == "text":
             model_class = ToolOutputTextModel
         assert model_class
@@ -382,12 +380,19 @@ class ToolOutputCollection(ToolOutputBase):
         return as_dict
 
     def to_model(self) -> ToolOutputCollectionModel:
+        discover_datasets = []
+        if self.structure.dataset_collector_descriptions:
+            discover_datasets = [d.to_model() for d in self.structure.dataset_collector_descriptions]
         return ToolOutputCollectionModel(
             type="collection",
             name=self.name,
             label=self.label,
             hidden=self.hidden,
-            structure=self.structure.to_model(),
+            collection_type=self.structure.collection_type,
+            collection_type_source=self.structure.collection_type_source,
+            collection_type_from_rules=self.structure.collection_type_from_rules,
+            structured_like=self.structure.structured_like,
+            discover_datasets=discover_datasets,
         )
 
     @staticmethod
@@ -473,19 +478,16 @@ class ToolOutputCollectionStructure:
         return collection_prototype
 
     def to_dict(self):
-        return self.to_model().dict()
-
-    def to_model(self) -> ToolOutputCollectionStructureModel:
-        discover_datasets = []
+        discover_datasets: List[Dict[str, Any]] = []
         if self.dataset_collector_descriptions:
-            discover_datasets = [d.to_model() for d in self.dataset_collector_descriptions]
-        return ToolOutputCollectionStructureModel(
-            collection_type=self.collection_type,
-            collection_type_source=self.collection_type_source,
-            collection_type_from_rules=self.collection_type_from_rules,
-            structured_like=self.structured_like,
-            discover_datasets=discover_datasets,
-        )
+            discover_datasets = [d.to_model().model_dump() for d in self.dataset_collector_descriptions]
+        return {
+            "collection_type": self.collection_type,
+            "collection_type_source": self.collection_type_source,
+            "collection_type_from_rules": self.collection_type_from_rules,
+            "structured_like": self.structured_like,
+            "discover_datasets": discover_datasets,
+        }
 
     @staticmethod
     def from_dict(as_dict) -> "ToolOutputCollectionStructure":

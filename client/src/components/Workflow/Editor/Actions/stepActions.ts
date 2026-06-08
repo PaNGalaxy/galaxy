@@ -1,7 +1,8 @@
 import { replaceLabel } from "@/components/Markdown/parse";
+import { autoLayout } from "@/components/Workflow/Editor/modules/layout";
 import { useToast } from "@/composables/toast";
 import { useRefreshFromStore } from "@/stores/refreshFromStore";
-import { LazyUndoRedoAction, UndoRedoAction, type UndoRedoStore } from "@/stores/undoRedoStore";
+import { LazyUndoRedoAction, UndoRedoAction, type UndoRedoStore, useUndoRedoStore } from "@/stores/undoRedoStore";
 import type { WorkflowConnectionStore } from "@/stores/workflowConnectionStore";
 import { useWorkflowCommentStore } from "@/stores/workflowEditorCommentStore";
 import type { WorkflowStateStore } from "@/stores/workflowEditorStateStore";
@@ -494,10 +495,6 @@ export class AutoLayoutAction extends UndoRedoAction {
             h: comment.size[1],
         }));
 
-        const { autoLayout } = await import(
-            /* webpackChunkName: "workflowLayout" */ "@/components/Workflow/Editor/modules/layout"
-        );
-
         this.commentStore.resolveCommentsInFrames();
         this.commentStore.resolveStepsInFrames();
 
@@ -509,6 +506,7 @@ export class AutoLayoutAction extends UndoRedoAction {
 
         if (this.ran) {
             this.mapPositionsToStore(this.positions);
+            useUndoRedoStore(this.workflowId).changeId += 1;
         }
     }
 

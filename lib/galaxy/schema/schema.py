@@ -9,7 +9,9 @@ from enum import Enum
 from typing import (
     Annotated,
     Any,
+    Literal,
     Optional,
+    TypeAlias,
     Union,
 )
 from uuid import UUID
@@ -20,20 +22,22 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
     HttpUrl,
     Json,
     model_validator,
     RootModel,
+    Tag,
     UUID4,
 )
 from pydantic_core import core_schema
 from typing_extensions import (
-    Literal,
     NotRequired,
     TypedDict,
 )
 
+from galaxy.schema.agents import AgentResponse
 from galaxy.schema.bco import XrefItem
 from galaxy.schema.fields import (
     DecodedDatabaseIdField,
@@ -48,6 +52,11 @@ from galaxy.schema.tours import TourDetails
 from galaxy.schema.types import (
     OffsetNaiveDatetime,
     RelativeUrl,
+)
+from galaxy.tool_util_models.sample_sheet import (
+    SampleSheetColumnDefinitions,
+    SampleSheetRow,
+    SampleSheetRows,
 )
 from galaxy.tool_util_models.tool_source import FieldDict
 from galaxy.util.config_templates import partial_model
@@ -69,7 +78,7 @@ INVOCATION_STEP_MODEL_CLASS = Literal["WorkflowInvocationStep"]
 INVOCATION_REPORT_MODEL_CLASS = Literal["Report"]
 IMPLICIT_COLLECTION_JOBS_MODEL_CLASS = Literal["ImplicitCollectionJobs"]
 
-OptionalNumberT = Annotated[Optional[Union[int, float]], Field(None)]
+OptionalNumberT = Optional[Union[int, float]]
 
 TAG_ITEM_PATTERN = r"^([^\s.:])+(\.[^\s.:]+)*(:\S+)?$"
 
@@ -255,9 +264,8 @@ ElementCountField = Annotated[
 ]
 
 PopulatedField = Annotated[
-    bool,
+    Optional[bool],
     Field(
-        None,
         title="Populated",
         description="Whether the dataset collection elements (and any subcollections elements) were successfully populated.",
     ),
@@ -376,33 +384,6 @@ class LimitedUserModel(Model):
 
 MaybeLimitedUserModel = Union[UserModel, LimitedUserModel]
 
-# named in compatibility with CWL - trying to keep CWL fields in mind with
-# this implementation. https://www.commonwl.org/user_guide/topics/inputs.html#inputs
-# element_identifier is not like CWL - it is used to specify the value in the row should
-# be the element_identifier for another element if present. It is a way to specify relationships
-# between elements in the collection - specifically implemented for the "control" use case.
-SampleSheetColumnType = Literal[
-    "string", "int", "float", "boolean", "element_identifier"
-]  # excluding "long" and "double" and composite types from CWL for now - we don't think at this level of abstraction in Galaxy generally
-NoneType = type(None)
-SampleSheetColumnValueT = Union[int, float, bool, str, NoneType]
-
-
-class SampleSheetColumnDefinition(TypedDict):
-    name: str
-    description: NotRequired[Optional[str]]
-    type: SampleSheetColumnType
-    optional: bool
-    default_value: NotRequired[Optional[SampleSheetColumnValueT]]
-    validators: NotRequired[Optional[list[dict[str, Any]]]]
-    restrictions: NotRequired[Optional[list[SampleSheetColumnValueT]]]
-    suggestions: NotRequired[Optional[list[SampleSheetColumnValueT]]]
-
-
-SampleSheetColumnDefinitions = list[SampleSheetColumnDefinition]
-SampleSheetRow = list[SampleSheetColumnValueT]
-SampleSheetRows = dict[str, SampleSheetRow]
-
 
 class DiskUsageUserModel(Model):
     total_disk_usage: float = TotalDiskUsageField
@@ -429,8 +410,8 @@ class DetailedUserModel(BaseUserModel, AnonUserModel):
 
 
 class UserUpdatePayload(Model):
-    active: Annotated[Optional[bool], Field(None, title="Active", description="User is active")]
-    username: Annotated[Optional[str], Field(None, title="Username", description="The name of the user.")]
+    active: Annotated[Optional[bool], Field(title="Active", description="User is active")] = None
+    username: Annotated[Optional[str], Field(title="Username", description="The name of the user.")] = None
     preferred_object_store_id: Annotated[Optional[str], PreferredObjectStoreIdField]
 
 
@@ -459,12 +440,60 @@ class FavoriteObject(Model):
     )
 
 
-class FavoriteObjectsSummary(Model):
-    tools: list[str] = Field(default=..., title="Favorite tools", description="The name of the tools the user favored.")
-
-
 class FavoriteObjectType(str, Enum):
     tools = "tools"
+    tags = "tags"
+    edam_operations = "edam_operations"
+    edam_topics = "edam_topics"
+
+
+class FavoriteOrderItem(Model):
+    object_type: FavoriteObjectType = Field(
+        default=...,
+        title="Favorite object type",
+        description="The type of favorite object in the ordered favorites list.",
+    )
+    object_id: str = Field(
+        default=...,
+        title="Favorite object ID",
+        description="The ID of the favorite object in the ordered favorites list.",
+    )
+
+
+class FavoriteOrderPayload(Model):
+    order: list[FavoriteOrderItem] = Field(
+        default_factory=list,
+        title="Favorite order",
+        description="The complete ordered list of top-level favorite entries.",
+    )
+
+
+class FavoriteObjectsSummary(Model):
+    tools: list[str] = Field(
+        default_factory=list,
+        title="Favorite tools",
+        description="The name of the tools the user favored.",
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        title="Favorite tags",
+        description="The curated tool tags the user favored.",
+    )
+    edam_operations: list[str] = Field(
+        default_factory=list,
+        title="Favorite EDAM operations",
+        description="The EDAM operation identifiers the user favored.",
+    )
+    edam_topics: list[str] = Field(
+        default_factory=list,
+        title="Favorite EDAM topics",
+        description="The EDAM topic identifiers the user favored.",
+    )
+    order: list[FavoriteOrderItem] = Field(
+        default_factory=list,
+        title="Favorite order",
+        description="The persisted order of top-level favorite tools and favorite sections.",
+    )
 
 
 class DeletedCustomBuild(Model):
@@ -596,18 +625,15 @@ class HistoryContentSource(str, Enum):
 DatasetCollectionInstanceType = Literal["history", "library"]
 
 
-TagItem = Annotated[str, Field(..., pattern=TAG_ITEM_PATTERN)]
-
-
-class TagCollection(RootModel):
-    """Represents the collection of tags associated with an item."""
-
-    root: list[TagItem] = Field(
-        default=...,
+TagItem: TypeAlias = Annotated[str, Field(pattern=TAG_ITEM_PATTERN)]
+TagCollection: TypeAlias = Annotated[
+    list[TagItem],
+    Field(
         title="Tags",
         description="The collection of tags associated with an item.",
         examples=["COVID-19", "#myFancyTag", "covid19.galaxyproject.org"],
-    )
+    ),
+]
 
 
 class MetadataFile(Model):
@@ -834,16 +860,15 @@ class DatasetSource(Model):
     )
     source_uri: Annotated[RelativeUrl, Field(..., title="Source URI", description="The URI of the dataset source.")]
     extra_files_path: Annotated[
-        Optional[str], Field(None, title="Extra Files Path", description="The path to the extra files.")
-    ]
+        Optional[str], Field(title="Extra Files Path", description="The path to the extra files.")
+    ] = None
     transform: Annotated[
         Optional[list[DatasetSourceTransform]],
         Field(
-            None,
             title="Transform",
             description="The transformations applied to the dataset source.",
         ),
-    ]
+    ] = None
 
 
 class HDADetailed(HDASummary, WithModelClass):
@@ -990,11 +1015,11 @@ class HDADetailed(HDASummary, WithModelClass):
         ),
     ]
     copied_from_history_dataset_association_id: Annotated[
-        Optional[EncodedDatabaseIdField], Field(None, description="ID of HDA this HDA was copied from.")
-    ]
+        Optional[EncodedDatabaseIdField], Field(description="ID of HDA this HDA was copied from.")
+    ] = None
     copied_from_library_dataset_dataset_association_id: Annotated[
-        Optional[EncodedDatabaseIdField], Field(None, description="ID of LDDA this HDA was copied from.")
-    ]
+        Optional[EncodedDatabaseIdField], Field(description="ID of LDDA this HDA was copied from.")
+    ] = None
 
 
 class HDAExtended(HDADetailed):
@@ -1053,7 +1078,7 @@ class DCObject(Model, WithModelClass):
     id: DatasetCollectionId
     model_class: DC_MODEL_CLASS = ModelClassField(DC_MODEL_CLASS)
     collection_type: CollectionType = CollectionTypeField
-    populated: PopulatedField
+    populated: PopulatedField = None
     element_count: ElementCountField
     contents_url: Optional[ContentsUrlField] = None
     elements: list["DCESummary"] = ElementsField
@@ -1067,6 +1092,9 @@ class DCObject(Model, WithModelClass):
     )
     elements_datatypes: set[str] = Field(
         ..., description="A set containing all the different element datatypes in the collection."
+    )
+    column_definitions: Optional[SampleSheetColumnDefinitions] = Field(
+        None, description="Column definitions for sample sheet collections."
     )
 
 
@@ -1108,7 +1136,7 @@ DCObject.model_rebuild()
 class DCDetailed(DCSummary):
     """Dataset Collection detailed information."""
 
-    populated: PopulatedField
+    populated: PopulatedField = None
     elements: list[DCESummary] = ElementsField
 
 
@@ -1270,7 +1298,7 @@ class HDCASummary(HDCACommon, WithModelClass):
 class HDCADetailed(HDCASummary):
     """History Dataset Collection Association detailed information."""
 
-    populated: PopulatedField
+    populated: PopulatedField = None
     elements: list[DCESummary] = ElementsField
     implicit_collection_jobs_id: Optional[EncodedDatabaseIdField] = Field(
         None,
@@ -1458,6 +1486,11 @@ class HistorySummary(Model, WithModelClass):
     tags: TagCollection
     update_time: datetime = UpdateTimeField
     preferred_object_store_id: Optional[str] = PreferredObjectStoreIdField
+    purge_task: Optional["AsyncTaskResultSummary"] = Field(
+        None,
+        title="Purge Task",
+        description="Summary of the async task purging datasets in this history. Only present when purge is performed via a background task.",
+    )
 
 
 class HistoryActiveContentCounts(Model):
@@ -1653,6 +1686,10 @@ class WorkflowIndexQueryPayload(Model):
     skip_step_counts: bool = False
 
 
+class WorkflowIndexPayload(WorkflowIndexQueryPayload):
+    missing_tools: bool = False
+
+
 class JobIndexSortByEnum(str, Enum):
     create_time = "create_time"
     update_time = "update_time"
@@ -1670,6 +1707,7 @@ class JobIndexQueryPayload(Model):
     workflow_id: Optional[DecodedDatabaseIdField] = None
     invocation_id: Optional[DecodedDatabaseIdField] = None
     implicit_collection_jobs_id: Optional[DecodedDatabaseIdField] = None
+    tool_request_id: Optional[DecodedDatabaseIdField] = None
     order_by: JobIndexSortByEnum = JobIndexSortByEnum.update_time
     search: Optional[str] = None
     limit: int = 500
@@ -1704,6 +1742,10 @@ class InvocationIndexQueryPayload(Model):
     include_nested_invocations: bool = True
 
 
+class InvocationIndexPayload(InvocationIndexQueryPayload):
+    instance: bool = Field(default=False, description="Is provided workflow id for Workflow instead of StoredWorkflow?")
+
+
 PageSortByEnum = Literal["create_time", "title", "update_time", "username"]
 
 
@@ -1718,6 +1760,9 @@ class PageIndexQueryPayload(Model):
     sort_by: PageSortByEnum = Field("update_time", title="Sort By", description="Sort pages by this attribute.")
     sort_desc: Optional[bool] = Field(default=False, title="Sort descending", description="Sort in descending order.")
     user_id: Optional[DecodedDatabaseIdField] = None
+    history_id: Optional[DecodedDatabaseIdField] = Field(
+        default=None, title="History ID", description="Filter pages by history."
+    )
 
 
 class CreateHistoryPayload(Model):
@@ -1796,7 +1841,7 @@ class CreateNewCollectionPayload(Model):
     column_definitions: Optional[SampleSheetColumnDefinitions] = Field(
         default=None,
         title="Column Definitions",
-        description="Specify definitions for row data if collection_type if sample_sheet",
+        description="Specify definitions for row data if collection_type is sample_sheet",
     )
     rows: Optional[SampleSheetRows] = Field(
         default=None,
@@ -1859,10 +1904,28 @@ class ModelStoreFormat(str, Enum):
         return value in [cls.BAG_DOT_TAR, cls.BAG_DOT_TGZ, cls.BAG_DOT_ZIP]
 
 
+class DiscardedDataType(str, Enum):
+    """Options for handling discarded datasets on import."""
+
+    # Don't allow discarded 'okay' datasets on import, datasets will be marked deleted.
+    FORBID = "forbid"
+    # Allow datasets to be imported as DISCARDED datasets that are not deleted if file data is unavailable.
+    ALLOW = "allow"
+    # Import all datasets as discarded regardless of whether file data is available in the store.
+    FORCE = "force"
+
+
 class StoreContentSource(Model):
     store_content_uri: Optional[str] = None
     store_dict: Optional[dict[str, Any]] = None
     model_store_format: Optional["ModelStoreFormat"] = None
+    discarded_data: DiscardedDataType = Field(
+        default=DiscardedDataType.ALLOW,
+        title="Discarded Data",
+        description="How to handle datasets with unavailable data. 'forbid': mark as deleted, "
+        "'allow': import as discarded but not deleted, 'force': import all datasets as discarded "
+        "regardless of whether file data is available (useful for importing metadata only).",
+    )
 
 
 class CreateHistoryFromStore(StoreContentSource):
@@ -1923,6 +1986,15 @@ class WriteStoreToPayload(StoreExportPayload):
         title="Target URI",
         description="Galaxy Files URI to write mode store content to.",
     )
+    ignore_errors: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Last resort. If True, skip serialization errors caused by missing "
+            "provenance (e.g. orphan implicit collection job associations, null "
+            "job param refs from older histories that pre-date collections) "
+            "instead of failing. Exported data may be incomplete or corrupt."
+        ),
+    )
 
 
 class ObjectExportResponseBase(Model):
@@ -1978,11 +2050,25 @@ class ExportObjectType(str, Enum):
     INVOCATION = "invocation"
 
 
+def _store_export_payload_discriminator(value: Any) -> str:
+    # Route untagged persisted/constructed payloads to the right union branch
+    # without requiring a tag field on the payload classes themselves.
+    if isinstance(value, dict):
+        return "short_term" if "short_term_storage_request_id" in value else "write"
+    return "short_term" if isinstance(value, ShortTermStoreExportPayload) else "write"
+
+
 class ExportObjectRequestMetadata(Model):
     object_id: EncodedDatabaseIdField
     object_type: ExportObjectType
     user_id: Optional[EncodedDatabaseIdField] = None
-    payload: Union[WriteStoreToPayload, ShortTermStoreExportPayload]
+    payload: Annotated[
+        Union[
+            Annotated[WriteStoreToPayload, Tag("write")],
+            Annotated[ShortTermStoreExportPayload, Tag("short_term")],
+        ],
+        Discriminator(_store_export_payload_discriminator),
+    ]
 
 
 class ExportObjectResultMetadata(Model):
@@ -1991,27 +2077,25 @@ class ExportObjectResultMetadata(Model):
     error: Optional[str] = None
 
     @model_validator(mode="after")
-    @classmethod
-    def validate_success(cls, model):
+    def validate_success(self):
         """
         Ensure successful exports do not have error text.
         """
-        if model.success and model.error is not None:
+        if self.success and self.error is not None:
             raise ValueError("successful exports cannot have error text")
 
-        return model
+        return self
 
     @model_validator(mode="after")
-    @classmethod
-    def validate_uri(cls, model):
+    def validate_uri(self):
         """
         Ensure unsuccessful exports do not have a URI.
         """
 
-        if not model.success and model.uri:
+        if not self.success and self.uri:
             raise ValueError("unsuccessful exports cannot have a URI")
 
-        return model
+        return self
 
 
 class ExportObjectMetadata(Model):
@@ -2349,7 +2433,7 @@ class JobMetric(Model):
 class WorkflowJobMetric(JobMetric):
     tool_id: str
     job_id: str
-    step_index: int
+    step_index: Union[int, str]  # int for top-level steps, str for subworkflow steps (e.g., "1.0")
     step_label: Optional[str]
 
 
@@ -2606,7 +2690,7 @@ class Creator(Model):
     )
 
 
-class Organization(Creator):
+class CreatorOrganization(Creator):
     class_: str = Field(
         "Organization",
         alias="class",
@@ -2823,7 +2907,7 @@ class WorkflowToExport(Model):
         title="UUID",
         description="Universal unique identifier of the workflow.",
     )
-    creator: Optional[list[Union[Person, Organization]]] = Field(
+    creator: Optional[list[Union[Person, CreatorOrganization]]] = Field(
         None,
         title="Creator",
         description=("Additional information about the creator (or multiple creators) of this workflow."),
@@ -3492,9 +3576,9 @@ ModifyIdsField = Annotated[
 
 
 class UpdateDatasetPermissionsPayload(UpdateDatasetPermissionsPayloadBase):
-    access_ids: Annotated[Optional[RoleIdList], Field(default=None, alias="access_ids[]")] = None
-    manage_ids: Annotated[Optional[RoleIdList], Field(default=None, alias="manage_ids[]")] = None
-    modify_ids: Annotated[Optional[RoleIdList], Field(default=None, alias="modify_ids[]")] = None
+    access_ids: Annotated[Optional[RoleIdList], Field(alias="access_ids[]")] = None
+    manage_ids: Annotated[Optional[RoleIdList], Field(alias="manage_ids[]")] = None
+    modify_ids: Annotated[Optional[RoleIdList], Field(alias="modify_ids[]")] = None
 
 
 class UpdateDatasetPermissionsPayloadAliasB(UpdateDatasetPermissionsPayloadBase):
@@ -3847,10 +3931,10 @@ class PageSummaryBase(Model):
         description="The name of the page.",
         min_length=1,
     )
-    slug: str = Field(
-        ...,  # Required
+    slug: Optional[str] = Field(
+        default=None,
         title="Identifier",
-        description="The identifying slug for the page URL, must be unique.",
+        description="The identifying slug for the page URL, must be unique. Required for non-history pages.",
         pattern=r"^[a-z0-9-]+$",
     )
 
@@ -3874,6 +3958,37 @@ class MaterializeDatasetInstanceRequest(MaterializeDatasetInstanceAPIRequest):
     history_id: DecodedDatabaseIdField
 
 
+class EntityReference(Model):
+    type: str = Field(
+        ...,
+        title="Entity Type",
+        description="The type of entity being referenced (e.g. 'dataset', 'history').",
+    )
+    identifier: str = Field(
+        ...,
+        title="Identifier",
+        description="The identifier as typed by the user (HID number or name).",
+    )
+    id: Optional[str] = Field(
+        default=None,
+        title="Entity ID",
+        description="The resolved encoded ID of the entity.",
+    )
+    name: str = Field(
+        default="",
+        title="Name",
+        description="The display name of the entity.",
+    )
+    extension: Optional[str] = Field(default=None, title="Extension")
+    state: Optional[str] = Field(default=None, title="State")
+    hid: Optional[int] = Field(default=None, title="HID")
+
+
+class ChatEntityContext(Model):
+    datasets: list[EntityReference] = Field(default_factory=list, title="Datasets")
+    histories: list[EntityReference] = Field(default_factory=list, title="Histories")
+
+
 class ChatPayload(Model):
     query: str = Field(
         ...,
@@ -3884,6 +3999,26 @@ class ChatPayload(Model):
         default="",
         title="Context",
         description="The context for the chatbot.",
+    )
+    entity_context: Optional[ChatEntityContext] = Field(
+        default=None,
+        title="Entity Context",
+        description="Structured entity references resolved from @mentions in the query.",
+    )
+    exchange_id: Optional[DecodedDatabaseIdField] = Field(
+        default=None,
+        title="Exchange ID",
+        description="The ID of an existing chat exchange to continue.",
+    )
+    page_id: Optional[DecodedDatabaseIdField] = Field(
+        default=None,
+        title="Page ID",
+        description="Scope this chat exchange to a history-attached page.",
+    )
+    regenerate: Optional[bool] = Field(
+        default=None,
+        title="Regenerate",
+        description="Force fresh analysis even if a cached response exists (for job-based queries). Defaults to false if not provided.",
     )
 
 
@@ -3902,6 +4037,72 @@ class ChatResponse(BaseModel):
         ...,
         title="Error Message",
         description="The error message, if any, for the chat query.",
+    )
+    agent_response: Optional[AgentResponse] = Field(
+        default=None,
+        title="Agent Response",
+        description="Full structured agent response with metadata and suggestions.",
+    )
+    exchange_id: Optional[EncodedDatabaseIdField] = Field(
+        default=None,
+        title="Exchange ID",
+        description="The ID of the chat exchange for continuing conversations.",
+    )
+    processing_time: Optional[float] = Field(
+        default=None,
+        title="Processing Time",
+        description="Time taken to process the query in seconds.",
+    )
+
+
+class ChatHistoryItemResponse(BaseModel):
+    id: EncodedDatabaseIdField = Field(
+        ...,
+        title="Exchange ID",
+        description="The encoded ID of the chat exchange.",
+    )
+    query: str = Field(
+        ...,
+        title="Query",
+        description="The user's query that started or continued this exchange.",
+    )
+    response: str = Field(
+        ...,
+        title="Response",
+        description="The assistant's response to the query.",
+    )
+    agent_type: str = Field(
+        ...,
+        title="Agent Type",
+        description="The type of agent that handled this exchange.",
+    )
+    agent_response: Optional[AgentResponse] = Field(
+        default=None,
+        title="Agent Response",
+        description="Full structured agent response with metadata and suggestions.",
+    )
+    timestamp: Optional[str] = Field(
+        default=None,
+        title="Timestamp",
+        description="ISO-format timestamp of the first message in the exchange.",
+    )
+    feedback: Optional[int] = Field(
+        default=None,
+        title="Feedback",
+        description="User feedback on the exchange (1 = positive, 0 = negative).",
+    )
+    message_count: int = Field(
+        ...,
+        title="Message Count",
+        description="Total number of messages in this exchange.",
+    )
+
+
+class ChatExchangeBatchDeletePayload(Model):
+    ids: list[DecodedDatabaseIdField] = Field(
+        ...,
+        title="Exchange IDs",
+        description="List of chat exchange IDs to delete.",
     )
 
 
@@ -3924,6 +4125,11 @@ class GenerateTourResponse(Model):
 
 
 class CreatePagePayload(PageSummaryBase):
+    title: Optional[str] = Field(  # type: ignore[assignment]
+        default=None,
+        title="Title",
+        description="The name of the page. Auto-generated from history name if not provided for history-attached pages.",
+    )
     content_format: PageContentFormat = ContentFormatField
     content: Optional[str] = ContentField
     annotation: Optional[str] = Field(
@@ -3936,14 +4142,39 @@ class CreatePagePayload(PageSummaryBase):
         title="Workflow invocation ID",
         description="Encoded ID used by workflow generated reports.",
     )
+    history_id: Optional[DecodedDatabaseIdField] = Field(
+        None,
+        title="History ID",
+        description="Encoded ID of the history to attach this page to.",
+    )
     model_config = ConfigDict(use_enum_values=True, extra="allow")
 
 
 class UpdatePagePayload(PageSummaryBase):
+    title: Optional[str] = Field(  # type: ignore[assignment]
+        default=None,
+        title="Title",
+        description="The name of the page.",
+        min_length=1,
+    )
+    content: Optional[str] = Field(
+        default=None,
+        title="Content",
+        description="New content for the page (creates a new revision).",
+    )
+    content_format: Optional[PageContentFormat] = Field(
+        default=None,
+        title="Content format",
+    )
     annotation: Optional[str] = Field(
         default=None,
         title="Annotation",
         description="Annotation that will be attached to the page.",
+    )
+    edit_source: Optional[str] = Field(
+        default=None,
+        title="Edit source",
+        description="Source of edit: 'user' or 'agent'.",
     )
 
 
@@ -3968,6 +4199,13 @@ class AsyncTaskResultSummary(Model):
     )
 
 
+HistorySummary.model_rebuild()
+HistoryDetailed.model_rebuild()
+CustomHistoryView.model_rebuild()
+ArchivedHistorySummary.model_rebuild()
+ArchivedHistoryDetailed.model_rebuild()
+CustomArchivedHistoryView.model_rebuild()
+
 ToolRequestIdField = Field(title="ID", description="Encoded ID of the role")
 
 
@@ -3977,11 +4215,32 @@ class ToolRequestState(str, Enum):
     FAILED = "failed"
 
 
+class ToolRequestStateMessage(Model):
+    err_msg: str
+    err_data: Optional[dict[str, Any]] = None
+
+
 class ToolRequestModel(Model):
     id: EncodedDatabaseIdField = ToolRequestIdField
     request: dict[str, Any]
     state: ToolRequestState
-    state_message: Optional[str]
+    state_message: Optional[ToolRequestStateMessage] = None
+
+
+class ToolRequestJobReference(Model):
+    src: Literal["job"]
+    id: EncodedDatabaseIdField
+
+
+class ToolRequestImplicitCollectionReference(Model):
+    src: Literal["hdca"]
+    id: EncodedDatabaseIdField
+    output_name: str
+
+
+class ToolRequestDetailedModel(ToolRequestModel):
+    jobs: list[ToolRequestJobReference] = Field(default=[])
+    implicit_collections: list[ToolRequestImplicitCollectionReference] = Field(default=[])
 
 
 class AsyncFile(Model):
@@ -4039,6 +4298,16 @@ class PageSummary(PageSummaryBase, WithModelClass):
     create_time: datetime = CreateTimeField
     update_time: datetime = UpdateTimeField
     tags: TagCollection
+    source_invocation_id: Optional[EncodedDatabaseIdField] = Field(
+        None,
+        title="Source Invocation ID",
+        description="The workflow invocation this page was created from, if any.",
+    )
+    history_id: Optional[EncodedDatabaseIdField] = Field(
+        None,
+        title="History ID",
+        description="The history this page is attached to, if any.",
+    )
 
 
 GenerateVersionField = Field(
@@ -4070,6 +4339,11 @@ class PageDetails(PageSummary):
     content_format: PageContentFormat = ContentFormatField
     content: Optional[str] = ContentField
     content_editor: Optional[str] = ContentEditorField
+    edit_source: Optional[str] = Field(
+        default=None,
+        title="Edit source",
+        description="Source of the latest revision: 'user', 'agent', or 'restore'.",
+    )
     generate_version: Optional[str] = GenerateVersionField
     generate_time: Optional[str] = GenerateTimeField
     model_config = ConfigDict(extra="allow")
@@ -4087,6 +4361,24 @@ class PageSummaryList(RootModel):
         default=[],
         title="List with summary information of Pages.",
     )
+
+
+class PageRevisionSummary(Model):
+    id: EncodedDatabaseIdField
+    page_id: EncodedDatabaseIdField
+    edit_source: Optional[str] = None
+    create_time: datetime
+    update_time: datetime
+
+
+class PageRevisionDetails(PageRevisionSummary):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    content_format: Optional[PageContentFormat] = None
+
+
+class PageRevisionList(RootModel):
+    root: list[PageRevisionSummary] = Field(default=[])
 
 
 class LandingRequestState(str, Enum):
@@ -4109,7 +4401,7 @@ class CreateToolLandingRequestPayload(Model):
 
 class CreateWorkflowLandingRequestPayload(Model):
     workflow_id: str
-    workflow_target_type: Literal["stored_workflow", "workflow", "trs_url"]
+    workflow_target_type: Literal["stored_workflow", "workflow", "trs_url", "url"]
     request_state: Optional[dict[str, Any]] = None
     client_secret: Optional[str] = None
     public: bool = Field(
@@ -4135,7 +4427,7 @@ class ToolLandingRequest(Model):
 class WorkflowLandingRequest(Model):
     uuid: UuidField
     workflow_id: str
-    workflow_target_type: Literal["stored_workflow", "workflow", "trs_url"]
+    workflow_target_type: Literal["stored_workflow", "workflow", "trs_url", "url"]
     request_state: dict[str, Any]
     state: LandingRequestState
     origin: Optional[HttpUrl] = None

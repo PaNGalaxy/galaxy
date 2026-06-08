@@ -1,6 +1,14 @@
-import type { TemplateVariable } from "@/api/configTemplates";
+import { describe, expect, it } from "vitest";
 
-import { createTemplateForm, templateVariableFormEntry, upgradeForm } from "./formUtil";
+import type { TemplateSecret, TemplateVariable } from "@/api/configTemplates";
+
+import {
+    createTemplateForm,
+    formDataTypedGet,
+    templateSecretFormEntry,
+    templateVariableFormEntry,
+    upgradeForm,
+} from "./formUtil";
 import {
     GENERIC_FTP_FILE_SOURCE_TEMPLATE,
     OBJECT_STORE_INSTANCE,
@@ -95,6 +103,138 @@ describe("formUtils", () => {
             const hostVariable = FTP_VARIABLES[0] as TemplateVariable;
             const formEntry = templateVariableFormEntry(hostVariable, "mycoolhost.org");
             expect(formEntry.value).toBe("mycoolhost.org");
+        });
+        it("should render optional integer with no default as empty string", () => {
+            const optionalIntVar: TemplateVariable = {
+                name: "timeout",
+                type: "integer",
+                optional: true,
+            };
+            const formEntry = templateVariableFormEntry(optionalIntVar, undefined);
+            expect(formEntry.value).toBe("");
+        });
+        it("should render required integer with no default as 0", () => {
+            const requiredIntVar: TemplateVariable = {
+                name: "timeout",
+                type: "integer",
+                optional: false,
+            };
+            const formEntry = templateVariableFormEntry(requiredIntVar, undefined);
+            expect(formEntry.value).toBe(0);
+        });
+        it("should render multiline string types as Galaxy textarea inputs", () => {
+            const multilineVariable: TemplateVariable = {
+                name: "private_key",
+                type: "string",
+                multiline: true,
+            };
+            const formEntry = templateVariableFormEntry(multilineVariable, "line1\nline2");
+            expect(formEntry.type).toBe("text");
+            expect(formEntry.area).toBe(true);
+            expect(formEntry.value).toBe("line1\nline2");
+        });
+    });
+
+    describe("templateVariableFormEntry optional field", () => {
+        it("should mark variable as optional when template specifies optional=true", () => {
+            const optionalVar: TemplateVariable = {
+                name: "test_var",
+                type: "string",
+                optional: true,
+            };
+            const formEntry = templateVariableFormEntry(optionalVar, undefined);
+            expect(formEntry.optional).toBe(true);
+        });
+
+        it("should mark variable as required when template specifies optional=false", () => {
+            const requiredVar: TemplateVariable = {
+                name: "test_var",
+                type: "string",
+                optional: false,
+            };
+            const formEntry = templateVariableFormEntry(requiredVar, undefined);
+            expect(formEntry.optional).toBe(false);
+        });
+
+        it("should mark variable as required when template does not specify optional", () => {
+            const varWithoutOptional: TemplateVariable = {
+                name: "test_var",
+                type: "string",
+            };
+            const formEntry = templateVariableFormEntry(varWithoutOptional, undefined);
+            expect(formEntry.optional).toBe(false);
+        });
+    });
+
+    describe("templateSecretFormEntry optional field", () => {
+        it("should mark secret as optional when template specifies optional=true", () => {
+            const optionalSecret: TemplateSecret = {
+                name: "mysecret",
+                help: "Help text",
+                optional: true,
+            };
+            const formEntry = templateSecretFormEntry(optionalSecret);
+            expect(formEntry.optional).toBe(true);
+        });
+
+        it("should mark secret as required when template specifies optional=false", () => {
+            const requiredSecret: TemplateSecret = {
+                name: "mysecret",
+                help: "Help text",
+                optional: false,
+            };
+            const formEntry = templateSecretFormEntry(requiredSecret);
+            expect(formEntry.optional).toBe(false);
+        });
+
+        it("should mark secret as required when template does not specify optional", () => {
+            const secretWithoutOptional: TemplateSecret = {
+                name: "mysecret",
+                help: "Help text",
+            };
+            const formEntry = templateSecretFormEntry(secretWithoutOptional);
+            expect(formEntry.optional).toBe(false);
+        });
+
+        it("should render multiline secrets as textarea inputs", () => {
+            const multilineSecret: TemplateSecret = {
+                name: "private_key",
+                help: "PEM content",
+                multiline: true,
+            };
+            const formEntry = templateSecretFormEntry(multilineSecret);
+            expect(formEntry.type).toBe("text");
+            expect(formEntry.area).toBe(true);
+        });
+    });
+
+    describe("formDataTypedGet", () => {
+        it("should return undefined for an optional integer when the raw value is empty string", () => {
+            const optionalIntVar: TemplateVariable = {
+                name: "timeout",
+                type: "integer",
+                optional: true,
+            };
+            const result = formDataTypedGet(optionalIntVar, { timeout: "" });
+            expect(result).toBeUndefined();
+        });
+
+        it("should return the parsed integer when a valid string value is provided", () => {
+            const intVar: TemplateVariable = {
+                name: "timeout",
+                type: "integer",
+            };
+            const result = formDataTypedGet(intVar, { timeout: "42" });
+            expect(result).toBe(42);
+        });
+
+        it("should return undefined for integer when raw value is null", () => {
+            const intVar: TemplateVariable = {
+                name: "timeout",
+                type: "integer",
+            };
+            const result = formDataTypedGet(intVar, { timeout: null });
+            expect(result).toBeUndefined();
         });
     });
 });

@@ -121,8 +121,11 @@ const expirationMessage = computed(() => {
     if (hasExpired.value) {
         return "Expired";
     }
-    if (daysToExpire.value !== null && daysToExpire.value <= 1) {
-        return `Expires soon!`;
+    if (daysToExpire.value !== null && daysToExpire.value < 1) {
+        return `Expires today`;
+    }
+    if (daysToExpire.value === 1) {
+        return `Expires in 1 day`;
     }
     return `Expires in ${daysToExpire.value} days`;
 });
@@ -135,11 +138,11 @@ const expirationTooltip = computed(() => {
     if (hasExpired.value) {
         return `This ${itemType} was stored in ${
             objectStoreName.value
-        } and has expired on ${expirationDate.value.toDateString()}.`;
+        } and has expired on ${expirationDate.value.toLocaleString()}.`;
     }
     return `This ${itemType} is stored in ${
         objectStoreName.value
-    } and expires on ${expirationDate.value.toDateString()}.`;
+    } and expires on ${expirationDate.value.toLocaleString()}.`;
 });
 
 const variant = computed(() => {
@@ -154,7 +157,7 @@ const variant = computed(() => {
 </script>
 <template>
     <span v-if="canExpire" class="expiration-indicator">
-        <BBadge v-b-tooltip.noninteractive.hover.left :variant="variant" :title="expirationTooltip">
+        <BBadge v-g-tooltip.hover.left :variant="variant" :title="expirationTooltip">
             <FontAwesomeIcon :icon="faHourglass" /> {{ expirationMessage }}
         </BBadge>
     </span>

@@ -1,37 +1,36 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faCheckSquare, faSquare } from "@fortawesome/free-regular-svg-icons";
 import {
     faArrowCircleDown,
     faArrowCircleUp,
+    faBurn,
     faCheckCircle,
     faExchangeAlt,
-    faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { BBadge, BButton, BCollapse } from "bootstrap-vue";
+import { BBadge, BButton } from "bootstrap-vue";
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router/composables";
 
-import { getGalaxyInstance } from "@/app";
 import type { ItemUrls } from "@/components/History/Content/Dataset/index";
 import { updateContentFields } from "@/components/History/model/queries";
+import { useWindowAwareNavigation } from "@/composables/windowAwareNavigation";
 import { useEntryPointStore } from "@/stores/entryPointStore";
+import DATASET_STATES from "@/utils/datasetStates";
 import { clearDrag } from "@/utils/setDrag";
 
 import { getContentItemState, type State, STATES } from "./model/states";
-import type { RouterPushOptions } from "./router-push-options";
 
 import CollectionDescription from "./Collection/CollectionDescription.vue";
 import ContentExpirationIndicator from "./ContentExpirationIndicator.vue";
 import ContentOptions from "./ContentOptions.vue";
 import DatasetDetails from "./Dataset/DatasetDetails.vue";
+import GCollapse from "@/components/BaseComponents/GCollapse.vue";
 import StatelessTags from "@/components/TagsMultiselect/StatelessTags.vue";
-
-library.add(faArrowCircleUp, faArrowCircleDown, faCheckCircle, faExchangeAlt, faSpinner);
 
 const router = useRouter();
 const route = useRoute();
+const { pushToFrameOrPage } = useWindowAwareNavigation();
 
 interface Props {
     id: number;
@@ -180,6 +179,8 @@ const itemUrls = computed<ItemUrls>(() => {
     let display = `/datasets/${id}`;
     if (props.item.extension == "tool_markdown") {
         display = `/datasets/${id}/report`;
+    } else if (!DATASET_STATES.OK_STATES.includes(state.value)) {
+        display = `/datasets/${id}/details`;
     }
     return {
         display: display,
@@ -226,36 +227,22 @@ function onDisplay() {
         // there can be more than one entry point, choose the first
         const url = entryPointsForHda[0]?.target;
         window.open(url, "_blank");
-    } else {
-        const Galaxy = getGalaxyInstance();
-        const isWindowManagerActive = Galaxy.frame && Galaxy.frame.active;
-
-        // Build the display URL with displayOnly query param if needed
-        let displayUrl = itemUrls.value.display;
-        if (isWindowManagerActive && displayUrl) {
-            displayUrl += displayUrl.includes("?") ? "&displayOnly=true" : "?displayOnly=true";
-        }
-
-        // vue-router 4 supports a native force push with clean URLs,
-        // but we're using a __vkey__ bit as a workaround
-        // Only conditionally force to keep urls clean most of the time.
-        if (route.path === itemUrls.value.display) {
-            const options: RouterPushOptions = {
-                force: true,
-                preventWindowManager: !isWindowManagerActive,
-                title: isWindowManagerActive ? `${props.item.hid}: ${props.name}` : undefined,
-            };
-            // @ts-ignore - monkeypatched router, drop with migration.
-            router.push(displayUrl, options);
-        } else if (displayUrl) {
-            const options: RouterPushOptions = {
-                preventWindowManager: !isWindowManagerActive,
-                title: isWindowManagerActive ? `${props.item.hid}: ${props.name}` : undefined,
-            };
-            // @ts-ignore - monkeypatched router, drop with migration.
-            router.push(displayUrl, options);
-        }
+        return;
     }
+    const inlineUrl = itemUrls.value.display;
+    if (!inlineUrl) {
+        return;
+    }
+    const framedUrl = inlineUrl + (inlineUrl.includes("?") ? "&displayOnly=true" : "?displayOnly=true");
+    const hidInfo = props.item.hid ? `${props.item.hid}: ` : "";
+    pushToFrameOrPage({
+        framedUrl,
+        inlineUrl,
+        title: `${hidInfo} ${props.name}`,
+        // Force a re-push (via the __vkey__ trick) only when we'd otherwise
+        // navigate to the URL we're already on, so the component re-renders.
+        force: route.path === inlineUrl,
+    });
 }
 
 function onDelete(recursive = false) {
@@ -346,7 +333,7 @@ function unexpandedClick(event: Event) {
                     </BButton>
                     <BButton
                         v-if="highlight == 'input'"
-                        v-b-tooltip.hover
+                        v-g-tooltip.hover
                         variant="link"
                         class="p-0"
                         title="Input"
@@ -355,7 +342,7 @@ function unexpandedClick(event: Event) {
                     </BButton>
                     <BButton
                         v-else-if="highlight == 'active'"
-                        v-b-tooltip.hover
+                        v-g-tooltip.hover
                         variant="link"
                         class="p-0"
                         title="Inputs/Outputs highlighted for this item"
@@ -365,7 +352,7 @@ function unexpandedClick(event: Event) {
                     </BButton>
                     <BButton
                         v-else-if="highlight == 'output'"
-                        v-b-tooltip.hover
+                        v-g-tooltip.hover
                         variant="link"
                         class="p-0"
                         title="Output"
@@ -373,24 +360,24 @@ function unexpandedClick(event: Event) {
                         <FontAwesomeIcon class="text-info" :icon="faArrowCircleDown" />
                     </BButton>
                     <span v-if="hasStateIcon" class="state-icon">
-                        <icon
+                        <FontAwesomeIcon
                             fixed-width
                             :icon="contentState.icon"
                             :spin="contentState.spin"
                             :title="item.populated_state_message || contentState.text" />
                     </span>
-                    <span class="id hid">{{ id }}:</span>
+                    <span class="id hid">{{ id }}: </span>
                     <span class="content-title name font-weight-bold">{{ name }}</span>
                 </span>
                 <span v-if="item.purged" class="ml-auto align-self-start btn-group p-1">
                     <BBadge variant="secondary" title="This dataset has been permanently deleted">
-                        <icon icon="burn" /> Purged
+                        <FontAwesomeIcon :icon="faBurn" /> Purged
                     </BBadge>
                 </span>
                 <span class="align-self-start btn-group">
                     <BButton
                         v-if="item.sub_items?.length && !isSubItem"
-                        v-b-tooltip.hover
+                        v-g-tooltip.hover
                         title="Show converted items"
                         tabindex="0"
                         class="display-btn px-1 align-items-center"
@@ -439,24 +426,24 @@ function unexpandedClick(event: Event) {
                 @tag-click="onTagClick" />
         </span>
         <!-- collections are not expandable, so we only need the DatasetDetails component here -->
-        <BCollapse :visible="expandDataset" class="px-2 pb-2">
+        <GCollapse v-slot="{ contentActive }" :visible="expandDataset" class="px-2 pb-2">
             <div v-if="item.accessible === false">You are not allowed to access this dataset</div>
             <DatasetDetails
-                v-else-if="expandDataset && item.id"
+                v-else-if="contentActive && item.id"
                 :id="item.id"
                 :writable="writable"
                 :show-highlight="(isHistoryItem && filterable) || addHighlightBtn"
                 :item-urls="itemUrls"
                 @edit="onEdit"
                 @toggleHighlights="toggleHighlights" />
-        </BCollapse>
+        </GCollapse>
         <slot name="sub_items" :sub-items-visible="subItemsVisible" />
     </div>
 </template>
 
 <style lang="scss" scoped>
-@import "~bootstrap/scss/_functions.scss";
-@import "theme/blue.scss";
+@import "bootstrap/scss/_functions.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .content-item {
     cursor: default;

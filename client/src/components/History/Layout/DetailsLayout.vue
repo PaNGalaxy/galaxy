@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faPen, faSave, faUndo } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BButton, BFormInput, BFormTextarea } from "bootstrap-vue";
@@ -12,10 +11,9 @@ import l from "@/utils/localization";
 import type { DetailsLayoutSummarized } from "./types";
 
 import ClickToEdit from "@/components/Collections/common/ClickToEdit.vue";
+import Heading from "@/components/Common/Heading.vue";
 import TextSummary from "@/components/Common/TextSummary.vue";
 import StatelessTags from "@/components/TagsMultiselect/StatelessTags.vue";
-
-library.add(faPen, faSave, faUndo);
 
 interface Props {
     name?: string;
@@ -126,15 +124,14 @@ function selectText() {
                     v-if="renameable"
                     v-model="clickToEditName"
                     component="h3"
-                    title="..."
                     data-description="name display"
                     no-save-on-blur
-                    class="my-2 w-100" />
-                <h3 v-else class="my-2 w-100">
+                    class="name-display my-2 w-100" />
+                <Heading v-else h3 :clamp="2" class="my-2 w-100">
                     {{ props.name || "..." }}
-                </h3>
+                </Heading>
             </template>
-            <div v-else style="max-width: 80%">
+            <div v-else class="overflow-hidden" style="max-width: 80%">
                 <TextSummary
                     :description="name"
                     data-description="name display"
@@ -179,7 +176,7 @@ function selectText() {
                 v-if="tags"
                 :class="{
                     'mt-2': !summarized,
-                    tags: ['both', 'tags'].includes(summarized),
+                    tags: ['both', 'tags'].includes(summarized || ''),
                     hidden: summarized === 'hidden',
                 }"
                 :value="tags"
@@ -225,12 +222,7 @@ function selectText() {
                 <span v-localize>Save</span>
             </BButton>
 
-            <BButton
-                class="cancel-button mb-1"
-                data-description="editor cancel button"
-                size="sm"
-                icon="undo"
-                @click="onToggle">
+            <BButton class="cancel-button mb-1" data-description="editor cancel button" size="sm" @click="onToggle">
                 <FontAwesomeIcon :icon="faUndo" fixed-width />
                 <span v-localize>Cancel</span>
             </BButton>
@@ -241,6 +233,14 @@ function selectText() {
 </template>
 
 <style lang="scss" scoped>
+.name-display :deep(h3),
+h3.name-display {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+}
+
 .summarized-details {
     margin-left: 0.5rem;
     max-width: 15rem;

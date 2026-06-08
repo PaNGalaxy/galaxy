@@ -2,12 +2,13 @@
 import { reactive, type Ref, ref } from "vue";
 
 import type { WorkflowSummary } from "@/api/workflows";
+import { updateWorkflow } from "@/components/Workflow/workflows.services";
 
 import type { SelectedWorkflow } from "./types";
 
 import WorkflowCard from "./WorkflowCard.vue";
-import WorkflowRename from "./WorkflowRename.vue";
 import GModal from "@/components/BaseComponents/GModal.vue";
+import WorkflowRename from "@/components/Common/RenameModal.vue";
 import WorkflowPublished from "@/components/Workflow/Published/WorkflowPublished.vue";
 import WorkflowPublishedButtons from "@/components/Workflow/Published/WorkflowPublishedButtons.vue";
 
@@ -18,7 +19,6 @@ interface Props {
     filterable?: boolean;
     publishedView?: boolean;
     editorView?: boolean;
-    compact?: boolean;
     currentWorkflowId?: string;
     selectedWorkflowIds?: SelectedWorkflow[];
     itemRefs?: Record<string, Ref<InstanceType<typeof WorkflowCard> | null>>;
@@ -32,7 +32,6 @@ const props = withDefaults(defineProps<Props>(), {
     filterable: true,
     publishedView: false,
     editorView: false,
-    compact: false,
     currentWorkflowId: "",
     selectedWorkflowIds: () => [],
     itemRefs: () => ({}),
@@ -106,7 +105,6 @@ const workflowPublished = ref<InstanceType<typeof WorkflowPublished>>();
             :filterable="props.filterable"
             :published-view="props.publishedView"
             :editor-view="props.editorView"
-            :compact="props.compact"
             :current="workflow.id === props.currentWorkflowId"
             :clickable="props.clickable"
             :highlighted="props.rangeSelectAnchor?.id === workflow.id"
@@ -123,9 +121,10 @@ const workflowPublished = ref<InstanceType<typeof WorkflowPublished>>();
             @on-workflow-card-click="(...args) => emit('on-workflow-card-click', ...args)" />
 
         <WorkflowRename
-            :id="modalOptions.rename.id"
-            :show="showRename"
+            v-if="showRename"
+            item-type="workflow"
             :name="modalOptions.rename.name"
+            :rename-action="(newName) => updateWorkflow(modalOptions.rename.id, { name: newName })"
             @close="onRenameClose" />
 
         <GModal
@@ -165,8 +164,8 @@ const workflowPublished = ref<InstanceType<typeof WorkflowPublished>>();
 </style>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
-@import "_breakpoints.scss";
+@import "@/style/scss/theme/blue.scss";
+@import "@/style/scss/_breakpoints.scss";
 
 .workflow-card-list {
     container: cards-list / inline-size;

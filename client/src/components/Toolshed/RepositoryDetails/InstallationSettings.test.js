@@ -1,11 +1,12 @@
+import { getLocalVue } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
-import { getLocalVue } from "tests/jest/helpers";
+import { describe, expect, it, vi } from "vitest";
 
-import InstallationSettings from "./InstallationSettings";
+import InstallationSettings from "./InstallationSettings.vue";
 
-jest.mock("app");
+vi.mock("app");
 // Mock the useConfig composable
-jest.mock("@/composables/config", () => ({
+vi.mock("@/composables/config", () => ({
     useConfig: () => ({
         config: {
             install_tool_dependencies: true,
@@ -22,7 +23,6 @@ describe("InstallationSettings", () => {
     it("test tool repository installer interface", () => {
         const wrapper = mount(InstallationSettings, {
             propsData: {
-                modalStatic: true,
                 repo: {
                     long_description: "long_description",
                     description: "description",
@@ -36,7 +36,7 @@ describe("InstallationSettings", () => {
             },
             localVue,
         });
-        expect(wrapper.find(".title").text()).toBe("Installing 'name'");
+        expect(wrapper.find(".g-modal-title").text()).toBe("Installing 'name'");
         expect(wrapper.find(".description").text()).toBe("long_description");
         expect(wrapper.find(".revision").text()).toBe("owner rev. changesetRevision");
 

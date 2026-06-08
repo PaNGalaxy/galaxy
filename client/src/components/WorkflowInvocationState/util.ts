@@ -18,6 +18,7 @@ export const INVOCATION_MSG_LEVEL = {
     unexpected_failure: "error",
     workflow_output_not_found: "warning",
     workflow_parameter_invalid: "error",
+    step_input_deleted: "error",
 } as const satisfies Readonly<Record<string, "cancel" | "error" | "warning">>;
 
 function countStates(jobSummary: InvocationJobsSummary | StepJobSummary | null, queryStates: string[]): number {
@@ -82,5 +83,34 @@ export function isTerminal(jobSummary: InvocationJobsSummary) {
     } else {
         const anyNonTerminal = anyWithStates(jobSummary, NON_TERMINAL_STATES);
         return !anyNonTerminal;
+    }
+}
+
+export function getStepTitle(
+    stepIndex: number,
+    stepType: string,
+    stepLabel?: string,
+    toolName = "Unknown tool",
+    subworkflowName = "Subworkflow",
+): string {
+    const oneBasedStepIndex = stepIndex + 1;
+    if (stepLabel) {
+        return `Step ${oneBasedStepIndex}: ${stepLabel}`;
+    }
+    const workflowStepType = stepType;
+    switch (workflowStepType) {
+        case "tool":
+            return `Step ${oneBasedStepIndex}: ${toolName}`;
+        case "subworkflow": {
+            return `Step ${oneBasedStepIndex}: ${subworkflowName}`;
+        }
+        case "parameter_input":
+            return `Step ${oneBasedStepIndex}: Parameter input`;
+        case "data_input":
+            return `Step ${oneBasedStepIndex}: Data input`;
+        case "data_collection_input":
+            return `Step ${oneBasedStepIndex}: Data collection input`;
+        default:
+            return `Step ${oneBasedStepIndex}: Unknown step type '${workflowStepType}'`;
     }
 }

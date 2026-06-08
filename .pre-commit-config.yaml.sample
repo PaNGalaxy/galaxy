@@ -1,8 +1,13 @@
 repos:
   - repo: https://github.com/psf/black
-    rev: 24.1.1
+    rev: 26.1.0
     hooks:
     - id: black
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.8
+    hooks:
+      - id: ruff
+        args: [--fix]
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
     hooks:

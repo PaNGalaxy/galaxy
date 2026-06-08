@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { faUpload } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { BTab, BTabs } from "bootstrap-vue";
 import { computed, ref, watch } from "vue";
 
 import type { HDASummary } from "@/api";
-import { COLLECTION_TYPE_TO_LABEL } from "@/components/History/adapters/buildCollectionModal";
+import { COLLECTION_TYPE_TO_LABEL } from "@/components/Collections/common/buildCollectionModal";
 import { useUploadConfigurations } from "@/composables/uploadConfigurations";
 import localize from "@/utils/localization";
 
@@ -15,6 +14,8 @@ import CollectionCreatorNoItemsMessage from "./CollectionCreatorNoItemsMessage.v
 import CollectionCreatorShowExtensions from "./CollectionCreatorShowExtensions.vue";
 import CollectionCreatorSourceOptions from "./CollectionCreatorSourceOptions.vue";
 import CollectionNameInput from "./CollectionNameInput.vue";
+import GTab from "@/components/BaseComponents/GTab.vue";
+import GTabs from "@/components/BaseComponents/GTabs.vue";
 import DefaultBox from "@/components/Upload/DefaultBox.vue";
 
 const Tabs = {
@@ -160,8 +161,8 @@ watch(
                 </div>
             </div>
         </span>
-        <BTabs v-else v-model="currentTab" fill justified>
-            <BTab
+        <GTabs v-else v-model="currentTab" fill justified>
+            <GTab
                 class="collection-creator"
                 :title="localize('Create Collection')"
                 :title-link-attributes="{ 'data-description': 'collection create tab build' }">
@@ -201,8 +202,8 @@ watch(
                             @clicked-create="emit('clicked-create', collectionName)" />
                     </div>
                 </div>
-            </BTab>
-            <BTab :title-link-attributes="{ 'data-description': 'collection create tab upload' }">
+            </GTab>
+            <GTab :title-link-attributes="{ 'data-description': 'collection create tab upload' }">
                 <template v-slot:title>
                     <FontAwesomeIcon :icon="faUpload" fixed-width />
                     <span>{{ localize("Upload Files to Add to Collection") }}</span>
@@ -223,17 +224,17 @@ watch(
                         <CollectionCreatorShowExtensions :extensions="extensions" upload />
                     </template>
                 </DefaultBox>
-            </BTab>
-        </BTabs>
+            </GTab>
+        </GTabs>
     </span>
 </template>
 
 <style lang="scss">
 $fa-font-path: "../../../../node_modules/@fortawesome/fontawesome-free/webfonts/";
-@import "~@fortawesome/fontawesome-free/scss/_variables";
-@import "~@fortawesome/fontawesome-free/scss/solid";
-@import "~@fortawesome/fontawesome-free/scss/fontawesome";
-@import "~@fortawesome/fontawesome-free/scss/brands";
+@import "@fortawesome/fontawesome-free/scss/_variables";
+@import "@fortawesome/fontawesome-free/scss/solid";
+@import "@fortawesome/fontawesome-free/scss/fontawesome";
+@import "@fortawesome/fontawesome-free/scss/brands";
 
 // Outside the modal - we need to set a max width on the help so ellipses display
 // doesn't cause it to grow without bound. Would greater appreciate a better workaround.

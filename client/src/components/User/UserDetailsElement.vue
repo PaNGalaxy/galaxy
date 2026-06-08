@@ -36,7 +36,7 @@ const getStoragePercentageClass = (percentage: number) => {
             <div class="d-flex align-items-center flex-gapx-1">
                 <div class="d-flex align-items-center flex-gapx-1 mr-5">
                     <FontAwesomeIcon :icon="faUser" class="user-details-icon p-2" />
-                    <span v-b-tooltip.hover.noninteractive title="Your username (public name)">
+                    <span v-g-tooltip.hover title="Your username (public name)">
                         {{ userUsername }}
                     </span>
                 </div>
@@ -45,7 +45,7 @@ const getStoragePercentageClass = (percentage: number) => {
                     <FontAwesomeIcon :icon="faAt" class="user-details-icon p-2" />
                     <span
                         id="user-preferences-current-email"
-                        v-b-tooltip.hover.noninteractive
+                        v-g-tooltip.hover
                         class="word-wrap-break"
                         title="Your email address">
                         {{ userEmail }}
@@ -65,7 +65,7 @@ const getStoragePercentageClass = (percentage: number) => {
                 <div>
                     Visit
                     <RouterLink
-                        v-b-tooltip.hover.noninteractive
+                        v-g-tooltip.hover
                         to="/storage/dashboard"
                         title="View and manage your storage usage"
                         data-description="storage dashboard link">
@@ -80,8 +80,8 @@ const getStoragePercentageClass = (percentage: number) => {
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
-@import "_breakpoints.scss";
+@import "@/style/scss/theme/blue.scss";
+@import "@/style/scss/_breakpoints.scss";
 
 .user-details-element {
     container: user-details-element;

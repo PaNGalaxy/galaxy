@@ -1,5 +1,5 @@
 import pytest
-from selenium.webdriver.support.ui import Select
+from selenium.webdriver.common.by import By
 
 from galaxy.util.unittest_utils import skip_if_site_down
 from .framework import (
@@ -12,6 +12,7 @@ from .framework import (
 
 class TestDataSource(SeleniumTestCase, UsesHistoryItemAssertions):
     ensure_registered = True
+    framework_tool_and_types = True
 
     @pytest.mark.skip("Skipping UCSC table direct1 data source test, chromedriver fails captcha")
     @selenium_test
@@ -22,7 +23,7 @@ class TestDataSource(SeleniumTestCase, UsesHistoryItemAssertions):
         self.datasource_tool_open("ucsc_table_direct1")
         self.screenshot("ucsc_table_browser_first_page")
         # only 4mb instead of 10 times that for human by default
-        Select(self.wait_for_selector("#org")).select_by_value("Tree shrew")
+        self.select_by_value((By.CSS_SELECTOR, "#org"), "Tree shrew")
         checkbox = self.wait_for_selector("#checkboxGalaxy")
         assert checkbox.get_attribute("checked") == "true"
         submit_button = self.wait_for_selector("#hgta_doTopSubmit")
@@ -38,3 +39,20 @@ class TestDataSource(SeleniumTestCase, UsesHistoryItemAssertions):
         self.history_panel_wait_for_hid_ok(1, allowed_force_refreshes=2)
         # Make sure we're still logged in (xref https://github.com/galaxyproject/galaxy/issues/11374)
         self.components.masthead.logged_in_only.wait_for_visible()
+
+    @selenium_test
+    @managed_history
+    def test_tool_runner_redirects_to_spa(self):
+        """Data source tools redirect back to the Galaxy SPA after handing off control to the controller.
+
+        Regression test for https://github.com/galaxyproject/galaxy/issues/22671: the new tab opened
+        by an external data source app used to hit `/tool_runner?tool_id=...` and then JS-redirect
+        back to `/`. After the mako removal the new tab was stranded on a static "ok" page; the
+        controller now sends a 302 to `/?notification=tool-submitted` and the SPA surfaces a toast.
+        """
+        self.get("tool_runner?tool_id=test_data_source")
+        # If the redirect is broken we land on a static page with no masthead.
+        self.wait_for_masthead()
+        # Confirm the SPA queued a toast from the notification query param.
+        self.wait_for_selector_visible(".b-toast")
+        self.screenshot("tool_runner_redirect_toast")

@@ -16,6 +16,10 @@ export const templateTypes: FileSourceTypesDetail = {
         icon: faCloud,
         message: "This is a repository plugin based on the Azure service.",
     },
+    azureflat: {
+        icon: faCloud,
+        message: "This is a repository plugin based on the Azure flat namespace service.",
+    },
     dropbox: {
         icon: faDropbox,
         message: "This is a repository plugin that connects with the commercial Dropbox service.",
@@ -27,6 +31,10 @@ export const templateTypes: FileSourceTypesDetail = {
     googledrive: {
         icon: faGoogleDrive,
         message: "This is a  repository plugin that connects with the commercial Google Drive service.",
+    },
+    onedrive: {
+        icon: faCloud,
+        message: "This is a repository plugin that connects with Microsoft OneDrive.",
     },
     onedata: {
         icon: faNetworkWired,
@@ -69,6 +77,19 @@ export const templateTypes: FileSourceTypesDetail = {
     huggingface: {
         icon: faHubspot,
         message: "This is a file repository plugin that connects with the Hugging Face Hub.",
+    },
+    iiif: {
+        icon: faNetworkWired,
+        message:
+            "This is a read-only file repository plugin that connects to IIIF (International Image Interoperability Framework) sources. IIIF is a framework widely used by museums, libraries, and archives for delivering high-resolution image-based cultural heritage materials.",
+    },
+    omero: {
+        icon: faNetworkWired,
+        message: "This is a file repository plugin that connects with an OMERO server.",
+    },
+    ssh: {
+        icon: faNetworkWired,
+        message: "This is a file repository plugin that connects with a remote server over SSH.",
     },
 };
 

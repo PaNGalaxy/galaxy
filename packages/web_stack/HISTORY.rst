@@ -4,10 +4,58 @@ History
 .. to_doc
 
 ---------
-25.1.dev0
+26.1.dev0
 ---------
 
 
+
+-------------------
+26.0.0 (2026-04-08)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Fix differentiation between single handler and handler tag by `@natefoo <https://github.com/natefoo>`_ in `#21252 <https://github.com/galaxyproject/galaxy/pull/21252>`_
+
+============
+Enhancements
+============
+
+* Add type annotations to job handling code by `@nsoranzo <https://github.com/nsoranzo>`_ in `#21171 <https://github.com/galaxyproject/galaxy/pull/21171>`_
+* Clean up code with pyupgrade by `@nsoranzo <https://github.com/nsoranzo>`_ in `#21540 <https://github.com/galaxyproject/galaxy/pull/21540>`_
+* Drop support for Python 3.9 by `@nsoranzo <https://github.com/nsoranzo>`_ in `#21583 <https://github.com/galaxyproject/galaxy/pull/21583>`_
+
+-------------------
+25.1.2 (2026-03-09)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.1.1 (2026-02-03)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.1.0 (2025-12-12)
+-------------------
+
+
+============
+Enhancements
+============
+
+* Clean up code from pyupgrade by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20642 <https://github.com/galaxyproject/galaxy/pull/20642>`_
+
+-------------------
+25.0.4 (2025-11-18)
+-------------------
+
+No recorded changes since last release
 
 -------------------
 25.0.3 (2025-09-23)

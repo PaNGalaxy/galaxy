@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faBug, faChartBar, faInfoCircle, faLink, faRedo, faSitemap, faSpinner, faStop } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BButton } from "bootstrap-vue";
@@ -7,6 +6,7 @@ import { computed, ref } from "vue";
 import { useRouter } from "vue-router/composables";
 
 import type { HDADetailed } from "@/api";
+import { stopJob } from "@/components/History/model/queries";
 import { copy as sendToClipboard } from "@/utils/clipboard";
 import localize from "@/utils/localization";
 import { absPath, prependPath } from "@/utils/redirect";
@@ -14,9 +14,6 @@ import { absPath, prependPath } from "@/utils/redirect";
 import type { ItemUrls } from ".";
 
 import DatasetDownload from "@/components/History/Content/Dataset/DatasetDownload.vue";
-import { stopJob } from "@/components/History/model/queries";
-
-library.add(faBug, faChartBar, faInfoCircle, faLink, faRedo, faSitemap, faStop);
 
 interface Props {
     item: HDADetailed;
@@ -95,7 +92,7 @@ function onVisualize() {
 }
 
 function onRerun() {
-    router.push(`/root?job_id=${props.item.creating_job}`);
+    router.push(`/?job_id=${props.item.creating_job}`);
 }
 
 function onStop() {
@@ -111,7 +108,7 @@ function onStop() {
             <div class="btn-group float-left">
                 <BButton
                     v-if="showError"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     class="px-1"
                     title="Error"
                     size="sm"
@@ -125,7 +122,7 @@ function onStop() {
 
                 <BButton
                     v-if="showDownloads"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     class="px-1"
                     title="Copy Link"
                     size="sm"
@@ -136,7 +133,7 @@ function onStop() {
 
                 <BButton
                     v-if="showInfo"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     class="info-btn px-1"
                     title="Dataset Details"
                     size="sm"
@@ -148,7 +145,7 @@ function onStop() {
 
                 <BButton
                     v-if="showVisualizations"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     class="visualize-btn px-1"
                     title="Visualize"
                     size="sm"
@@ -160,7 +157,7 @@ function onStop() {
 
                 <BButton
                     v-if="showHighlight"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     class="highlight-btn px-1"
                     title="Show Related Items"
                     size="sm"
@@ -183,7 +180,7 @@ function onStop() {
 
                 <BButton
                     v-if="writable && showRerun"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     class="rerun-btn px-1"
                     title="Run Job Again"
                     size="sm"

@@ -32,16 +32,16 @@
 <script>
 import axios from "axios";
 import BootstrapVue from "bootstrap-vue";
-import ToolSection from "components/Panels/Common/ToolSection";
-import { getAppRoot } from "onload/loadConfig";
 import Vue from "vue";
 
 import { fromSteps } from "@/components/Workflow/Editor/modules/labels";
+import { getAppRoot } from "@/onload/loadConfig";
 
 import { directiveEntry } from "./directives.ts";
-import MarkdownDialog from "./MarkdownDialog";
 
+import MarkdownDialog from "./MarkdownDialog.vue";
 import ActivityPanel from "@/components/Panels/ActivityPanel.vue";
+import ToolSection from "@/components/Panels/Common/ToolSection.vue";
 
 Vue.use(BootstrapVue);
 
@@ -202,7 +202,10 @@ export default {
             return !!this.steps;
         },
         mode() {
-            return this.isWorkflow ? "report" : "page";
+            if (this.isWorkflow) {
+                return "report";
+            }
+            return "page";
         },
         hasVisualizations() {
             return this.visualizationSection.elems.length > 0;

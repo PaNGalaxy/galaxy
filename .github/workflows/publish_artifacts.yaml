@@ -2,54 +2,138 @@ name: Publish release artifacts
 on:
   release:
     types: [released, prereleased]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'create release or prerelease artifact ?'
+        required: true
+        default: 'prerelease'
+        type: choice
+        options:
+        - release
+        - prerelease
+      release_tag:
+        description: 'Specify tag to build for'
+        required: true
+        type: string
 jobs:
-  build-and-publish-pypi:
-    if: github.repository_owner == 'galaxyproject'
-    name: Build and Publish to PyPI
+  check-permissions:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    strategy:
-        matrix:
-            python-version: ['3.9']
     steps:
-      - uses: actions/checkout@v5
+      - name: Check if user can create releases
+        run: |
+          PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission --jq '.permission')
+          if [[ "$PERMISSION" != "admin" ]]; then
+            echo "Error: Only repository admins can manually trigger release artifacts"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-python-packages:
+    if: |
+      github.repository_owner == 'galaxyproject' &&
+      (github.event_name == 'release' ||
+       (github.event_name == 'workflow_dispatch' && !cancelled() && !failure()))
+    needs: [check-permissions]
+    name: Build Python packages for PyPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.10'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
       - name: Install script dependencies
-        run: pip install galaxy-release-util
-      - name: Build and publish to PyPI
+        run: uv tool install galaxy-release-util
+      - name: Build Python packages
         run: |
-          galaxy-release-util build-and-upload --no-confirm
-        env:
-            TWINE_USERNAME: __token__
-            TWINE_PASSWORD: ${{ github.event.release.prerelease && secrets.PYPI_TEST_TOKEN || secrets.PYPI_MAIN_TOKEN }}
-            TWINE_REPOSITORY_URL: ${{ github.event.release.prerelease && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
+          galaxy-release-util build
+      - name: Move all built packages to dist/
+        run: |
+          mkdir -p dist
+          for dir in $(find packages/ -mindepth 2 -maxdepth 2 -type d -name dist); do
+              mv ${dir}/* dist/
+          done
+          ls dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: dist/
+
+  pypi-publish:
+    if: always() && needs.build-python-packages.result == 'success'
+    needs: [build-python-packages]
+    name: Upload packages to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.release_type == 'prerelease') || (github.event_name == 'release' && github.event.release.prerelease) && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
 
   build-and-publish-npm:
-    if: github.repository_owner == 'galaxyproject'
+    if: |
+      github.repository_owner == 'galaxyproject' &&
+      (github.event_name == 'release' ||
+       (github.event_name == 'workflow_dispatch' && !cancelled() && !failure()))
+    needs: [check-permissions]
     name: Build and Publish to NPM
     runs-on: ubuntu-latest
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
+          persist-credentials: false
       - name: Read Node.js version
         id: node-version
         run: echo "version=$(cat client/.node_version)" >> $GITHUB_OUTPUT
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ steps.node-version.outputs.version }}
-          cache: 'yarn'
-          cache-dependency-path: 'client/yarn.lock'
           registry-url: 'https://registry.npmjs.org'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+      # TODO(post-26.1): the @galaxyproject/galaxy-client npm publish is now
+      # redundant with the galaxy-web-client PyPI wheel used by
+      # scripts/common_startup.sh and the install-client make target.  Keep
+      # publishing for at least one release cycle in case external consumers
+      # depend on it; once verified unused, drop the build+publish steps
+      # below (leave the client-api publish intact).
       - name: build client
-        run: yarn && yarn build-production
+        run: pnpm install && pnpm build-production
+        working-directory: 'client'
+      # Ensure npm 11.5.1 or later for trusted publishing
+      - run: npm install -g npm@latest
         working-directory: 'client'
       - name: publish client
-        if: "!github.event.release.prerelease"
-        run: npm publish --provenance --access public
+        if: (github.event_name == 'workflow_dispatch' && inputs.release_type == 'release') || (github.event_name == 'release' && !github.event.release.prerelease)
+        # `pnpm publish` rewrites `workspace:*` deps to real versions; `npm publish` would ship the literal protocol and break downstream installs.
+        # Strip the workspace-only `postinstall` so it doesn't run in consumers' node_modules.
+        run: |
+          npm pkg delete scripts.postinstall
+          pnpm publish --provenance --access public --no-git-checks
         working-directory: 'client'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: sync client-api version
+        run: npm run sync-version
+        working-directory: 'client/packages/api-client'
+      - name: build client-api
+        run: pnpm --filter @galaxyproject/galaxy-api-client run build
+        working-directory: 'client'
+      - name: publish client-api
+        if: (github.event_name == 'workflow_dispatch' && inputs.release_type == 'release') || (github.event_name == 'release' && !github.event.release.prerelease)
+        run: npm publish --provenance --access public
+        working-directory: 'client/packages/api-client'

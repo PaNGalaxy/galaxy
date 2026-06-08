@@ -14,10 +14,10 @@
 
                 <GButton
                     v-if="canImportHistory"
-                    v-b-modal:copy-history-modal
                     color="blue"
                     title="Import this history"
-                    data-description="import history button">
+                    data-description="import history button"
+                    @click="showCopyModal = true">
                     <FontAwesomeIcon :icon="faFileImport" />
                     Import this history
                 </GButton>
@@ -38,7 +38,7 @@
             @view-collection="onViewCollection" />
         <HistoryPanel v-else :history="history" filterable @view-collection="onViewCollection" />
 
-        <CopyModal id="copy-history-modal" :history="history" @ok="copyOkay" />
+        <CopyModal :history="history" :show-modal.sync="showCopyModal" @ok="copyOkay" />
     </div>
 </template>
 
@@ -51,10 +51,9 @@ import { isAnonymousUser } from "@/api";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useUserStore } from "@/stores/userStore";
 
-import CollectionPanel from "./CurrentCollection/CollectionPanel";
-import HistoryPanel from "./CurrentHistory/HistoryPanel";
-import CopyModal from "./Modals/CopyModal";
-
+import CollectionPanel from "./CurrentCollection/CollectionPanel.vue";
+import HistoryPanel from "./CurrentHistory/HistoryPanel.vue";
+import CopyModal from "./Modals/CopyModal.vue";
 import GButton from "@/components/BaseComponents/GButton.vue";
 import BreadcrumbHeading from "@/components/Common/BreadcrumbHeading.vue";
 import HistoryOptions from "@/components/History/HistoryOptions.vue";
@@ -80,6 +79,7 @@ export default {
             faFileImport,
             selectedCollections: [],
             copySuccess: false,
+            showCopyModal: false,
         };
     },
     computed: {

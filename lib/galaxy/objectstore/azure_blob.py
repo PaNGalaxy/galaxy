@@ -4,10 +4,7 @@ Object Store plugin for the Microsoft Azure Block Blob Storage system
 
 import logging
 import os
-from datetime import (
-    datetime,
-    timedelta,
-)
+from datetime import timedelta
 
 try:
     from azure.common import AzureHttpError
@@ -19,6 +16,7 @@ try:
 except ImportError:
     BlobServiceClient = None  # type: ignore[assignment,unused-ignore,misc]
 
+from galaxy.util import now
 from ._caching_base import CachingConcreteObjectStore
 from .caching import (
     enable_cache_monitor,
@@ -245,7 +243,8 @@ class AzureBlobObjectStore(CachingConcreteObjectStore):
             if not self._caching_allowed(rel_path):
                 return False
             else:
-                self._download_to_file(rel_path, local_destination)
+                with self._atomic_download(local_destination) as tmp:
+                    self._download_to_file(rel_path, tmp)
                 return True
         except AzureHttpError:
             log.exception("Problem downloading '%s' from Azure", rel_path)
@@ -266,12 +265,9 @@ class AzureBlobObjectStore(CachingConcreteObjectStore):
         for blob in blobs:
             key = blob.name
             local_file_path = os.path.join(cache_path, os.path.relpath(key, rel_path))
-
-            # Create directories if they don't exist
             os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-
-            # Download the file
-            self._download_to_file(key, local_file_path)
+            with self._atomic_download(local_file_path) as tmp:
+                self._download_to_file(key, tmp)
 
     def _push_string_to_path(self, rel_path: str, from_string: str) -> bool:
         try:
@@ -327,7 +323,7 @@ class AzureBlobObjectStore(CachingConcreteObjectStore):
                     container_name=self.container_name,
                     blob_name=rel_path,
                     permission=BlobSasPermissions(read=True),
-                    expiry=datetime.utcnow() + timedelta(hours=1),
+                    expiry=now() + timedelta(hours=1),
                 )
                 return f"{url}?{token}"
             except AzureHttpError:

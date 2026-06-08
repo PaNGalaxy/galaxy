@@ -9,7 +9,11 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Union
+from typing import (
+    Any,
+    TYPE_CHECKING,
+    Union,
+)
 
 import yaml
 
@@ -49,7 +53,11 @@ from galaxy.jobs.runners.util.pykube_util import (
     Service,
     service_object_dict,
 )
+from galaxy.util import now
 from galaxy.util.bytesize import ByteSize
+
+if TYPE_CHECKING:
+    from galaxy.jobs import MinimalJobWrapper
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +76,7 @@ class RetryableDeleteJobState(JobState):
         self.attempts: int = attempts
 
 
-class KubernetesJobRunner(AsynchronousJobRunner):
+class KubernetesJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
     """
     Job runner backed by a finite pool of worker threads. FIFO scheduling
     """
@@ -161,7 +169,7 @@ class KubernetesJobRunner(AsynchronousJobRunner):
         self.runner_params["k8s_volumes"].extend(get_volume_mounts_for("k8s_data_volume_claim")[0])
         self.runner_params["k8s_volumes"].extend(get_volume_mounts_for("k8s_working_volume_claim")[0])
 
-    def queue_job(self, job_wrapper):
+    def queue_job(self, job_wrapper: "MinimalJobWrapper") -> None:
         """Create a Galaxy job script and submit it to Kubernetes cluster"""
         # prepare the Galaxy job
         # We currently don't need to include_metadata or include_work_dir_outputs, as working directory is the same
@@ -169,9 +177,9 @@ class KubernetesJobRunner(AsynchronousJobRunner):
         log.debug(f"Starting queue_job for Galaxy job {job_wrapper.get_id_tag()}")
 
         ajs = AsynchronousJobState(
-            files_dir=job_wrapper.working_directory,
             job_wrapper=job_wrapper,
             job_destination=job_wrapper.job_destination,
+            files_dir=job_wrapper.working_directory,
         )
         # Kubernetes doesn't really produce a "job script", but job stream files needs to be present
         ajs.init_job_stream_files()
@@ -741,7 +749,7 @@ class KubernetesJobRunner(AsynchronousJobRunner):
                         if self.runner_params.get("k8s_unschedulable_walltime_limit"):
                             creation_time_str = k8s_job.obj["metadata"].get("creationTimestamp")
                             creation_time = datetime.strptime(creation_time_str, "%Y-%m-%dT%H:%M:%SZ")
-                            elapsed_seconds = (datetime.utcnow() - creation_time).total_seconds()
+                            elapsed_seconds = (now() - creation_time).total_seconds()
                             if elapsed_seconds > self.runner_params["k8s_unschedulable_walltime_limit"]:
                                 return self._handle_unschedulable_job(k8s_job, job_state)
                             else:
@@ -1043,7 +1051,7 @@ class KubernetesJobRunner(AsynchronousJobRunner):
                 e,
             )
 
-    def recover(self, gxy_job, job_wrapper):
+    def recover(self, gxy_job: model.Job, job_wrapper: "MinimalJobWrapper") -> None:
         """Recovers jobs stuck in the queued/running state when Galaxy started"""
         job_id = gxy_job.get_job_runner_external_id()
         log.debug(f"k8s trying to recover job: {job_id}")
@@ -1051,12 +1059,11 @@ class KubernetesJobRunner(AsynchronousJobRunner):
             self.put(job_wrapper)
             return
         ajs = AsynchronousJobState(
-            files_dir=job_wrapper.working_directory,
             job_wrapper=job_wrapper,
-            job_id=job_id,
             job_destination=job_wrapper.job_destination,
+            files_dir=job_wrapper.working_directory,
+            job_id=job_id,
         )
-        ajs.command_line = gxy_job.command_line
         if gxy_job.state in (model.Job.states.RUNNING, model.Job.states.STOPPED):
             log.debug(
                 "(%s/%s) is still in %s state, adding to the runner monitor queue",
@@ -1078,7 +1085,13 @@ class KubernetesJobRunner(AsynchronousJobRunner):
             self.monitor_queue.put(ajs)
 
     # added to make sure that stdout and stderr is captured for Kubernetes
-    def fail_job(self, job_state: "JobState", exception=False, message="Job failed", full_status=None):
+    def fail_job(
+        self,
+        job_state: "JobState",
+        exception: bool = False,
+        message: str = "Job failed",
+        full_status: Union[dict[str, Any], None] = None,
+    ) -> None:
         log.debug("PP Getting into fail_job in k8s runner")
         gxy_job = job_state.job_wrapper.get_job()
 
@@ -1129,7 +1142,7 @@ class KubernetesJobRunner(AsynchronousJobRunner):
         # run super method
         super().fail_job(job_state, exception, message, full_status)
 
-    def finish_job(self, job_state):
+    def finish_job(self, job_state: AsynchronousJobState) -> None:
         self._handle_metadata_externally(job_state.job_wrapper, resolve_requirements=True)
         super().finish_job(job_state)
         jobs = find_job_object_by_name(self._pykube_api, job_state.job_id, self.runner_params["k8s_namespace"])

@@ -4,10 +4,68 @@ History
 .. to_doc
 
 ---------
-25.1.dev0
+26.1.dev0
 ---------
 
 
+
+-------------------
+26.0.0 (2026-04-08)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Fix refresh time in object store caches by `@bgruening <https://github.com/bgruening>`_ in `#22279 <https://github.com/galaxyproject/galaxy/pull/22279>`_
+* Fix atomicity issues when pulling files into object store cache by `@mvdbeek <https://github.com/mvdbeek>`_ in `#22304 <https://github.com/galaxyproject/galaxy/pull/22304>`_
+* Harden API parameter validation by `@mvdbeek <https://github.com/mvdbeek>`_ in `#22351 <https://github.com/galaxyproject/galaxy/pull/22351>`_
+
+============
+Enhancements
+============
+
+* Add Playwright Backend Support to Galaxy Browser Automation Framework by `@jmchilton <https://github.com/jmchilton>`_ in `#21102 <https://github.com/galaxyproject/galaxy/pull/21102>`_
+* Apply 2026 black style by `@galaxybot <https://github.com/galaxybot>`_ in `#21618 <https://github.com/galaxyproject/galaxy/pull/21618>`_
+* Various fixes to file source template's validation system by `@davelopez <https://github.com/davelopez>`_ in `#21704 <https://github.com/galaxyproject/galaxy/pull/21704>`_
+
+-------------------
+25.1.2 (2026-03-09)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.1.1 (2026-02-03)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.1.0 (2025-12-12)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Change wording of the client side storage handling by `@bgruening <https://github.com/bgruening>`_ in `#19815 <https://github.com/galaxyproject/galaxy/pull/19815>`_
+
+============
+Enhancements
+============
+
+* Add short term storage expiration indicator to history items by `@davelopez <https://github.com/davelopez>`_ in `#20332 <https://github.com/galaxyproject/galaxy/pull/20332>`_
+* Type annotation fixes for mypy 1.16.0 by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20424 <https://github.com/galaxyproject/galaxy/pull/20424>`_
+* Clean up code from pyupgrade by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20642 <https://github.com/galaxyproject/galaxy/pull/20642>`_
+
+-------------------
+25.0.4 (2025-11-18)
+-------------------
+
+No recorded changes since last release
 
 -------------------
 25.0.3 (2025-09-23)

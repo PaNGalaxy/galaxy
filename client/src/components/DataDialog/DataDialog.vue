@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { faUpload } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import { BBadge } from "bootstrap-vue";
 import { onMounted, type Ref, ref, watch } from "vue";
 import Vue from "vue";
 
+import type { DataOption } from "@/components/Form/Elements/FormData/types";
 import type { SelectionItem } from "@/components/SelectionDialog/selectionTypes";
 import { useGlobalUploadModal } from "@/composables/globalUploadModal";
+import { useUploadMethodModal } from "@/composables/upload/useUploadMethodModal";
+import { useUrlTracker } from "@/composables/urlTracker";
 import { getAppRoot } from "@/onload/loadConfig";
 import { errorMessageAsString } from "@/utils/simple-error";
 
 import { Model } from "./model";
 import { Services } from "./services";
-import { UrlTracker } from "./utilities";
 
 import GButton from "@/components/BaseComponents/GButton.vue";
 import SelectionDialog from "@/components/SelectionDialog/SelectionDialog.vue";
@@ -19,15 +23,16 @@ type Record = SelectionItem;
 
 interface Props {
     allowUpload?: boolean;
-    callback?: (results: Array<Record>) => void;
+    callback?: (results: Record[] | DataOption[]) => void;
     filterOkState?: boolean;
     filterByTypeIds?: string[];
     format?: string;
     library?: boolean;
-    modalStatic?: boolean;
     multiple?: boolean;
     title?: string;
     history: string;
+    /** Optional formats to constrain the upload modal */
+    uploadModalFormats?: string[];
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -37,9 +42,9 @@ const props = withDefaults(defineProps<Props>(), {
     filterByTypeIds: undefined,
     format: "download",
     library: true,
-    modalStatic: false,
     multiple: false,
     title: "",
+    uploadModalFormats: undefined,
 });
 
 const emit = defineEmits<{
@@ -49,6 +54,7 @@ const emit = defineEmits<{
 }>();
 
 const { openGlobalUploadModal } = useGlobalUploadModal();
+const { openUploadModal } = useUploadMethodModal();
 
 const errorMessage = ref("");
 const filter = ref("");
@@ -60,7 +66,7 @@ const undoShow = ref(false);
 
 const services = new Services();
 const model = new Model({ multiple: props.multiple, format: props.format });
-let urlTracker = new UrlTracker(getHistoryUrl());
+const urlTracker = useUrlTracker<string>({ root: getHistoryUrl() });
 
 /** Specifies data columns to be shown in the dialog's table */
 const fields = [
@@ -126,7 +132,7 @@ function onClick(record: Record) {
 function onOk() {
     const results = model.finalize();
     modalShow.value = false;
-    props.callback(results);
+    props.callback?.(results);
     emit("onOk", results);
 }
 
@@ -136,7 +142,7 @@ function onOpen(record: Record) {
 }
 
 /** Called when user decides to upload new data */
-function onUpload() {
+function onLegacyUpload() {
     const propsData = {
         multiple: props.multiple,
         format: props.format,
@@ -149,16 +155,34 @@ function onUpload() {
     emit("onUpload");
 }
 
+async function onBetaUpload() {
+    const result = await openUploadModal({
+        formats: props.uploadModalFormats,
+        multiple: props.multiple,
+        hideTips: true,
+    });
+    modalShow.value = false;
+    if (!result.cancelled) {
+        const uploadedOptions = result.toDataOptions();
+        props.callback?.(uploadedOptions);
+        emit("onOk", uploadedOptions);
+    }
+    emit("onUpload");
+}
+
 /** Performs server request to retrieve data records **/
-function load(url: string = "") {
-    url = urlTracker.getUrl(url);
+function load(url?: string) {
+    if (url) {
+        urlTracker.forward(url);
+    }
+    const currentUrl = urlTracker.current.value;
     filter.value = "";
     optionsShow.value = false;
-    undoShow.value = !urlTracker.atRoot();
+    undoShow.value = !urlTracker.isAtRoot.value;
     services
-        .get(url)
+        .get(currentUrl)
         .then((incoming) => {
-            if (props.library && urlTracker.atRoot()) {
+            if (props.library && urlTracker.isAtRoot.value) {
                 incoming.unshift({
                     label: "Data Libraries",
                     url: `${getAppRoot()}api/libraries`,
@@ -182,7 +206,7 @@ onMounted(() => {
 watch(
     () => history,
     () => {
-        urlTracker = new UrlTracker(getHistoryUrl());
+        urlTracker.reset(getHistoryUrl());
         load();
     },
 );
@@ -205,9 +229,13 @@ watch(
         @onOpen="onOpen"
         @onUndo="load()">
         <template v-slot:buttons>
-            <GButton v-if="allowUpload" size="small" @click="onUpload">
-                <Icon :icon="faUpload" />
+            <GButton v-if="allowUpload" size="small" class="mr-1" @click="onLegacyUpload">
+                <FontAwesomeIcon :icon="faUpload" />
                 Upload
+            </GButton>
+            <GButton v-if="allowUpload" size="small" title="Try our new upload experience" @click="onBetaUpload">
+                <FontAwesomeIcon :icon="faUpload" />
+                <span v-localize>New upload<BBadge variant="warning" class="ml-1">Beta</BBadge></span>
             </GButton>
         </template>
     </SelectionDialog>

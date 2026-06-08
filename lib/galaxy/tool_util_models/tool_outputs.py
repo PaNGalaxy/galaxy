@@ -6,13 +6,18 @@ code where actual tool objects aren't created.
 """
 
 from typing import (
+    Any,
+    Dict,
     Generic,
     List,
     Optional,
     Union,
 )
 
-from pydantic import Field
+from pydantic import (
+    Field,
+    model_validator,
+)
 from typing_extensions import (
     Annotated,
     Literal,
@@ -22,7 +27,7 @@ from typing_extensions import (
 from ._base import ToolSourceBaseModel
 
 AnyT = TypeVar("AnyT")
-NotRequired = Annotated[Optional[AnyT], Field(None)]
+NotRequired = Optional[AnyT]
 IncomingNotRequiredBoolT = TypeVar("IncomingNotRequiredBoolT")
 IncomingNotRequiredStringT = TypeVar("IncomingNotRequiredStringT")
 
@@ -106,15 +111,29 @@ class IncomingToolOutputDataset(
         NotRequired[bool],
         NotRequired[str],
     ]
-): ...
+):
+    name: Annotated[
+        Optional[str], Field(description="Parameter name. Used when referencing parameter in workflows.")
+    ] = None
+    hidden: Annotated[Optional[bool], Field(description="If true, the output will not be shown in the history.")] = None
+    format: Annotated[Optional[str], Field(description="The short name for the output datatype.")] = None
 
 
-class ToolOutputCollectionStructure(ToolSourceBaseModel):
-    collection_type: Optional[str] = None
-    collection_type_source: Optional[str] = None
-    collection_type_from_rules: Optional[str] = None
-    structured_like: Optional[str] = None
-    discover_datasets: Optional[List[DatasetCollectionDescriptionT]] = None
+def lift_legacy_collection_structure(output_dict: Dict[str, Any]) -> Dict[str, Any]:
+    # Older DynamicTool.value rows nest collection fields under ``structure:``;
+    # the current model expects them flat on the output. Inline them so the
+    # parser and pydantic model both see the same flat form. Top-level keys
+    # win, but only when they carry a value — an explicit top-level ``None``
+    # mustn't shadow a real nested value, or a partial-merge writer could
+    # silently drop fields. Returns input untouched when there's no wrapper.
+    structure = output_dict.get("structure")
+    if not isinstance(structure, dict):
+        return output_dict
+    lifted = {k: v for k, v in output_dict.items() if k != "structure"}
+    for key, value in structure.items():
+        if lifted.get(key) is None:
+            lifted[key] = value
+    return lifted
 
 
 class GenericToolOutputCollection(
@@ -122,13 +141,28 @@ class GenericToolOutputCollection(
     Generic[IncomingNotRequiredBoolT, IncomingNotRequiredStringT],
 ):
     type: Literal["collection"]
-    structure: ToolOutputCollectionStructure
+    collection_type: Optional[str] = None
+    collection_type_source: Optional[str] = None
+    collection_type_from_rules: Optional[str] = None
+    structured_like: Optional[str] = None
+    discover_datasets: Optional[List[DatasetCollectionDescriptionT]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_legacy_structure(cls, values):
+        if isinstance(values, dict):
+            return lift_legacy_collection_structure(values)
+        return values
 
 
 class ToolOutputCollection(GenericToolOutputCollection[bool, str]): ...
 
 
-class IncomingToolOutputCollection(GenericToolOutputCollection[NotRequired[bool], NotRequired[str]]): ...
+class IncomingToolOutputCollection(GenericToolOutputCollection[NotRequired[bool], NotRequired[str]]):
+    name: Annotated[
+        Optional[str], Field(description="Parameter name. Used when referencing parameter in workflows.")
+    ] = None
+    hidden: Annotated[Optional[bool], Field(description="If true, the output will not be shown in the history.")] = None
 
 
 class ToolOutputSimple(GenericToolOutputBaseModel):

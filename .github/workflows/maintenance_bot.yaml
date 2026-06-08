@@ -12,11 +12,11 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     env:
-      MILESTONE_NUMBER: 32
+      MILESTONE_NUMBER: 34
     steps:
       - name: Get latest pull request labels
         id: get_pr_labels
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const response = await github.rest.issues.listLabelsOnIssue({
@@ -36,7 +36,7 @@ jobs:
           ! contains(github.event.pull_request.labels.*.name, 'status/WIP') &&
           ! contains(github.event.pull_request.title, 'WIP') &&
           ! github.event.pull_request.draft
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             github.rest.issues.update({

@@ -4,10 +4,101 @@ History
 .. to_doc
 
 ---------
-25.1.dev0
+26.1.dev0
 ---------
 
 
+
+-------------------
+26.0.0 (2026-04-08)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Various fixes around ascp file source by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21372 <https://github.com/galaxyproject/galaxy/pull/21372>`_
+* Better error message for unencoded/unresolvable filesource uri by `@dannon <https://github.com/dannon>`_ in `#21562 <https://github.com/galaxyproject/galaxy/pull/21562>`_
+* Fix OMERO file source download multi channel TIFF by `@davelopez <https://github.com/davelopez>`_ in `#21856 <https://github.com/galaxyproject/galaxy/pull/21856>`_
+* Fix ascp download retries by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21857 <https://github.com/galaxyproject/galaxy/pull/21857>`_
+* Fixes some more optional fields in templates by `@davelopez <https://github.com/davelopez>`_ in `#21891 <https://github.com/galaxyproject/galaxy/pull/21891>`_
+* Fix Pydantic UnsupportedFieldAttributeWarning for Field defaults in Annotated by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21923 <https://github.com/galaxyproject/galaxy/pull/21923>`_
+* Fix OMERO temp directory handling by `@davelopez <https://github.com/davelopez>`_ in `#22262 <https://github.com/galaxyproject/galaxy/pull/22262>`_
+* Harden API parameter validation by `@mvdbeek <https://github.com/mvdbeek>`_ in `#22351 <https://github.com/galaxyproject/galaxy/pull/22351>`_
+
+============
+Enhancements
+============
+
+* Add DRS compact identifier support by `@dannon <https://github.com/dannon>`_ in `#20410 <https://github.com/galaxyproject/galaxy/pull/20410>`_
+* Add service account support for Google Cloud Storage client initialization by `@dannon <https://github.com/dannon>`_ in `#21027 <https://github.com/galaxyproject/galaxy/pull/21027>`_
+* Update Python dependencies by `@galaxybot <https://github.com/galaxybot>`_ in `#21043 <https://github.com/galaxyproject/galaxy/pull/21043>`_
+* Add Custom Validation for User-Configured Templates by `@davelopez <https://github.com/davelopez>`_ in `#21155 <https://github.com/galaxyproject/galaxy/pull/21155>`_
+* Ascp plugin by `@d-callan <https://github.com/d-callan>`_ in `#21357 <https://github.com/galaxyproject/galaxy/pull/21357>`_
+* Add OMERO File Source Plugin by `@davelopez <https://github.com/davelopez>`_ in `#21367 <https://github.com/galaxyproject/galaxy/pull/21367>`_
+* Add new Azure Flat object store file source by `@guerler <https://github.com/guerler>`_ in `#21398 <https://github.com/galaxyproject/galaxy/pull/21398>`_
+* Add AI Agent Framework and ChatGXY 2.0 by `@dannon <https://github.com/dannon>`_ in `#21434 <https://github.com/galaxyproject/galaxy/pull/21434>`_
+* Clean up code with pyupgrade by `@nsoranzo <https://github.com/nsoranzo>`_ in `#21540 <https://github.com/galaxyproject/galaxy/pull/21540>`_
+* Drop support for Python 3.9 by `@nsoranzo <https://github.com/nsoranzo>`_ in `#21583 <https://github.com/galaxyproject/galaxy/pull/21583>`_
+* Switch Google Cloud Storage file source from fs-gcsfs to gcsfs (fsspec) by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21590 <https://github.com/galaxyproject/galaxy/pull/21590>`_
+* Unify extensions of file source templates by `@bernt-matthias <https://github.com/bernt-matthias>`_ in `#21594 <https://github.com/galaxyproject/galaxy/pull/21594>`_
+* Various fixes to file source template's validation system by `@davelopez <https://github.com/davelopez>`_ in `#21704 <https://github.com/galaxyproject/galaxy/pull/21704>`_
+* Adds ImageJ metadata support to TIFF export by `@davelopez <https://github.com/davelopez>`_ in `#21882 <https://github.com/galaxyproject/galaxy/pull/21882>`_
+* Use mock test server when tests don't target external galaxy server by `@mvdbeek <https://github.com/mvdbeek>`_ in `#22103 <https://github.com/galaxyproject/galaxy/pull/22103>`_
+
+-------------------
+25.1.2 (2026-03-09)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.1.1 (2026-02-03)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Add missing dependencies to ``galaxy-files`` package by `@nsoranzo <https://github.com/nsoranzo>`_ in `#21518 <https://github.com/galaxyproject/galaxy/pull/21518>`_
+* Supports Dataverse file access via both persistent and database IDs by `@davelopez <https://github.com/davelopez>`_ in `#21569 <https://github.com/galaxyproject/galaxy/pull/21569>`_
+* Harden Dataverse integration by `@davelopez <https://github.com/davelopez>`_ in `#21624 <https://github.com/galaxyproject/galaxy/pull/21624>`_
+
+-------------------
+25.1.0 (2025-12-12)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Change wording of the client side storage handling by `@bgruening <https://github.com/bgruening>`_ in `#19815 <https://github.com/galaxyproject/galaxy/pull/19815>`_
+* Fix GCS file source to handle virtual directories without marker objects by `@dannon <https://github.com/dannon>`_ in `#21051 <https://github.com/galaxyproject/galaxy/pull/21051>`_
+* Fix Huggingface timestamp parsing when `last_commit` is missing by `@davelopez <https://github.com/davelopez>`_ in `#21072 <https://github.com/galaxyproject/galaxy/pull/21072>`_
+* Fixes download for restricted Zenodo records by `@davelopez <https://github.com/davelopez>`_ in `#21274 <https://github.com/galaxyproject/galaxy/pull/21274>`_
+
+============
+Enhancements
+============
+
+* Type annotation fixes for mypy 1.16.0 by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20424 <https://github.com/galaxyproject/galaxy/pull/20424>`_
+* Add Dataverse template by `@davelopez <https://github.com/davelopez>`_ in `#20551 <https://github.com/galaxyproject/galaxy/pull/20551>`_
+* Clean up code from pyupgrade by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20642 <https://github.com/galaxyproject/galaxy/pull/20642>`_
+* Add `fsspec` base implementation for File Source plugins by `@davelopez <https://github.com/davelopez>`_ in `#20698 <https://github.com/galaxyproject/galaxy/pull/20698>`_
+* Refactor Files Sources Framework for stronger typing using pydantic models by `@davelopez <https://github.com/davelopez>`_ in `#20728 <https://github.com/galaxyproject/galaxy/pull/20728>`_
+* Adapt S3 file source to fsspec by `@davelopez <https://github.com/davelopez>`_ in `#20794 <https://github.com/galaxyproject/galaxy/pull/20794>`_
+* Fix fsspec fs path handling by `@davelopez <https://github.com/davelopez>`_ in `#20799 <https://github.com/galaxyproject/galaxy/pull/20799>`_
+* Add Hugging Face 🤗 file source and user-defined template by `@davelopez <https://github.com/davelopez>`_ in `#20805 <https://github.com/galaxyproject/galaxy/pull/20805>`_
+* Support remote file source hashes by `@davelopez <https://github.com/davelopez>`_ in `#20853 <https://github.com/galaxyproject/galaxy/pull/20853>`_
+
+-------------------
+25.0.4 (2025-11-18)
+-------------------
+
+No recorded changes since last release
 
 -------------------
 25.0.3 (2025-09-23)

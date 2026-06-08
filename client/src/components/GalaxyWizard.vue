@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faThumbsDown, faThumbsUp } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BSkeleton } from "bootstrap-vue";
@@ -12,7 +11,6 @@ import { errorMessageAsString } from "@/utils/simple-error";
 import GButton from "./BaseComponents/GButton.vue";
 import LoadingSpan from "./LoadingSpan.vue";
 
-library.add(faThumbsUp, faThumbsDown);
 interface Props {
     context?: string;
     jobId: string;
@@ -45,13 +43,14 @@ async function submitQuery() {
         return;
     }
 
-    const { data, error } = await GalaxyApi().POST("/api/chat", {
-        params: {
-            query: { job_id: props.jobId },
-        },
+    // Use direct error analysis endpoint for better performance and clarity
+    const { data, error } = await GalaxyApi().POST("/api/ai/agents/error-analysis", {
         body: {
             query: query.value,
-            context: props.context,
+            job_id: props.jobId,
+            error_details: {
+                context_type: props.context,
+            },
         },
     });
 
@@ -59,21 +58,16 @@ async function submitQuery() {
         errorMessage.value = errorMessageAsString(error, "Failed to get response from the server.");
         hasError.value = true;
     } else {
-        if (data.response) {
-            queryResponse.value = data.response;
+        // Direct endpoint returns agent response format
+        if (data.content) {
+            queryResponse.value = data.content;
         }
 
-        // If there's an error code or message, set the error flag and message
-        if (data.error_code || data.error_message) {
+        // Check for errors in metadata
+        const metadataError = data.metadata?.error as string | undefined;
+        if (metadataError) {
             hasError.value = true;
-
-            if (data.error_code && data.error_message) {
-                errorMessage.value = `${data.error_message} (Error ${data.error_code})`;
-            } else if (data.error_message) {
-                errorMessage.value = data.error_message;
-            } else if (data.error_code) {
-                errorMessage.value = `Error ${data.error_code}`;
-            }
+            errorMessage.value = metadataError;
         }
     }
 
@@ -97,20 +91,29 @@ async function sendFeedback(value: "up" | "down") {
 </script>
 
 <template>
-    <div>
-        <GButton v-if="!queryResponse" class="w-100" variant="info" :disabled="busy" @click="submitQuery">
+    <div data-description="galaxy wizard">
+        <GButton
+            v-if="!queryResponse"
+            class="w-100"
+            variant="info"
+            :disabled="busy"
+            data-description="galaxy wizard analyze button"
+            @click="submitQuery">
             <span v-if="!busy"> Let our Help Wizard Figure it out! </span>
             <LoadingSpan v-else message="Thinking" />
         </GButton>
         <div :class="props.view == 'wizard' && 'mt-4'">
-            <div v-if="busy">
+            <div v-if="busy" data-description="galaxy wizard loading">
                 <BSkeleton animation="wave" width="85%" />
                 <BSkeleton animation="wave" width="55%" />
                 <BSkeleton animation="wave" width="70%" />
             </div>
             <div v-else>
                 <!-- eslint-disable-next-line vue/no-v-html -->
-                <div class="chatResponse" v-html="renderMarkdown(queryResponse)" />
+                <div
+                    class="chatResponse"
+                    data-description="galaxy wizard response"
+                    v-html="renderMarkdown(queryResponse)" />
 
                 <template v-if="errorMessage">
                     <hr class="error-divider" />
@@ -118,13 +121,17 @@ async function sendFeedback(value: "up" | "down") {
                 </template>
             </div>
 
-            <div v-if="queryResponse && !hasError" class="feedback-buttons mt-2">
+            <div
+                v-if="queryResponse && !hasError"
+                class="feedback-buttons mt-2"
+                data-description="galaxy wizard feedback">
                 <hr class="w-100" />
                 <h4>Was this answer helpful?</h4>
                 <GButton
                     color="green"
                     :disabled="feedback !== null"
                     :class="{ submitted: feedback === 'up' }"
+                    data-description="galaxy wizard feedback up"
                     @click="sendFeedback('up')">
                     <FontAwesomeIcon :icon="faThumbsUp" fixed-width />
                 </GButton>
@@ -132,11 +139,12 @@ async function sendFeedback(value: "up" | "down") {
                     color="red"
                     :disabled="feedback !== null"
                     :class="{ submitted: feedback === 'down' }"
+                    data-description="galaxy wizard feedback down"
                     @click="sendFeedback('down')">
                     <FontAwesomeIcon :icon="faThumbsDown" fixed-width />
                 </GButton>
                 <i v-if="!feedback">This feedback helps us improve our responses.</i>
-                <i v-else>Thank you for your feedback!</i>
+                <i v-else data-description="galaxy wizard feedback ack">Thank you for your feedback!</i>
             </div>
         </div>
     </div>

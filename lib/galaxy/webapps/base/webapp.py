@@ -200,7 +200,7 @@ class WebApplication(base.WebApplication):
                 directories=paths, module_directory=galaxy_app.config.template_cache_path, collection_size=500
             )
 
-    def handle_controller_exception(self, e, trans, method, **kwargs):
+    def handle_controller_exception(self, e, trans, method, kwargs):
         if not isinstance(e, HTTPException):
             # We're still logging too much here but at least it's not logging webob.exc.HTTPFound and friends
             log.debug(f"Encountered exception in controller method: {method}", exc_info=True)
@@ -277,6 +277,10 @@ class WebApplication(base.WebApplication):
         return controller
 
 
+def _is_embed_request(path: str, query_string: str) -> bool:
+    return path.startswith("/published/") and "embed=true" in query_string
+
+
 def config_allows_origin(origin_raw, config):
     # boil origin header down to hostname
     origin = urlparse(origin_raw).hostname
@@ -323,7 +327,8 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
         config = self.app.config
         self.debug = asbool(config.get("debug", False))
         if x_frame_options := getattr(config, "x_frame_options", None):
-            self.response.headers["X-Frame-Options"] = x_frame_options
+            if not _is_embed_request(self.request.path_info, self.environ.get("QUERY_STRING", "")):
+                self.response.headers["X-Frame-Options"] = x_frame_options
         # Flag indicating whether we are in workflow building mode (means
         # that the current history should not be used for parameter values
         # and such).
@@ -352,27 +357,15 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             assert session_cookie
             self._ensure_valid_session(session_cookie)
 
-        if self.galaxy_session:
-            success = True
-            if hasattr(self.app, "authnz_manager") and self.app.authnz_manager:
-                success = self.app.authnz_manager.refresh_expiring_oidc_tokens(self)
-            if not success:
-                self.handle_user_logout()
-                if self.environ.get("is_api_request", False):
-                    self.response.status = 401
-                    self.user = None
-                    self.galaxy_session = None
-                else:
-                    self.response.send_redirect(
-                        url_for(
-                            controller="login",
-                            action="start",
-                            message="You have been logged from your identity provider.  Please log in again to continue using Galaxy.",
-                            status="info",
-                            use_panels=True,
-                        )
-                    )
+        if hasattr(self.app, "authnz_manager") and self.app.authnz_manager:
+            # Check for expiring tokens and refresh them. If configured (at the individual provider
+            # level), require a reauthentication on failed refresh.
+            reauth_provider = self.app.authnz_manager.refresh_expiring_oidc_tokens(self)
+            if reauth_provider:
+                self.handle_user_reauthentication(reauth_provider)
                 return
+
+        if self.galaxy_session:
             # When we've authenticated by session, we have to check the
             # following.
             # Prevent deleted users from accessing Galaxy
@@ -409,11 +402,9 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
                     else:
                         self.response.send_redirect(
                             url_for(
-                                controller="root",
-                                action="login",
-                                message="You have been logged out due to inactivity.  Please log in again to continue using Galaxy.",
+                                "/login/start",
+                                message="You have been logged out due to inactivity. Please log in again to continue using Galaxy.",
                                 status="info",
-                                use_panels=True,
                             )
                         )
                 else:
@@ -645,7 +636,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
                     galaxy_session_requires_flush = True
                 elif (
                     remote_user_email
-                    and galaxy_session.user.email != remote_user_email
+                    and galaxy_session.user.email.lower() != remote_user_email.lower()
                     and (
                         not self.app.config.allow_user_impersonation
                         or remote_user_email not in self.app.config.admin_users_list
@@ -714,7 +705,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             allowed_paths = [
                 # client app route
                 # TODO: might be better as '/:username/login', '/:username/logout'
-                url_for(controller="root", action="login"),
+                url_for("/login"),
                 url_for(controller="login", action="start"),
                 # mako app routes
                 url_for(controller="user", action="login"),
@@ -727,17 +718,18 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
                 url_for(controller="user", action="index"),
                 url_for(controller="user", action="manage_user_info"),
                 url_for(controller="user", action="set_default_permissions"),
+                url_for(controller="api", action="webhooks"),
             ]
             # append the welcome url to allowed paths if we'll show it at the login screen
             if self.app.config.show_welcome_with_login:
-                allowed_paths.append(url_for(controller="root", action="welcome"))
+                allowed_paths.append(url_for("/welcome"))
 
             # prevent redirect when UCSC server attempts to get dataset contents as 'anon' user
-            display_as = url_for(controller="root", action="display_as")
+            display_as = url_for("/display_as")
             if self.app.datatypes_registry.get_display_sites("ucsc") and self.request.path == display_as:
                 try:
                     host = socket.gethostbyaddr(self.environ["REMOTE_ADDR"])[0]
-                except (OSError, socket.herror, socket.gaierror, socket.timeout):
+                except (OSError, socket.herror, socket.gaierror):
                     host = None
                 if host in UCSC_SERVERS:
                     return
@@ -761,7 +753,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
                 return
             # redirect to root if the path is not in the list above
             if self.request.path not in allowed_paths:
-                login_url = url_for(controller="root", action="login", redirect=self.request.path)
+                login_url = url_for("/login", redirect=self.request.path)
                 self.response.send_redirect(login_url)
 
     def __create_new_session(self, prev_galaxy_session=None, user_for_new_session=None):
@@ -905,6 +897,21 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             self.__update_session_cookie(name="galaxysession")
         elif self.webapp.name == "tool_shed":
             self.__update_session_cookie(name="galaxycommunitysession")
+
+    def handle_user_reauthentication(self, reauth_provider: str) -> None:
+        """
+        Handle user being required to log in again after failed OIDC refresh
+        """
+        log.info("OIDC refresh failed terminally for provider `%s`, forcing re-login", reauth_provider)
+        if self.galaxy_session:
+            self.handle_user_logout()
+        if self.environ.get("is_api_request", False):
+            self.response.status = 401
+            self.error_message = "Authentication session expired. Please log in again."
+            self.user = None
+            self.galaxy_session = None
+        else:
+            self.response.send_redirect(url_for(f"/authnz/{reauth_provider}/login", redirect="true", next="/"))
 
     def get_galaxy_session(self):
         """
@@ -1179,17 +1186,23 @@ def build_url_map(app, global_conf, **local_conf):
     # Define static mappings from config
     static_dir = get_static_from_config("static_dir", "static/")
     static_dir_bare = static_dir.directory.rstrip("/")
-    static_dist_dir = get_static_from_config("static_dist_dir", default_static_dist_dir or f"{static_dir_bare}/dist/")
+    static_dist_dir = get_static_from_config(
+        "static_dist_dir", default_static_dist_dir or os.path.join(static_dir_bare, "dist/")
+    )
     urlmap["/static"] = static_dir
     urlmap["/static/dist"] = static_dist_dir
-    urlmap["/images"] = get_static_from_config("static_images_dir", f"{static_dir_bare}/images")
-    urlmap["/static/scripts"] = get_static_from_config("static_scripts_dir", f"{static_dir_bare}/scripts/")
+    urlmap["/images"] = get_static_from_config("static_images_dir", os.path.join(static_dir_bare, "images"))
+    urlmap["/static/scripts"] = get_static_from_config("static_scripts_dir", os.path.join(static_dir_bare, "scripts/"))
 
     urlmap["/static/welcome.html"] = get_static_from_config(
-        "static_welcome_html", f"{static_dir_bare}/welcome.html", sample=default_url_path("static/welcome.sample.html")
+        "static_welcome_html",
+        os.path.join(static_dir_bare, "welcome.html"),
+        sample=default_url_path("static/welcome.sample.html"),
     )
     urlmap["/favicon.ico"] = get_static_from_config(
-        "static_favicon_dir", f"{static_dir_bare}/favicon.ico", sample=default_url_path("static/favicon.ico")
+        "static_favicon_dir",
+        os.path.join(static_dir_bare, "favicon.ico"),
+        sample=default_url_path("static/favicon.ico"),
     )
     urlmap["/robots.txt"] = get_static_from_config(
         "static_robots_txt", f"{static_dir_bare}/robots.txt", sample=default_url_path("static/robots.txt")

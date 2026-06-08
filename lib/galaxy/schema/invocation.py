@@ -4,6 +4,7 @@ from typing import (
     Annotated,
     Any,
     Generic,
+    Literal,
     Optional,
     Union,
 )
@@ -17,7 +18,6 @@ from pydantic import (
     UUID4,
 )
 from typing_extensions import (
-    Literal,
     TypeAliasType,
 )
 
@@ -89,6 +89,7 @@ class FailureReason(str, Enum):
     when_not_boolean = "when_not_boolean"
     unexpected_failure = "unexpected_failure"
     workflow_parameter_invalid = "workflow_parameter_invalid"
+    step_input_deleted = "step_input_deleted"
 
 
 # The reasons below are attached to the invocation and user-actionable.
@@ -103,6 +104,7 @@ FAILURE_REASONS_EXPECTED = (
     FailureReason.job_failed,
     FailureReason.output_not_found,
     FailureReason.when_not_boolean,
+    FailureReason.step_input_deleted,
 )
 
 
@@ -116,6 +118,10 @@ class CancelReason(str, Enum):
 
 class InvocationMessageBase(GenericModel):
     reason: Union[CancelReason, FailureReason, WarningReason]
+    workflow_step_index_path: Optional[list[int]] = Field(
+        None,
+        description="Path of workflow step IDs from parent workflow through subworkflows (excludes the failing step itself).",
+    )
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
@@ -232,6 +238,21 @@ class GenericInvocationFailureWorkflowParameterInvalid(InvocationFailureMessageB
     details: str = Field(..., description="Message raised by validator")
 
 
+class GenericInvocationFailureStepInputDeleted(InvocationFailureMessageBase[DatabaseIdT], Generic[DatabaseIdT]):
+    reason: Literal[FailureReason.step_input_deleted]
+    hda_id: Optional[DatabaseIdT] = Field(
+        None,
+        title="HistoryDatasetAssociation ID",
+        description="HistoryDatasetAssociation ID of the deleted dataset, if applicable.",
+    )
+    hdca_id: Optional[DatabaseIdT] = Field(
+        None,
+        title="HistoryDatasetCollectionAssociation ID",
+        description="HistoryDatasetCollectionAssociation ID of the deleted collection, if applicable.",
+    )
+    details: str = Field(..., description="Details about which input referenced a deleted dataset.")
+
+
 InvocationCancellationReviewFailed = GenericInvocationCancellationReviewFailed[int]
 InvocationCancellationHistoryDeleted = GenericInvocationCancellationHistoryDeleted[int]
 InvocationCancellationUserRequest = GenericInvocationCancellationUserRequest[int]
@@ -244,6 +265,7 @@ InvocationFailureWhenNotBoolean = GenericInvocationFailureWhenNotBoolean[int]
 InvocationUnexpectedFailure = GenericInvocationUnexpectedFailure[int]
 InvocationWarningWorkflowOutputNotFound = GenericInvocationEvaluationWarningWorkflowOutputNotFound[int]
 InvocationFailureWorkflowParameterInvalid = GenericInvocationFailureWorkflowParameterInvalid[int]
+InvocationFailureStepInputDeleted = GenericInvocationFailureStepInputDeleted[int]
 
 InvocationMessageUnion = Union[
     InvocationCancellationReviewFailed,
@@ -258,6 +280,7 @@ InvocationMessageUnion = Union[
     InvocationUnexpectedFailure,
     InvocationWarningWorkflowOutputNotFound,
     InvocationFailureWorkflowParameterInvalid,
+    InvocationFailureStepInputDeleted,
 ]
 
 InvocationCancellationReviewFailedResponseModel = GenericInvocationCancellationReviewFailed[EncodedDatabaseIdField]
@@ -278,6 +301,7 @@ InvocationWarningWorkflowOutputNotFoundResponseModel = GenericInvocationEvaluati
 InvocationFailureWorkflowParameterInvalidResponseModel = GenericInvocationFailureWorkflowParameterInvalid[
     EncodedDatabaseIdField
 ]
+InvocationFailureStepInputDeletedResponseModel = GenericInvocationFailureStepInputDeleted[EncodedDatabaseIdField]
 
 _InvocationMessageResponseUnion = Annotated[
     Union[
@@ -293,6 +317,7 @@ _InvocationMessageResponseUnion = Annotated[
         InvocationUnexpectedFailureResponseModel,
         InvocationWarningWorkflowOutputNotFoundResponseModel,
         InvocationFailureWorkflowParameterInvalidResponseModel,
+        InvocationFailureStepInputDeletedResponseModel,
     ],
     Field(discriminator="reason"),
 ]
@@ -313,6 +338,7 @@ class InvocationState(str, Enum):
     CANCELLED = "cancelled"
     CANCELLING = "cancelling"  # invocation scheduler will cancel job in next iteration.
     FAILED = "failed"
+    COMPLETED = "completed"  # All jobs have reached terminal states (ok, error, deleted, skipped, paused, stopped)
 
 
 class InvocationStepState(str, Enum):
@@ -464,7 +490,7 @@ class InvocationReport(Model, WithModelClass):
     generate_time: Optional[str] = schema.GenerateTimeField
     generate_version: Optional[str] = schema.GenerateVersionField
 
-    errors: Optional[dict[str, Any]] = Field(
+    errors: Optional[list[dict[str, Any]]] = Field(
         default=None,
         title="Errors",
         description="Errors associated with the invocation.",
@@ -596,6 +622,11 @@ class WorkflowInvocationCollectionView(Model, WithModelClass):
         title="Landing UUID",
         description="The UUID of the workflow landing request associated with this invocation.",
     )
+    on_complete: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        title="On Complete Actions",
+        description="Actions to be executed when the workflow invocation completes.",
+    )
     model_class: INVOCATION_MODEL_CLASS = ModelClassField(INVOCATION_MODEL_CLASS)
 
 
@@ -708,6 +739,26 @@ class InvocationStepJobsResponseCollectionJobsModel(InvocationJobsSummaryBaseMod
         default=...,
         title="ID",
         description="The encoded ID of the collection job.",
+    )
+
+
+class WorkflowInvocationCompletionResponse(Model):
+    """Response model for workflow invocation completion details."""
+
+    completion_time: datetime = Field(
+        ...,
+        title="Completion Time",
+        description="The time when the workflow invocation completed.",
+    )
+    job_state_summary: dict[str, int] = Field(
+        ...,
+        title="Job State Summary",
+        description="Summary of job states, mapping state names to counts.",
+    )
+    hooks_executed: list[str] = Field(
+        default_factory=list,
+        title="Hooks Executed",
+        description="List of completion hook names that have been executed.",
     )
 
 

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
-import { faQuestion } from "@fortawesome/free-solid-svg-icons";
+import { faExclamation, faQuestion } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import type { Placement } from "@popperjs/core";
 import { computed } from "vue";
 import { useRouter } from "vue-router/composables";
 
+import { getGalaxyInstance } from "@/app";
 import { useActivityStore } from "@/stores/activityStore";
 import type { ActivityVariant } from "@/stores/activityStoreTypes";
 import localize from "@/utils/localization";
@@ -26,7 +27,8 @@ export interface Props {
     activityBarId: string;
     title?: string;
     icon?: IconDefinition;
-    indicator?: number;
+    indicator?: number | boolean;
+    indicatorVariant?: ActivityVariant;
     isActive?: boolean;
     tooltip?: string;
     tooltipPlacement?: Placement;
@@ -35,12 +37,14 @@ export interface Props {
     options?: Option[];
     to?: string;
     variant?: ActivityVariant;
+    windowTitle?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
     title: undefined,
     icon: () => faQuestion,
     indicator: 0,
+    indicatorVariant: "danger",
     isActive: false,
     options: undefined,
     progressPercentage: 0,
@@ -49,6 +53,7 @@ const props = withDefaults(defineProps<Props>(), {
     tooltip: undefined,
     tooltipPlacement: "right",
     variant: "primary",
+    windowTitle: undefined,
 });
 
 const emit = defineEmits<{
@@ -58,7 +63,14 @@ const emit = defineEmits<{
 function onClick(evt: MouseEvent): void {
     emit("click");
     if (props.to) {
-        router.push(props.to);
+        const Galaxy = getGalaxyInstance();
+        if (props.windowTitle && Galaxy?.frame?.active) {
+            const compactUrl = props.to + (props.to.includes("?") ? "&" : "?") + "compact=true";
+            // @ts-ignore - monkeypatched router, second arg is RouterPushOptions
+            router.push(compactUrl, { title: props.windowTitle });
+        } else {
+            router.push(props.to);
+        }
     }
 }
 
@@ -89,12 +101,23 @@ const meta = computed(() => store.metaForId(props.id));
                         }" />
                 </span>
                 <div class="nav-icon">
-                    <span v-if="indicator > 0" class="nav-indicator" data-description="activity indicator">
+                    <span
+                        v-if="typeof indicator === 'number' && indicator > 0"
+                        class="nav-indicator"
+                        :class="`${indicatorVariant}-indicator`"
+                        data-description="activity indicator">
                         {{ Math.min(indicator, 99) }}
+                    </span>
+                    <span
+                        v-else-if="indicator === true"
+                        class="nav-indicator"
+                        :class="`${indicatorVariant}-indicator`"
+                        data-description="activity indicator">
+                        <FontAwesomeIcon :icon="faExclamation" />
                     </span>
                     <FontAwesomeIcon :icon="icon" />
                 </div>
-                <TextShort v-if="title" :text="title" class="nav-title" />
+                <TextShort v-if="title" :text="localize(title)" class="nav-title" />
             </b-nav-item>
         </template>
         <div class="text-center px-2 py-1">
@@ -112,7 +135,7 @@ const meta = computed(() => store.metaForId(props.id));
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .activity-item {
     position: relative;
@@ -137,8 +160,16 @@ const meta = computed(() => store.metaForId(props.id));
 }
 
 .nav-indicator {
+    &.danger-indicator {
+        background: $brand-danger;
+    }
+    &.primary-indicator {
+        background: $brand-primary;
+    }
+    &.disabled-indicator {
+        background: $brand-secondary;
+    }
     align-items: center;
-    background: $brand-danger;
     border-radius: 50%;
     color: $brand-light;
     display: flex;

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
-import { faColumns, faPlus, faUndo } from "@fortawesome/free-solid-svg-icons";
+import { faPlus, faUndo } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BBadge, BButton, BButtonGroup } from "bootstrap-vue";
 import { storeToRefs } from "pinia";
@@ -22,8 +21,6 @@ import ActivityPanel from "@/components/Panels/ActivityPanel.vue";
 const route = useRoute();
 const router = useRouter();
 
-library.add(faColumns, faPlus, faUndo);
-
 const filter = ref("");
 const showAdvanced = ref(false);
 const loading = ref(false);
@@ -38,9 +35,9 @@ const pinnedHistoryCount = computed(() => {
 
 const pinRecentTitle = computed(() => {
     if (pinnedHistoryCount.value > 0) {
-        return localize("Reset selection to show 4 most recently updated histories instead");
+        return localize("Reset selection to show most recently updated histories instead");
     } else {
-        return localize("Currently showing 4 most recently updated histories in Multiview");
+        return localize("Currently showing most recently updated histories in Multiview");
     }
 });
 
@@ -73,11 +70,11 @@ async function createAndPin() {
     }
 }
 
-/** Reset to _default_ state; showing 4 latest updated histories */
+/** Reset to _default_ state; showing latest updated histories */
 function pinRecent() {
-    historyStore.pinnedHistories = [];
+    historyStore.clearPinnedHistories();
     Toast.info(
-        "Showing the 4 most recently updated histories in Multiview. Pin histories to History Multiview by selecting them in the panel.",
+        "Showing the most recently updated histories in Multiview. Pin histories to History Multiview by selecting them in the panel.",
         "History Multiview",
     );
 }
@@ -100,7 +97,7 @@ function userTitle(title: string) {
         <template v-slot:header-buttons>
             <BButtonGroup>
                 <BButton
-                    v-b-tooltip.bottom.hover
+                    v-g-tooltip.bottom.hover
                     data-description="create new history for multiview"
                     size="sm"
                     variant="link"
@@ -123,7 +120,7 @@ function userTitle(title: string) {
             <section v-if="!showAdvanced">
                 <BButtonGroup
                     v-if="route.path === '/histories/view_multiple'"
-                    v-b-tooltip.hover.noninteractive.bottom
+                    v-g-tooltip.hover.bottom
                     class="w-100 mt-2"
                     :aria-label="pinRecentTitle"
                     :title="pinRecentTitle">

@@ -24,8 +24,10 @@ from sqlalchemy import (
     DateTime,
     desc,
     ForeignKey,
+    func,
     Integer,
     not_,
+    select,
     String,
     Table,
     text,
@@ -33,6 +35,7 @@ from sqlalchemy import (
     true,
     UniqueConstraint,
 )
+from sqlalchemy.ext import hybrid
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,
@@ -47,10 +50,12 @@ from galaxy.model.custom_types import (
     MutableJSONType,
     TrimmedString,
 )
-from galaxy.model.orm.now import now
 from galaxy.model.orm.util import add_object_to_object_session
 from galaxy.security.validate_user_input import validate_password_str
-from galaxy.util import unique_id
+from galaxy.util import (
+    now,
+    unique_id,
+)
 from galaxy.util.bunch import Bunch
 from galaxy.util.dictifiable import Dictifiable
 from galaxy.util.hash_util import new_insecure_hash
@@ -140,9 +145,10 @@ class User(Base, Dictifiable):
         ),
     )
 
-    def __init__(self, email=None, password=None):
+    def __init__(self, email=None, password=None, username=None) -> None:
         self.email = email
         self.password = password
+        self.username = username
         self.external = False
         self.deleted = False
         self.purged = False
@@ -384,13 +390,14 @@ class Repository(Base, Dictifiable):
     user = relationship("User", back_populates="active_repositories")
     downloadable_revisions = relationship(
         "RepositoryMetadata",
-        primaryjoin=lambda: (Repository.id == RepositoryMetadata.repository_id) & (RepositoryMetadata.downloadable == true()),  # type: ignore[has-type]
+        primaryjoin=lambda: (Repository.id == RepositoryMetadata.repository_id)
+        & (RepositoryMetadata.downloadable == true()),
         viewonly=True,
-        order_by=lambda: desc(RepositoryMetadata.update_time),  # type: ignore[attr-defined]
+        order_by=lambda: desc(RepositoryMetadata.update_time),
     )
     metadata_revisions = relationship(
         "RepositoryMetadata",
-        order_by=lambda: desc(RepositoryMetadata.update_time),  # type: ignore[attr-defined]
+        order_by=lambda: desc(RepositoryMetadata.update_time),
         back_populates="repository",
     )
     roles = relationship("RepositoryRoleAssociation", back_populates="repository")
@@ -435,6 +442,25 @@ class Repository(Base, Dictifiable):
         self.deprecated = deprecated
         self.name = self.name or "Unnamed repository"
         self.user = user
+
+    @hybrid.hybrid_property
+    def last_updated_time(self):
+        if downloadable_revisions := self.downloadable_revisions:
+            return downloadable_revisions[0].create_time
+        return self.create_time
+
+    @last_updated_time.expression  # type: ignore[no-redef]
+    def last_updated_time(cls):
+        last_revision_create_time = (
+            select(RepositoryMetadata.create_time)
+            .where(RepositoryMetadata.repository_id == cls.id)
+            .where(RepositoryMetadata.downloadable == true())
+            .order_by(RepositoryMetadata.update_time.desc())
+            .limit(1)
+            .correlate(cls)
+            .scalar_subquery()
+        )
+        return func.coalesce(last_revision_create_time, cls.create_time)
 
     @property
     def hg_repo(self):
@@ -485,7 +511,7 @@ class Repository(Base, Dictifiable):
         type_class = self.get_type_class(app)
         return type_class.get_changesets_for_setting_metadata(app, self)
 
-    def get_repository_dependencies(self, app, changeset, toolshed_url):
+    def get_repository_dependencies(self, app, changeset, toolshed_url, trans=None):
         # We aren't concerned with repositories of type tool_dependency_definition here if a
         # repository_metadata record is not returned because repositories of this type will never
         # have repository dependencies. However, if a readme file is uploaded, or some other change
@@ -498,7 +524,7 @@ class Repository(Base, Dictifiable):
         if repository_metadata:
             metadata = repository_metadata.metadata
             if metadata:
-                rb = RelationBuilder(app, self, repository_metadata, toolshed_url)
+                rb = RelationBuilder(app, self, repository_metadata, toolshed_url, trans=trans)
                 repository_dependencies = rb.get_repository_dependencies_for_changeset_revision()
                 if repository_dependencies:
                     return repository_dependencies
@@ -680,10 +706,26 @@ class Tag(Base):
 
 
 class RepositoryMetadata(Dictifiable):
-    repository: "Repository"
+    # Annotations only — runtime attributes are installed by
+    # mapper_registry.map_imperatively below.
+    id: Mapped[Optional[int]]
+    create_time: Mapped[Optional[datetime]]
+    update_time: Mapped[Optional[datetime]]
+    repository_id: Mapped[Optional[int]]
+    changeset_revision: Mapped[Optional[str]]
+    numeric_revision: Mapped[Optional[int]]
+    metadata: Mapped[Any]
+    tool_versions: Mapped[Any]
+    malicious: Mapped[Optional[bool]]
+    downloadable: Mapped[Optional[bool]]
+    missing_test_components: Mapped[Optional[bool]]
+    has_repository_dependencies: Mapped[Optional[bool]]
+    includes_datatypes: Mapped[Optional[bool]]
+    includes_tools: Mapped[Optional[bool]]
+    includes_tool_dependencies: Mapped[Optional[bool]]
+    includes_workflows: Mapped[Optional[bool]]
+    repository: Mapped["Repository"]
 
-    # Once the class has been mapped, all Column items in this table will be available
-    # as instrumented class attributes on RepositoryMetadata.
     table = Table(
         "repository_metadata",
         mapper_registry.metadata,
@@ -719,6 +761,7 @@ class RepositoryMetadata(Dictifiable):
         "includes_tool_dependencies",
         "includes_tools_for_display_in_tool_panel",
         "includes_workflows",
+        "create_time",
     ]
     dict_element_visible_keys = [
         "id",
@@ -734,6 +777,7 @@ class RepositoryMetadata(Dictifiable):
         "includes_tool_dependencies",
         "includes_tools_for_display_in_tool_panel",
         "includes_workflows",
+        "create_time",
         "repository_dependencies",
     ]
 

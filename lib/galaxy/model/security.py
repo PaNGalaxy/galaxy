@@ -1,10 +1,7 @@
 import logging
 import socket
 import sqlite3
-from datetime import (
-    datetime,
-    timedelta,
-)
+from datetime import timedelta
 from typing import (
     Optional,
 )
@@ -57,7 +54,10 @@ from galaxy.security import (
     get_permitted_actions,
     RBACAgent,
 )
-from galaxy.util import listify
+from galaxy.util import (
+    listify,
+    now,
+)
 from galaxy.util.bunch import Bunch
 
 log = logging.getLogger(__name__)
@@ -625,15 +625,13 @@ class GalaxyRBACAgent(RBACAgent):
         if dataset.library_associations:
             return False
         else:
-            query = text(
-                """
+            query = text("""
 SELECT COUNT(*)
 FROM history
 INNER JOIN
     history_dataset_association on history_dataset_association.history_id = history.id
 WHERE history.user_id != :user_id and history_dataset_association.dataset_id = :dataset_id
-"""
-            ).bindparams(dataset_id=dataset.id, user_id=user.id if user else None)
+""").bindparams(dataset_id=dataset.id, user_id=user.id if user else None)
             return self.sa_session.scalars(query).first() == 0
 
     def get_item_actions(self, action, item):
@@ -872,14 +870,13 @@ WHERE history.user_id != :user_id and history_dataset_association.dataset_id = :
                 permissions[action] = [dhp.role]
         return permissions
 
-    def set_all_dataset_permissions(self, dataset, permissions=None, new=False, flush=True):
+    def set_all_dataset_permissions(self, dataset: Dataset, permissions: dict, new: bool = False, flush: bool = True):
         """
         Set new full permissions on a dataset, eliminating all current permissions.
         Permission looks like: { Action : [ Role, Role ] }
         """
         # Make sure that DATASET_MANAGE_PERMISSIONS is associated with at least 1 role
         has_dataset_manage_permissions = False
-        permissions = permissions or {}
         for _ in _walk_action_roles(permissions, self.permitted_actions.DATASET_MANAGE_PERMISSIONS):
             has_dataset_manage_permissions = True
             break
@@ -1709,7 +1706,7 @@ class HostAgent(RBACAgent):
                     hdadaa.site,
                 )
                 return False  # remote addr is not in the server list
-            if (datetime.utcnow() - hdadaa.update_time) > timedelta(seconds=60):
+            if (now() - hdadaa.update_time) > timedelta(seconds=60):
                 log.debug(
                     "Denying access to private dataset with hda: %d.  Authorization was granted, but has expired.",
                     hda.id,
@@ -1728,7 +1725,7 @@ class HostAgent(RBACAgent):
         )
         hdadaa = self.sa_session.scalars(stmt).first()
         if hdadaa:
-            hdadaa.update_time = datetime.utcnow()
+            hdadaa.update_time = now()
         else:
             hdadaa = HistoryDatasetAssociationDisplayAtAuthorization(hda=hda, user=user, site=site)
         self.sa_session.add(hdadaa)
@@ -1793,7 +1790,7 @@ def _get_valid_roles_exposed(session, search_query, is_admin, limit, page, page_
         )
         stmt = stmt.union(stmt2)
 
-    count_stmt = select(func.count()).select_from(stmt)
+    count_stmt = select(func.count()).select_from(stmt.subquery())
     total_count = session.scalar(count_stmt)
 
     stmt = stmt.order_by(Role.name)

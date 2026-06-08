@@ -4,11 +4,14 @@ import { BButton, BCard } from "bootstrap-vue";
 import { computed, onMounted, ref } from "vue";
 
 import { GalaxyApi } from "@/api";
+import { galaxyLogo } from "@/components/icons/galaxyIcons";
 import { useConfigStore } from "@/stores/configurationStore";
+import { errorMessageAsString } from "@/utils/simple-error";
 import { getShortToolId } from "@/utils/tool";
 
 import { createTopicUrl, type HelpForumPost, type HelpForumTopic, useHelpURLs } from "./helpForumUrls";
 
+import Alert from "@/components/Alert.vue";
 import Heading from "@/components/Common/Heading.vue";
 import ExternalLink from "@/components/ExternalLink.vue";
 
@@ -21,6 +24,7 @@ const toolHelpTag = "tool-help";
 
 const topics = ref<HelpForumTopic[]>([]);
 const posts = ref<HelpForumPost[]>([]);
+const errorMessage = ref("");
 const helpAvailable = computed(() => topics.value.length > 0);
 
 const root = ref(null);
@@ -35,7 +39,7 @@ onMounted(async () => {
         },
     });
     if (error) {
-        console.error("Error fetching help forum data", error);
+        errorMessage.value = errorMessageAsString(error, "Failed to search the Help Forum.");
     }
 
     topics.value = data?.topics ?? [];
@@ -65,12 +69,14 @@ const configStore = useConfigStore();
     <div ref="root" class="tool-help-forum mt-2 mb-4">
         <Heading h2 separator bold size="sm">Help Forum</Heading>
 
+        <Alert v-if="errorMessage" variant="warning" :message="errorMessage" />
+
         <p v-if="helpAvailable">
             Following questions on the
             <ExternalLink :href="configStore.config.help_forum_api_url"> Help Forum </ExternalLink> may be related to
             this tool:
         </p>
-        <p v-else>
+        <p v-else-if="!errorMessage">
             There are no questions on the
             <ExternalLink :href="configStore.config.help_forum_api_url"> Help Forum </ExternalLink>
             about this tool.
@@ -86,13 +92,13 @@ const configStore = useConfigStore();
         <a v-if="hasMore" :href="searchTopicUrl.href" target="_blank" class="d-block mb-2">Show all...</a>
 
         <BButton variant="primary" class="font-weight-bold" target="blank" :href="createNewTopicUrl.href">
-            <FontAwesomeIcon :icon="['gxd', 'galaxyLogo']" /> Ask a new question
+            <FontAwesomeIcon :icon="galaxyLogo" /> Ask a new question
         </BButton>
     </div>
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .tool-help-forum {
     --fa-secondary-color: #{$brand-toggle};

@@ -6,6 +6,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import type { CollectionElementIdentifiers, CreateNewCollectionPayload } from "@/api";
 import { createHistoryDatasetCollectionInstanceFull } from "@/api/datasetCollections";
 import { useWizard } from "@/components/Common/Wizard/useWizard";
+import { useHistoryBreadCrumbsToForProps } from "@/composables/historyBreadcrumbs";
 import { useCollectionBuilderItemSelection } from "@/stores/collectionBuilderItemsStore";
 import { errorMessageAsString } from "@/utils/simple-error";
 
@@ -19,11 +20,13 @@ import { showHid } from "./common/useCollectionCreator";
 import type { WhichListBuilder } from "./ListWizard/types";
 import { useAutoPairing } from "./usePairing";
 
+import BreadcrumbHeading from "../Common/BreadcrumbHeading.vue";
+import LoadingSpan from "../LoadingSpan.vue";
 import ListCollectionCreator from "./ListCollectionCreator.vue";
 import WhichBuilder from "./ListWizard/WhichBuilder.vue";
 import PairedOrUnpairedListCollectionCreator from "./PairedOrUnpairedListCollectionCreator.vue";
 import GenericWizard from "@/components/Common/Wizard/GenericWizard.vue";
-import RuleCollectionBuilder from "components/RuleCollectionBuilder.vue";
+import RuleCollectionBuilder from "@/components/RuleCollectionBuilder.vue";
 
 interface Props {
     initialAdvanced: boolean;
@@ -42,7 +45,15 @@ const collectionCreated = ref(false);
 
 type InferrableBuilder = "list" | "list:paired";
 const collectionCreator = ref<CollectionCreatorComponent>();
-const { selectedItems } = storeToRefs(store);
+const { selectedItems, historyId } = storeToRefs(store);
+
+const { breadcrumbItems } = useHistoryBreadCrumbsToForProps(
+    {
+        ...props,
+        historyId: historyId.value || "",
+    },
+    "Create List",
+);
 
 const inferredBuilder = ref<InferrableBuilder>("list");
 const builderInputsValid = ref(false);
@@ -197,18 +208,27 @@ function onRuleState(newRuleState: boolean) {
 </script>
 
 <template>
-    <div v-if="currentHistoryId">
+    <div v-if="currentHistoryId && historyId">
+        <BreadcrumbHeading :items="breadcrumbItems">
+            <i class="d-flex align-items-center"> {{ selectedItems.length }} datasets selected </i>
+        </BreadcrumbHeading>
         <div v-if="creationError">
-            <BAlert variant="danger">
+            <BAlert variant="danger" show>
                 {{ creationError }}
             </BAlert>
         </div>
         <div v-if="collectionCreated">
             <BAlert variant="success" show> Collection created and it has been added to your history. </BAlert>
         </div>
-        <div v-else-if="!selectedItems">Loading...</div>
+        <div v-else-if="!selectedItems">
+            <BAlert variant="info" show>
+                <LoadingSpan />
+            </BAlert>
+        </div>
         <div v-else-if="selectedItems.length == 0">
-            <p>Select datasets from history panel to use the Galaxy list building wizard.</p>
+            <BAlert variant="info" show>
+                Select datasets from the history panel to use the Galaxy list building wizard.
+            </BAlert>
         </div>
         <GenericWizard v-else :use="wizard" :is-busy="isBusy" :submit-button-label="buildButtonLabel" @submit="submit">
             <div v-if="wizard.isCurrent('which-builder')">
@@ -266,5 +286,8 @@ function onRuleState(newRuleState: boolean) {
                     @validInput="onRuleState" />
             </div>
         </GenericWizard>
+    </div>
+    <div v-else>
+        <BAlert show> Select datasets from the history panel to use the Galaxy list building wizard. </BAlert>
     </div>
 </template>

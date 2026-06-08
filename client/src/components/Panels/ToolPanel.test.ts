@@ -1,22 +1,18 @@
-import "jest-location-mock";
-
 import { getFakeRegisteredUser } from "@tests/test-data";
+import { getLocalVue, injectTestRouter } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
-import axios from "axios";
-import MockAdapter from "axios-mock-adapter";
 import flushPromises from "flush-promises";
 import { createPinia } from "pinia";
-import { getLocalVue } from "tests/jest/helpers";
+import { describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
-import { useServerMock } from "@/api/client/__mocks__";
+import { HttpResponse, useServerMock } from "@/api/client/__mocks__";
 import toolsList from "@/components/ToolsView/testData/toolsList.json";
 import toolsListInPanel from "@/components/ToolsView/testData/toolsListInPanel.json";
 import { useUserLocalStorage } from "@/composables/userLocalStorage";
 import { useToolStore } from "@/stores/toolStore";
 
 import viewsListJson from "./testData/viewsList.json";
-import { types_to_icons } from "./utilities";
 
 import ToolPanel from "./ToolPanel.vue";
 
@@ -30,21 +26,19 @@ interface ToolPanelView {
 }
 
 const localVue = getLocalVue();
+const router = injectTestRouter(localVue);
 const { server, http } = useServerMock();
 
 const TEST_PANELS_URI = "/api/tool_panels";
 const DEFAULT_VIEW_ID = "default";
 const PANEL_VIEW_ERR_MSG = "Error loading panel view";
 
-jest.mock("@/composables/config", () => ({
-    useConfig: jest.fn(() => ({
-        config: {},
-        isConfigLoaded: true,
-    })),
-}));
+vi.mock("@/composables/config");
 
-jest.mock("@/composables/userLocalStorage", () => ({
-    useUserLocalStorage: jest.fn(() => ref(DEFAULT_VIEW_ID)),
+vi.mock("@/composables/userLocalStorage", () => ({
+    useUserLocalStorage: vi.fn((_key: string, initialValue: unknown) =>
+        ref(_key === "tool-store-view" ? DEFAULT_VIEW_ID : initialValue),
+    ),
 }));
 
 describe("ToolPanel", () => {
@@ -62,7 +56,9 @@ describe("ToolPanel", () => {
             throw new Error(`View with key ${viewKey} not found in viewsList`);
         }
         // ref and useUserLocalStorage are already imported at the top
-        (useUserLocalStorage as jest.Mock).mockImplementation(() => ref(viewKey));
+        vi.mocked(useUserLocalStorage).mockImplementation((_key: string, initialValue: unknown) =>
+            ref(_key === "tool-store-view" ? viewKey : initialValue),
+        );
         return { viewKey, view };
     }
 
@@ -73,31 +69,55 @@ describe("ToolPanel", () => {
      *                              mock an error for the default view as well
      * @returns wrapper
      */
-    async function createWrapper(errorView: string = "", failDefault: boolean = false) {
-        const axiosMock = new MockAdapter(axios);
-        axiosMock
-            .onGet(`/api/tools?in_panel=False`)
-            .replyOnce(200, toolsList)
-            .onGet(TEST_PANELS_URI)
-            .reply(200, { default_panel_view: DEFAULT_VIEW_ID, views: viewsList });
-
-        if (errorView) {
-            axiosMock.onGet(`/api/tool_panels/${errorView}`).reply(400, { err_msg: PANEL_VIEW_ERR_MSG });
-            if (errorView !== DEFAULT_VIEW_ID && !failDefault) {
-                axiosMock.onGet(`/api/tool_panels/${DEFAULT_VIEW_ID}`).reply(200, toolsListInPanel);
-            } else if (failDefault) {
-                axiosMock.onGet(`/api/tool_panels/${DEFAULT_VIEW_ID}`).reply(400, { err_msg: PANEL_VIEW_ERR_MSG });
-            }
-        } else {
-            // mock response for all panel views
-            axiosMock.onGet(/\/api\/tool_panels\/.*/).reply(200, toolsListInPanel);
-        }
-
+    async function createWrapper(
+        errorView: string = "",
+        failDefault: boolean = false,
+        captureToolsRequest?: (url: URL) => void,
+    ) {
         server.use(
+            http.untyped.get("/api/tools", ({ request }) => {
+                const url = new URL(request.url);
+                captureToolsRequest?.(url);
+                if (url.searchParams.get("in_panel")?.toLowerCase() === "false") {
+                    return HttpResponse.json(toolsList);
+                }
+                return HttpResponse.json([]);
+            }),
+            http.untyped.get(TEST_PANELS_URI, () => {
+                return HttpResponse.json({ default_panel_view: DEFAULT_VIEW_ID, views: viewsList });
+            }),
             http.get("/api/users/{user_id}", ({ response }) => {
                 return response(200).json(getFakeRegisteredUser());
             }),
         );
+
+        if (errorView) {
+            server.use(
+                http.untyped.get(`/api/tool_panels/${errorView}`, () => {
+                    return HttpResponse.json({ err_msg: PANEL_VIEW_ERR_MSG }, { status: 400 });
+                }),
+            );
+            if (errorView !== DEFAULT_VIEW_ID && !failDefault) {
+                server.use(
+                    http.untyped.get(`/api/tool_panels/${DEFAULT_VIEW_ID}`, () => {
+                        return HttpResponse.json(toolsListInPanel);
+                    }),
+                );
+            } else if (failDefault) {
+                server.use(
+                    http.untyped.get(`/api/tool_panels/${DEFAULT_VIEW_ID}`, () => {
+                        return HttpResponse.json({ err_msg: PANEL_VIEW_ERR_MSG }, { status: 400 });
+                    }),
+                );
+            }
+        } else {
+            // mock response for all panel views
+            server.use(
+                http.untyped.get(/\/api\/tool_panels\/.*/, () => {
+                    return HttpResponse.json(toolsListInPanel);
+                }),
+            );
+        }
 
         // setting this because for the default view, we just show "Tools" as the name
         // even though the backend returns "Full Tool Panel"
@@ -111,9 +131,7 @@ describe("ToolPanel", () => {
                 useSearchWorker: false,
             },
             localVue,
-            stubs: {
-                ToolBox: true,
-            },
+            router,
             pinia,
         });
 
@@ -152,21 +170,23 @@ describe("ToolPanel", () => {
                 await currItem.trigger("click");
                 await flushPromises();
 
-                // Test: check if the current panel view is selected now
-                expect(currItem.find("[data-description='panel view item icon']").attributes("data-icon")).toEqual(
-                    "check",
-                );
+                // The active item renders the selection icon; we assert
+                // existence rather than the FA `data-icon` value (which is
+                // an icon-library implementation detail).
+                expect(currItem.find("[data-description='panel view item icon']").exists()).toBe(true);
 
-                // Test: check if the panel header now has an icon and a changed name
-                const currentViewType = value.view_type as keyof typeof types_to_icons;
+                // Test: the panel header reflects the chosen view.
                 const panelViewIcon = wrapper.find("[data-description='panel view header icon']");
-                expect(panelViewIcon.attributes("data-icon")).toEqual(types_to_icons[currentViewType].iconName);
+                if (key === "my_panel") {
+                    expect(panelViewIcon.exists()).toBe(false);
+                } else {
+                    expect(panelViewIcon.exists()).toBe(true);
+                }
                 expect(wrapper.find("#toolbox-heading").text()).toBe(value!.name);
             } else {
-                // Test: check if the default panel view is already selected, and no icon
-                expect(currItem.find("[data-description='panel view item icon']").attributes("data-icon")).toEqual(
-                    "check",
-                );
+                // Default view: the selection icon is rendered on this item and
+                // the header carries no extra icon (default state).
+                expect(currItem.find("[data-description='panel view item icon']").exists()).toBe(true);
                 expect(wrapper.find("[data-description='panel view header icon']").exists()).toBe(false);
             }
         }
@@ -196,5 +216,44 @@ describe("ToolPanel", () => {
         const wrapper = await createWrapper(viewKey, true);
         expect(wrapper.find('[data-description="panel toolbox"]').exists()).toBeFalsy();
         expect(wrapper.find('[data-description="tool panel error message"]').text()).toBe(PANEL_VIEW_ERR_MSG);
+    });
+
+    it("shows go to all button when not in workflow mode and hides it in workflow mode", async () => {
+        const wrapper = await createWrapper();
+
+        // Test: go to all button should appear when workflow is false (default)
+        expect(wrapper.find('[data-description="toolbox discover tools"]').exists()).toBe(true);
+
+        // Test: change workflow prop to true and button should disappear
+        await wrapper.setProps({ workflow: true });
+
+        expect(wrapper.find('[data-description="Discover Tools button"]').exists()).toBe(false);
+    });
+
+    it("shows the tools count on the discover tools button", async () => {
+        const wrapper = await createWrapper();
+        const count = toolsList.length;
+        const formatted = count < 1000 ? `${count}` : `${Math.floor(count / 1000)}k+`;
+        const discoverButton = wrapper.find('[data-description="toolbox discover tools"]');
+        expect(discoverButton.text()).toBe(`Discover ${formatted} Tools`);
+    });
+
+    it("does not request tool tags during default tool panel startup", async () => {
+        let toolsRequestUrl: URL | undefined;
+        let toolTagsRequested = false;
+        // Default tool panel mount must not pull the curated tag mapping —
+        // that's My-Tools-only and is fetched via /api/tags/tool_tags on demand.
+        server.use(
+            http.untyped.get("/api/tags/tool_tags", () => {
+                toolTagsRequested = true;
+                return HttpResponse.json({});
+            }),
+        );
+        await createWrapper("", false, (url) => {
+            toolsRequestUrl = url;
+        });
+
+        expect(toolsRequestUrl?.searchParams.get("in_panel")).toBe("false");
+        expect(toolTagsRequested).toBe(false);
     });
 });

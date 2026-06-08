@@ -47,7 +47,7 @@ const textTooLong = computed(() => {
 
         <span
             v-if="!noExpand && textTooLong"
-            v-b-tooltip.hover
+            v-g-tooltip.hover
             class="text-summary-expand-button"
             :class="{ 'text-summary-expand-float': !props.showExpandText }"
             :title="showDetails ? 'Show less' : 'Show more'"
@@ -66,7 +66,7 @@ const textTooLong = computed(() => {
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .text-summary {
     &.text-summary-short {

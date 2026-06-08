@@ -1,4 +1,21 @@
-/* classes for reasoning about collection map over state
+/* Classes for reasoning about collection map-over state and the
+   compatibility algebra.
+
+   Two operations on collection types:
+   - accepts(other): asymmetric. input_type.accepts(output_type) is true
+     iff an output of type other can be connected to an input slot of
+     type this. Used at workflow-editor edge validation.
+   - compatible(other): symmetric. True iff this and other match such
+     that they could drive a common map-over over sibling inputs of one
+     tool. Used for sibling map-over state checks (neither side is the
+     input slot), e.g. mappingConstraints in terminals.ts.
+
+   Mirrors the Python implementation in
+   lib/galaxy/model/dataset_collections/type_description.py — keep in sync.
+   See lib/galaxy/model/dataset_collections/types/collection_semantics.yml
+   "Type Compatibility Algebra" for the lattice diagram and worked examples.
+
+   Type variants:
    null: not a collection?
    NULL_COLLECTION_TYPE_DESCRIPTION: also not a collection. Is there any difference with null ?
    ANY_COLLECTION_TYPE_DESCRIPTION: collection, but will never be mapped over (input has no collection_type)
@@ -9,7 +26,8 @@ export interface CollectionTypeDescriptor {
     isCollection: boolean;
     collectionType: string | null;
     rank: number;
-    canMatch(other: CollectionTypeDescriptor): boolean;
+    accepts(other: CollectionTypeDescriptor): boolean;
+    compatible(other: CollectionTypeDescriptor): boolean;
     canMapOver(other: CollectionTypeDescriptor): boolean;
     append(other: CollectionTypeDescriptor): CollectionTypeDescriptor;
     equal(other: CollectionTypeDescriptor | null): boolean;
@@ -21,7 +39,10 @@ export const NULL_COLLECTION_TYPE_DESCRIPTION: CollectionTypeDescriptor = {
     isCollection: false,
     collectionType: null,
     rank: 0,
-    canMatch: function (_other) {
+    accepts: function (_other) {
+        return false;
+    },
+    compatible: function (_other) {
         return false;
     },
     canMapOver: function () {
@@ -45,7 +66,10 @@ export const ANY_COLLECTION_TYPE_DESCRIPTION: CollectionTypeDescriptor = {
     isCollection: true,
     collectionType: "any",
     rank: -1,
-    canMatch: function (other) {
+    accepts: function (other) {
+        return NULL_COLLECTION_TYPE_DESCRIPTION !== other;
+    },
+    compatible: function (other) {
         return NULL_COLLECTION_TYPE_DESCRIPTION !== other;
     },
     canMapOver: function () {
@@ -64,6 +88,17 @@ export const ANY_COLLECTION_TYPE_DESCRIPTION: CollectionTypeDescriptor = {
         return NULL_COLLECTION_TYPE_DESCRIPTION;
     },
 };
+
+/**
+ * Normalize collection type for comparison purposes.
+ * sample_sheet behaves like list for mapping/matching.
+ */
+function normalizeCollectionType(collectionType: string): string {
+    if (collectionType.startsWith("sample_sheet")) {
+        return "list" + collectionType.slice("sample_sheet".length);
+    }
+    return collectionType;
+}
 
 export class CollectionTypeDescription implements CollectionTypeDescriptor {
     collectionType: string;
@@ -84,7 +119,13 @@ export class CollectionTypeDescription implements CollectionTypeDescriptor {
         }
         return new CollectionTypeDescription(`${this.collectionType}:${other.collectionType}`);
     }
-    canMatch(other: CollectionTypeDescriptor) {
+    /**
+     * Asymmetric direct-edge check: does an input slot of type ``this``
+     * accept an output of type ``other``? Convention:
+     * ``input_type.accepts(output_type)``. Used at workflow-editor edge
+     * validation.
+     */
+    accepts(other: CollectionTypeDescriptor) {
         const otherCollectionType = other.collectionType;
         if (other === NULL_COLLECTION_TYPE_DESCRIPTION) {
             return false;
@@ -92,39 +133,68 @@ export class CollectionTypeDescription implements CollectionTypeDescriptor {
         if (other === ANY_COLLECTION_TYPE_DESCRIPTION) {
             return true;
         }
-        if (otherCollectionType === "paired" && this.collectionType == "paired_or_unpaired") {
+        // sample_sheet asymmetry: a sample_sheet input needs column metadata
+        // that a plain-list output cannot provide. Check raw types before
+        // normalization (which otherwise equates the two).
+        if (
+            this.collectionType.startsWith("sample_sheet") &&
+            otherCollectionType &&
+            !otherCollectionType.startsWith("sample_sheet")
+        ) {
+            return false;
+        }
+        const normalizedThis = normalizeCollectionType(this.collectionType);
+        const normalizedOther = otherCollectionType ? normalizeCollectionType(otherCollectionType) : null;
+        if (normalizedOther === "paired" && normalizedThis == "paired_or_unpaired") {
             return true;
         }
-        if (this.collectionType.endsWith(":paired_or_unpaired")) {
-            const asPlainList = this.collectionType.slice(0, -":paired_or_unpaired".length);
-            if (otherCollectionType === asPlainList) {
+        if (normalizedThis.endsWith(":paired_or_unpaired")) {
+            const asPlainList = normalizedThis.slice(0, -":paired_or_unpaired".length);
+            if (normalizedOther === asPlainList) {
                 return true;
             }
             const asPairedList = `${asPlainList}:paired`;
-            if (otherCollectionType === asPairedList) {
+            if (normalizedOther === asPairedList) {
                 return true;
             }
         }
-        return otherCollectionType == this.collectionType;
+        return normalizedOther == normalizedThis;
+    }
+    /**
+     * Symmetric sibling-matching check: do ``this`` and ``other`` match
+     * such that they could drive a common map-over over sibling inputs of
+     * a single tool? Used for sibling map-over state checks
+     * (terminals.ts mappingConstraints).
+     */
+    compatible(other: CollectionTypeDescriptor) {
+        return this.accepts(other) || other.accepts(this);
     }
     canMapOver(other: CollectionTypeDescriptor) {
         if (!other.collectionType || other.collectionType === "any") {
             return false;
         }
+        // sample_sheet asymmetry: a sample_sheet input requires sample_sheet
+        // column metadata; a plain-list output cannot be mapped over it.
+        // ``this`` is the output, ``other`` is the input.
+        if (other.collectionType.startsWith("sample_sheet") && !this.collectionType.startsWith("sample_sheet")) {
+            return false;
+        }
+        const normalizedThis = normalizeCollectionType(this.collectionType);
+        const normalizedOther = normalizeCollectionType(other.collectionType);
         if (this.rank <= other.rank) {
-            if (other.collectionType == "paired_or_unpaired") {
+            if (normalizedOther == "paired_or_unpaired") {
                 // this can be thought of as a subcollection of anything except a pair
                 // since it would match a pair exactly
-                return !this.collectionType.endsWith("paired");
+                return !normalizedThis.endsWith("paired");
             }
-            if (other.collectionType.endsWith(":paired_or_unpaired")) {
-                return !this.collectionType.endsWith(":paired");
+            if (normalizedOther.endsWith(":paired_or_unpaired")) {
+                return !normalizedThis.endsWith(":paired");
             }
             // Cannot map over self...
             return false;
         }
-        const requiredSuffix = other.collectionType;
-        const directMatch = this._endsWith(this.collectionType, `:${requiredSuffix}`);
+        const requiredSuffix = normalizedOther;
+        const directMatch = this._endsWith(normalizedThis, `:${requiredSuffix}`);
         if (directMatch) {
             return true;
         }
@@ -135,10 +205,10 @@ export class CollectionTypeDescription implements CollectionTypeDescriptor {
         } else if (requiredSuffix.endsWith(":paired_or_unpaired")) {
             const higherRanksRequired = requiredSuffix.substring(0, requiredSuffix.lastIndexOf(":"));
             let higherRanks: string;
-            if (this.collectionType.endsWith(":paired")) {
-                higherRanks = this.collectionType.substring(0, this.collectionType.lastIndexOf(":"));
+            if (normalizedThis.endsWith(":paired")) {
+                higherRanks = normalizedThis.substring(0, normalizedThis.lastIndexOf(":"));
             } else {
-                higherRanks = this.collectionType;
+                higherRanks = normalizedThis;
             }
             return this._endsWith(higherRanks, higherRanksRequired);
         }
@@ -148,10 +218,12 @@ export class CollectionTypeDescription implements CollectionTypeDescriptor {
         const thisCollectionType = this.collectionType;
         if (other.collectionType && this.canMapOver(other)) {
             const otherCollectionType = other.collectionType;
+            const normalizedThis = normalizeCollectionType(thisCollectionType);
+            const normalizedOther = normalizeCollectionType(otherCollectionType);
             // needs to be extended to include ending in :paired_or_unpaired.
-            if (otherCollectionType.endsWith("paired_or_unpaired")) {
-                if (otherCollectionType == "paired_or_unpaired") {
-                    if (thisCollectionType.endsWith("list")) {
+            if (normalizedOther.endsWith("paired_or_unpaired")) {
+                if (normalizedOther == "paired_or_unpaired") {
+                    if (normalizedThis.endsWith("list")) {
                         // the elements of the inner most list are consumed by the
                         // paired_or_unpaired input.
                         return new CollectionTypeDescription(thisCollectionType);
@@ -159,7 +231,7 @@ export class CollectionTypeDescription implements CollectionTypeDescriptor {
                     return new CollectionTypeDescription(
                         thisCollectionType.substring(0, thisCollectionType.lastIndexOf(":")),
                     );
-                } else if (thisCollectionType.endsWith(":paired") || thisCollectionType.endsWith(":list")) {
+                } else if (normalizedThis.endsWith(":paired") || normalizedThis.endsWith(":list")) {
                     // otherCollectionType endswith :paired_or_unpaired
                     let currentCollectionType = thisCollectionType;
                     let currentOther = otherCollectionType;
@@ -172,7 +244,7 @@ export class CollectionTypeDescription implements CollectionTypeDescriptor {
                     }
                     // and strip the last rank off for the remaining currentOther if
                     // the paired_or_unpaired consumed the inner paired collection
-                    if (thisCollectionType.endsWith(":paired")) {
+                    if (normalizedThis.endsWith(":paired")) {
                         currentCollectionType = currentCollectionType.substring(
                             0,
                             currentCollectionType.lastIndexOf(":"),

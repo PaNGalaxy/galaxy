@@ -246,6 +246,7 @@ class CondaContext(installable.InstallableContext):
             env["CONDARC"] = self.condarc_override
         cmd_string = shlex_join(cmd)
         kwds: Dict[str, Any] = {}
+        conda_exec_home: Optional[str] = None
         try:
             if stdout_path:
                 kwds["stdout"] = open(stdout_path, "w")
@@ -714,11 +715,27 @@ def build_isolated_environment(
             shutil.rmtree(tempdir)
 
 
+def split_version_build(version: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Split version string into version and build.
+
+    Handles '=' separator (conda format) and '--' separator (mulled format).
+    """
+    if not version:
+        return version, None
+    build = None
+    if "=" in version:
+        version, build = version.split("=")
+    elif "--" in version:
+        version, build = version.split("--")
+    return version, build
+
+
 def requirement_to_conda_targets(requirement: "ToolRequirement") -> Optional[CondaTarget]:
     conda_target = None
     if requirement.type == "package":
         assert requirement.name
-        conda_target = CondaTarget(requirement.name, version=requirement.version)
+        version, build = split_version_build(requirement.version)
+        conda_target = CondaTarget(requirement.name, version=version, build=build)
     return conda_target
 
 
@@ -733,4 +750,5 @@ __all__ = (
     "install_conda",
     "install_conda_target",
     "requirements_to_conda_targets",
+    "split_version_build",
 )

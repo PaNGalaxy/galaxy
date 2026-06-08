@@ -1,11 +1,13 @@
 # attempt to model requires_value...
 # conditional can descend...
 from abc import abstractmethod
+from functools import lru_cache
 from typing import (
     Any,
     Callable,
     cast,
     Dict,
+    get_args,
     Iterable,
     List,
     Mapping,
@@ -17,8 +19,10 @@ from typing import (
     Union,
 )
 
+import annotated_types
 from pydantic import (
     AfterValidator,
+    AliasChoices,
     AnyUrl,
     BaseModel,
     ConfigDict,
@@ -46,6 +50,7 @@ from typing_extensions import (
 from ._base import ToolSourceBaseModel
 from ._types import (
     cast_as_type,
+    dict_type,
     expand_annotation,
     is_optional,
     list_type,
@@ -62,6 +67,10 @@ from .parameter_validators import (
     RegexParameterValidatorModel,
     StaticValidatorModel,
 )
+from .sample_sheet import (
+    SampleSheetColumnDefinitions,
+    SampleSheetRow,
+)
 from .tool_source import (
     DrillDownOptionsDict,
     JsonTestCollectionDefDict,
@@ -75,6 +84,7 @@ from .tool_source import (
 # + request_internal: This is a pydantic model to validate what Galaxy expects to find in the database,
 # in particular dataset and collection references should be decoded integers.
 StateRepresentationT = Literal[
+    "relaxed_request",
     "request",
     "request_internal",
     "request_internal_dereferenced",
@@ -83,6 +93,7 @@ StateRepresentationT = Literal[
     "job_runtime",
     "job_internal",
     "test_case_xml",
+    "test_case_json",
     "workflow_step",
     "workflow_step_linked",
 ]
@@ -121,6 +132,7 @@ def allow_batching(job_template: DynamicModelInformation, batch_type: Optional[T
     class BatchRequest(StrictModel):
         meta_class: Literal["Batch"] = Field(..., alias="__class__")
         values: List[batch_type]  # type: ignore[valid-type]
+        linked: Optional[bool] = None  # maybe True instead?
 
     request_type = union_type([job_py_type, BatchRequest])
 
@@ -147,6 +159,10 @@ class ParamModel(Protocol):
         # input value MUST be specified.
         ...
 
+    def field_kwargs(self) -> Dict[str, Any]:
+        """Return kwargs for pydantic Field() including json_schema_extra metadata."""
+        ...
+
 
 def safe_field_name(name: str) -> str:
     if name.startswith("_"):
@@ -154,8 +170,16 @@ def safe_field_name(name: str) -> str:
     return name
 
 
+def _label_value_dicts(options: List[Any]) -> List[Dict[str, Any]]:
+    return [{"label": o.label, "value": o.value, "selected": o.selected} for o in options]
+
+
 def dynamic_model_information_from_py_type(
-    param_model: ParamModel, py_type: Type, requires_value: Optional[bool] = None, validators=None
+    param_model: ParamModel,
+    py_type: Type,
+    requires_value: Optional[bool] = None,
+    validators=None,
+    extra_json_schema: Optional[Dict[str, Any]] = None,
 ):
     name = safe_field_name(param_model.name)
     if requires_value is None:
@@ -166,9 +190,12 @@ def dynamic_model_information_from_py_type(
     if not py_type_is_optional and not requires_value:
         validators["not_null"] = field_validator(name)(Validators.validate_not_none)
 
+    field_kwargs = param_model.field_kwargs()
+    if extra_json_schema:
+        field_kwargs.setdefault("json_schema_extra", {}).update(extra_json_schema)
     return DynamicModelInformation(
         name,
-        (py_type, Field(initialize, alias=param_model.name if param_model.name != name else None)),
+        (py_type, Field(initialize, alias=param_model.name if param_model.name != name else None, **field_kwargs)),
         validators,
     )
 
@@ -186,6 +213,10 @@ class BaseToolParameterModelDefinition(ToolSourceBaseModel):
     @abstractmethod
     def pydantic_template(self, state_representation: StateRepresentationT) -> DynamicModelInformation:
         """Return info needed to build Pydantic model at runtime for validation."""
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        """Return kwargs for pydantic Field() including json_schema_extra metadata."""
+        return {"json_schema_extra": {"gx_type": self.parameter_type}}
 
 
 class BaseGalaxyToolParameterModelDefinition(BaseToolParameterModelDefinition):
@@ -207,6 +238,20 @@ class BaseGalaxyToolParameterModelDefinition(BaseToolParameterModelDefinition):
     ] = None
     is_dynamic: bool = False
     optional: Annotated[bool, Field(description="If `false`, parameter must have a value.")] = False
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {}
+        if self.label:
+            kwargs["title"] = self.label
+        description_parts = []
+        if self.help:
+            description_parts.append(self.help)
+        if self.argument:
+            description_parts.append(f"({self.argument})")
+        if description_parts:
+            kwargs["description"] = " ".join(description_parts)
+        kwargs["json_schema_extra"] = {"gx_type": self.parameter_type}
+        return kwargs
 
 
 class LabelValue(BaseModel):
@@ -234,21 +279,82 @@ def pydantic_to_galaxy_type(value: Any) -> Any:
 VT = TypeVar("VT", bound=StaticValidatorModel)
 
 
-def decorate_type_with_validators_if_needed(py_type: Type, static_validator_models: Sequence[VT]) -> Type:
-    pydantic_validator = pydantic_validator_for(static_validator_models)
+def _json_schema_annotations_for(static_validator_models: Sequence[VT]) -> List[Any]:
+    """Extract JSON Schema-representable constraint annotations from validators.
+
+    Non-negated in_range and length validators have direct annotated_types
+    equivalents that Pydantic emits as JSON Schema keywords. Regex is handled
+    separately via json_schema_extra since StringConstraints is incompatible
+    with non-string types (e.g. AnyUrl).
+    """
+    annotations: List[Any] = []
+    for v in static_validator_models:
+        if isinstance(v, InRangeParameterValidatorModel) and not v.negate:
+            if v.min is not None:
+                annotations.append(annotated_types.Gt(v.min) if v.exclude_min else annotated_types.Ge(v.min))
+            if v.max is not None:
+                annotations.append(annotated_types.Lt(v.max) if v.exclude_max else annotated_types.Le(v.max))
+        elif isinstance(v, LengthParameterValidatorModel) and not v.negate:
+            if v.min is not None:
+                annotations.append(annotated_types.MinLen(v.min))
+            if v.max is not None:
+                annotations.append(annotated_types.MaxLen(v.max))
+    return annotations
+
+
+def _json_schema_extra_for_validators(validators: Sequence[VT]) -> Dict[str, Any]:
+    """Extract JSON Schema keywords for validators best handled via json_schema_extra.
+
+    Regex pattern is emitted here rather than as a type annotation because
+    StringConstraints is incompatible with non-string types like AnyUrl.
+    Negated length uses ``not: {minLength, maxLength}`` since the non-negated
+    form is handled by annotated_types.
+    """
+    extra: Dict[str, Any] = {}
+    for v in validators:
+        if isinstance(v, RegexParameterValidatorModel) and not v.negate:
+            pattern = v.expression
+            # Python re.match anchors at start; JSON Schema pattern does not
+            if not pattern.startswith("^"):
+                pattern = "^" + pattern
+            extra["pattern"] = pattern
+            break
+    for v in validators:
+        if isinstance(v, LengthParameterValidatorModel) and v.negate:
+            not_constraint: Dict[str, Any] = {}
+            if v.min is not None:
+                not_constraint["minLength"] = v.min
+            if v.max is not None:
+                not_constraint["maxLength"] = v.max
+            if not_constraint:
+                extra["not"] = not_constraint
+            break
+    return extra
+
+
+def decorate_type_with_validators_if_needed(
+    py_type: Type, static_validator_models: Sequence[VT], optional: bool = False
+) -> Type:
+    pydantic_validator = pydantic_validator_for(static_validator_models, optional=optional)
+    json_schema_annotations = _json_schema_annotations_for(static_validator_models)
+    all_annotations = json_schema_annotations[:]
     if pydantic_validator:
-        return expand_annotation(py_type, [pydantic_validator])
-    else:
-        return py_type
+        all_annotations.append(pydantic_validator)
+    if all_annotations:
+        return expand_annotation(py_type, all_annotations)
+    return py_type
 
 
 # Looks like Annotated only work with one PlainValidator so condensing all static validators
 # into a single PlainValidator for pydantic.
-def pydantic_validator_for(static_validator_models: Sequence[VT]) -> Optional[AfterValidator]:
+def pydantic_validator_for(static_validator_models: Sequence[VT], optional: bool = False) -> Optional[AfterValidator]:
 
     if static_validator_models:
 
         def validator(v: Any) -> Any:
+            if optional and (v is None or v == ""):
+                return v
+
             gx_val = pydantic_to_galaxy_type(v)
 
             for static_validator_model in static_validator_models:
@@ -268,18 +374,40 @@ class TextParameterModel(BaseGalaxyToolParameterModelDefinition):
     default_options: List[LabelValue] = []
     validators: List[TextCompatiableValidators] = []
 
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        extra = kwargs["json_schema_extra"]
+        extra["gx_area"] = self.area
+        if self.default_options:
+            extra["gx_default_options"] = _label_value_dicts(self.default_options)
+        return kwargs
+
     @property
     def py_type(self) -> Type:
         return optional_if_needed(StrictStr, self.optional)
 
+    @property
+    def py_type_relaxed_request(self) -> Type:
+        # such a hack but explicit nulls are always allowed in the API even for non-optional
+        # parameters - it becomes "" in the internal state.
+        return optional(StrictStr)
+
     def pydantic_template(self, state_representation: StateRepresentationT) -> DynamicModelInformation:
-        py_type = decorate_type_with_validators_if_needed(self.py_type, self.validators)
+        py_type = self.py_type
+        if state_representation == "relaxed_request":
+            py_type = self.py_type_relaxed_request
+        py_type = decorate_type_with_validators_if_needed(py_type, self.validators, optional=self.optional)
         if state_representation == "workflow_step_linked":
             py_type = allow_connected_value(py_type)
         requires_value = self.request_requires_value
         if state_representation in ("job_internal", "job_runtime"):
             requires_value = True
-        return dynamic_model_information_from_py_type(self, py_type, requires_value=requires_value)
+        return dynamic_model_information_from_py_type(
+            self,
+            py_type,
+            requires_value=requires_value,
+            extra_json_schema=_json_schema_extra_for_validators(self.validators),
+        )
 
     @property
     def request_requires_value(self) -> bool:
@@ -297,6 +425,15 @@ class IntegerParameterModel(BaseGalaxyToolParameterModelDefinition):
     min: Optional[int] = None
     max: Optional[int] = None
     validators: List[NumberCompatiableValidators] = []
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        extra = kwargs["json_schema_extra"]
+        if self.min is not None:
+            extra["gx_min"] = self.min
+        if self.max is not None:
+            extra["gx_max"] = self.max
+        return kwargs
 
     @property
     def py_type(self) -> Type:
@@ -330,6 +467,15 @@ class FloatParameterModel(BaseGalaxyToolParameterModelDefinition):
     max: Optional[float] = None
     validators: List[NumberCompatiableValidators] = []
 
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        extra = kwargs["json_schema_extra"]
+        if self.min is not None:
+            extra["gx_min"] = self.min
+        if self.max is not None:
+            extra["gx_max"] = self.max
+        return kwargs
+
     @property
     def py_type(self) -> Type:
         return optional_if_needed(union_type([StrictInt, StrictFloat]), self.optional)
@@ -355,9 +501,11 @@ class FloatParameterModel(BaseGalaxyToolParameterModelDefinition):
 
 
 DataSrcT = Literal["hda", "ldda"]
-MultiDataSrcT = Literal["hda", "ldda", "hdca"]
+MultiDataSrcT = Literal["hda", "ldda", "hdca", "dce"]
 # @jmchilton you meant CollectionSrcT - fix that at some point please.
 CollectionStrT = Literal["hdca"]
+# Internal collection source type - includes dce for subcollection mapping
+CollectionInternalSrcT = Literal["hdca", "dce"]
 
 TestCaseDataSrcT = Literal["File"]
 
@@ -390,20 +538,26 @@ class DataRequestHdca(LegacyRequestModelAttributes):
     id: StrictStr
 
 
-class DatasetHash(StrictModel):
+class DataRequestDce(LegacyRequestModelAttributes):
+    src: Literal["dce"] = "dce"
+    id: StrictStr
+
+
+class FileHash(StrictModel):
     hash_function: Literal["MD5", "SHA-1", "SHA-256", "SHA-512"]
     hash_value: StrictStr
 
 
 class BaseDataRequest(StrictModel):
-    url: StrictStr = Field(..., alias="location")
+    url: StrictStr = Field(..., alias="location", validation_alias=AliasChoices("url", "location"))
     name: Optional[StrictStr] = None
     ext: StrictStr
     dbkey: StrictStr = "?"
     deferred: StrictBool = False
     created_from_basename: Optional[StrictStr] = None
     info: Optional[StrictStr] = None
-    hashes: Optional[List[DatasetHash]] = None
+    tags: Optional[List[str]] = None
+    hashes: Optional[List[FileHash]] = None
     space_to_tab: bool = False
     to_posix_lines: bool = False
 
@@ -440,19 +594,22 @@ class FileRequestUri(BaseDataRequest):
 
 class CollectionElementDataRequestUri(FileRequestUri):
     class_: Literal["File"] = Field(..., alias="class")
-    identifier: StrictStr
+    identifier: StrictStr = Field(
+        ...,
+        description="A unique identifier for this element within the collection.",
+        validation_alias=AliasChoices("identifier", "name"),
+    )
 
 
 class CollectionElementCollectionRequestUri(StrictModel):
     class_: Literal["Collection"] = Field(..., alias="class")
-    identifier: StrictStr
+    identifier: StrictStr = Field(
+        ...,
+        description="A unique identifier for this element within the collection.",
+        validation_alias=AliasChoices("identifier", "name"),
+    )
     collection_type: StrictStr
-    elements: List[
-        Annotated[
-            Union["CollectionElementCollectionRequestUri", CollectionElementDataRequestUri],
-            Field(discriminator="class_"),
-        ]
-    ]
+    elements: List["CollectionRequestUriElement"]
 
     @model_validator(mode="before")
     @classmethod
@@ -466,45 +623,130 @@ class CollectionElementCollectionRequestUri(StrictModel):
         return data
 
 
+def _collection_element_discriminator(value: Any) -> Optional[str]:
+    if isinstance(value, dict):
+        return value.get("class") or value.get("class_")
+    return getattr(value, "class_", None)
+
+
+# A callable Discriminator avoids the PydanticJsonSchemaWarning emitted for
+# the recursive Field(discriminator="class_") on this self-referential union;
+# json_schema_extra restores the OpenAPI discriminator metadata.
+CollectionRequestUriElement = Annotated[
+    Union[
+        Annotated[CollectionElementCollectionRequestUri, Tag("Collection")],
+        Annotated[CollectionElementDataRequestUri, Tag("File")],
+    ],
+    Discriminator(_collection_element_discriminator),
+    Field(
+        json_schema_extra={
+            "discriminator": {
+                "propertyName": "class",
+                "mapping": {
+                    "Collection": "#/components/schemas/CollectionElementCollectionRequestUri",
+                    "File": "#/components/schemas/CollectionElementDataRequestUri",
+                },
+            }
+        }
+    ),
+]
+
+
 class DataRequestCollectionUri(StrictModel):
     class_: Literal["Collection"] = Field(..., alias="class")
     collection_type: str
-    elements: List[
-        Annotated[
-            Union[CollectionElementCollectionRequestUri, CollectionElementDataRequestUri], Field(discriminator="class_")
-        ]
-    ]
+    elements: List[CollectionRequestUriElement]
     deferred: StrictBool = False
     name: Optional[StrictStr] = None
     src: None = Field(None, exclude=True)
+    # Sample sheet metadata
+    column_definitions: Optional[SampleSheetColumnDefinitions] = None
+    rows: Optional[Dict[str, SampleSheetRow]] = None
 
 
 _DataRequest = Annotated[
-    Union[DataRequestHda, DataRequestLdda, DataRequestLd, DataRequestUri], Field(discriminator="src")
+    Union[DataRequestHda, DataRequestLdda, DataRequestLd, DataRequestDce, DataRequestUri], Field(discriminator="src")
 ]
 DataRequest: Type = cast(Type, _DataRequest)
 
 DataOrCollectionRequest = Union[_DataRequest, FileRequestUri, DataRequestCollectionUri, DataRequestHdca]
+FileOrCollectionRequest = Annotated[Union[FileRequestUri, DataRequestCollectionUri], Field(discriminator="class_")]
 
 DataRequestHda.model_rebuild()
 DataRequestLd.model_rebuild()
 DataRequestLdda.model_rebuild()
+DataRequestDce.model_rebuild()
 DataRequestUri.model_rebuild()
 DataRequestHdca.model_rebuild()
+CollectionElementCollectionRequestUri.model_rebuild()
 DataRequestCollectionUri.model_rebuild()
 
 DataOrCollectionRequestAdapter: TypeAdapter[DataOrCollectionRequest] = TypeAdapter(DataOrCollectionRequest)
 
 
-class BatchDataInstance(StrictModel):
-    src: MultiDataSrcT
+class BatchDataHdcaInstance(StrictModel):
+    src: Literal["hdca"]
+    id: StrictStr
+    map_over_type: Optional[str] = None
+
+
+class BatchDataDceInstance(StrictModel):
+    src: Literal["dce"]
+    id: StrictStr
+    map_over_type: Optional[str] = None
+
+
+class BatchDataNonCollectionInstance(StrictModel):
+    src: Literal["hda", "ldda"]
     id: StrictStr
 
 
+BatchDataInstance: Type = cast(
+    Type,
+    Annotated[
+        Union[BatchDataHdcaInstance, BatchDataDceInstance, BatchDataNonCollectionInstance], Field(discriminator="src")
+    ],
+)
+
+
+def multi_data_discriminator(v: Any) -> str:
+    if isinstance(v, dict):
+        src = v.get("src", None)
+        clazz = v.get("class", None)
+        if clazz == "Collection":
+            return "data_request_collection_uri"
+        elif src == "hda":
+            return "data_request_hda"
+        elif src == "ldda":
+            return "data_request_ldda"
+        elif src == "hdca":
+            return "data_request_hdca"
+        elif src == "dce":
+            return "data_request_dce"
+        elif src == "url":
+            return "data_request_uri"
+    return ""
+
+
+def tag(field: Type, tag: str) -> Type:
+    return Annotated[field, Tag(tag)]  # type: ignore[return-value]
+
+
+MultiDataInstanceDiscriminator = Discriminator(multi_data_discriminator)
 MultiDataInstance: Type = cast(
     Type,
     Annotated[
-        union_type([DataRequestHda, DataRequestLdda, DataRequestHdca, DataRequestUri]), Field(discriminator="src")
+        union_type(
+            [
+                tag(DataRequestHda, "data_request_hda"),
+                tag(DataRequestLdda, "data_request_ldda"),
+                tag(DataRequestHdca, "data_request_hdca"),
+                tag(DataRequestDce, "data_request_dce"),
+                tag(DataRequestUri, "data_request_uri"),
+                tag(DataRequestCollectionUri, "data_request_collection_uri"),
+            ]
+        ),
+        Field(discriminator=MultiDataInstanceDiscriminator),
     ],
 )
 MultiDataRequest: Type = union_type([MultiDataInstance, list_type(MultiDataInstance)])
@@ -525,6 +767,11 @@ class DataRequestInternalHdca(StrictModel):
     id: StrictInt
 
 
+class DataRequestInternalDce(StrictModel):
+    src: Literal["dce"]
+    id: StrictInt
+
+
 class DataInternalJson(StrictModel):
     class_: Annotated[Literal["File"], Field(alias="class")]
     basename: Annotated[
@@ -535,59 +782,348 @@ class DataInternalJson(StrictModel):
     ]
     location: str
     path: Annotated[str, Field(description="The absolute path to the file on disk.")]
-    listing: Optional[List[str]]  # Should be recursive
+    listing: Optional[List[str]] = None  # Should be recursive
     nameroot: Annotated[Optional[str], Field(description="The basename root such that nameroot + nameext == basename")]
     nameext: Annotated[
         Optional[str], Field(description="The basename extension such that nameroot + nameext == basename")
     ]
     format: Annotated[str, Field(description="The datatype extension of the file, e.g. 'txt', 'bam', 'fastq.gz'.")]
     # "secondaryFiles": List[Any],
-    checksum: Optional[str]
+    checksum: Optional[str] = None
     size: int
+    # When a gx_data param receives a DCE (subcollection mapping), preserve element_identifier
+    # for output naming and collection traceability
+    element_identifier: Optional[str] = None
 
 
-class DataCollectionInternalJson(RootModel):
-    root: Dict[str, DataInternalJson]
+class DataCollectionElementInternalJson(DataInternalJson):
+    """A file within a collection element - adds collection-specific metadata."""
+
+    element_identifier: str
+    columns: Optional[List[Any]] = None  # for sample_sheet elements
 
 
-class RecursiveDataCollectionInternalJson(RootModel):
-    root: Dict[str, Union[DataInternalJson, "RecursiveDataCollectionInternalJson"]]
+# Collection runtime models with metadata
+class DataCollectionInternalJsonBase(StrictModel):
+    """Base model for collection runtime representations with metadata."""
+
+    class_: Annotated[Literal["Collection"], Field(alias="class")]
+    name: Optional[str]  # None for raw DatasetCollection inputs
+    collection_type: str
+    tags: List[str] = []
+    # Special metadata fields (optional, type-dependent)
+    column_definitions: Optional[List[Dict[str, Any]]] = None  # for sample_sheet
+    fields: Optional[List[Dict[str, Any]]] = None  # for record
+    has_single_item: Optional[bool] = None  # for paired_or_unpaired
+    columns: Optional[List[Any]] = None  # for sample_sheet elements
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
-RecursiveDataCollectionInternalJson.model_rebuild()
+class DataCollectionPairedElements(StrictModel):
+    forward: DataCollectionElementInternalJson
+    reverse: DataCollectionElementInternalJson
 
 
-class DataCollectionPaired(StrictModel):
-    forward: DataInternalJson
-    reverse: DataInternalJson
+class DataCollectionPairedRuntime(DataCollectionInternalJsonBase):
+    """Paired collection runtime representation."""
+
+    collection_type: Literal["paired"]
+    elements: DataCollectionPairedElements
+
+
+class DataCollectionListRuntime(DataCollectionInternalJsonBase):
+    """List collection runtime representation."""
+
+    collection_type: Literal["list"]
+    elements: List[DataCollectionElementInternalJson]
+
+
+class DataCollectionSampleSheetRuntime(DataCollectionInternalJsonBase):
+    """Sample sheet collection runtime representation."""
+
+    collection_type: Literal["sample_sheet"]
+    elements: List[DataCollectionElementInternalJson]
+
+
+class DataCollectionRecordRuntime(DataCollectionInternalJsonBase):
+    """Record collection runtime representation."""
+
+    collection_type: Literal["record"]
+    elements: Dict[
+        str,
+        Union[
+            DataCollectionElementInternalJson, "DataCollectionNestedListRuntime", "DataCollectionNestedRecordRuntime"
+        ],
+    ]
+
+
+class DataCollectionPairedOrUnpairedRuntime(DataCollectionInternalJsonBase):
+    """Paired or Unpaired collection runtime representation."""
+
+    collection_type: Literal["paired_or_unpaired"]
+    elements: Dict[str, DataCollectionElementInternalJson]
+
+
+class DataCollectionNestedListRuntime(DataCollectionInternalJsonBase):
+    """Nested collection with list-like outer structure (list:*, sample_sheet:*)."""
+
+    collection_type: str
+
+    @field_validator("collection_type")
+    @classmethod
+    def must_be_nested_list_like(cls, v: str) -> str:
+        if ":" not in v:
+            raise ValueError(f'Nested collection_type must contain ":", got "{v}"')
+        first_segment = v.split(":")[0]
+        if first_segment not in ("list", "sample_sheet"):
+            raise ValueError(f'Outer type must be list-like (list, sample_sheet), got "{first_segment}"')
+        return v
+
+    elements: List[
+        Union[
+            "DataCollectionListRuntime",
+            "DataCollectionSampleSheetRuntime",
+            "DataCollectionPairedRuntime",
+            "DataCollectionRecordRuntime",
+            "DataCollectionPairedOrUnpairedRuntime",
+            "DataCollectionNestedListRuntime",
+            "DataCollectionNestedRecordRuntime",
+        ]
+    ]
+
+
+class DataCollectionNestedRecordRuntime(DataCollectionInternalJsonBase):
+    """Nested collection with record-like outer structure (paired:*, record:*)."""
+
+    collection_type: str
+
+    @field_validator("collection_type")
+    @classmethod
+    def must_be_nested_record_like(cls, v: str) -> str:
+        if ":" not in v:
+            raise ValueError(f'Nested collection_type must contain ":", got "{v}"')
+        first_segment = v.split(":")[0]
+        if first_segment in ("list", "sample_sheet"):
+            raise ValueError(f'Outer type must be record-like, got list-like "{first_segment}"')
+        return v
+
+    elements: Dict[
+        str,
+        Union[
+            DataCollectionElementInternalJson,
+            "DataCollectionListRuntime",
+            "DataCollectionSampleSheetRuntime",
+            "DataCollectionPairedRuntime",
+            "DataCollectionRecordRuntime",
+            "DataCollectionPairedOrUnpairedRuntime",
+            "DataCollectionNestedListRuntime",
+            "DataCollectionNestedRecordRuntime",
+        ],
+    ]
+
+
+DataCollectionNestedListRuntime.model_rebuild()
+DataCollectionNestedRecordRuntime.model_rebuild()
+
+
+_LEAF_COLLECTION_MODELS: Dict[str, Type] = {
+    "list": DataCollectionListRuntime,
+    "paired": DataCollectionPairedRuntime,
+    "record": DataCollectionRecordRuntime,
+    "paired_or_unpaired": DataCollectionPairedOrUnpairedRuntime,
+    "sample_sheet": DataCollectionSampleSheetRuntime,
+}
+
+
+@lru_cache(maxsize=128)
+def build_collection_model_for_type(collection_type: str) -> Optional[Type]:
+    """Dynamically generate a Pydantic model for a specific collection_type.
+
+    Simple types -> existing static model.
+    Nested types -> model with Literal[collection_type] and
+    elements narrowed to exact inner model.
+    Unknown single-segment types -> None (caller decides fallback).
+    """
+    if collection_type in _LEAF_COLLECTION_MODELS:
+        return _LEAF_COLLECTION_MODELS[collection_type]
+
+    if ":" not in collection_type:
+        return None
+
+    outer_segment, inner_type = collection_type.split(":", 1)
+    inner_model = build_collection_model_for_type(inner_type)
+
+    if inner_model is None:
+        return None
+
+    is_list_like = outer_segment in ("list", "sample_sheet")
+
+    if is_list_like:
+        elements_type = list_type(inner_model)
+    else:
+        elements_type = dict_type(str, inner_model)
+
+    safe_name = f"DynamicCollection_{'_'.join(collection_type.split(':'))}"
+
+    model = create_model(
+        safe_name,
+        __base__=DataCollectionInternalJsonBase,
+        collection_type=(Literal[collection_type], ...),
+        elements=(elements_type, ...),
+    )
+
+    return model
+
+
+def _collection_type_discriminator(v: Any) -> str:
+    """Return the full collection_type string for discriminated union routing.
+
+    Used for subset unions (comma-separated types) where tags may be dynamic
+    model collection_type strings like "list:paired".
+    """
+    if isinstance(v, dict):
+        return v.get("collection_type", "")
+    return getattr(v, "collection_type", "")
+
+
+def collection_runtime_discriminator(v: Any) -> str:
+    """Discriminator function for collection runtime unions.
+
+    Routes validation to the correct model based on collection_type pattern.
+    """
+    if isinstance(v, dict):
+        ct = v.get("collection_type", "")
+    else:
+        ct = getattr(v, "collection_type", "")
+
+    # Simple types - exact match
+    if ct == "list":
+        return "list"
+    elif ct == "paired":
+        return "paired"
+    elif ct == "record":
+        return "record"
+    elif ct == "paired_or_unpaired":
+        return "paired_or_unpaired"
+    elif ct == "sample_sheet":
+        return "sample_sheet"
+    elif ":" in ct:
+        # Nested types - route by outer structure
+        first_segment = ct.split(":")[0]
+        if first_segment in ("list", "sample_sheet"):
+            return "nested_list"
+        else:
+            return "nested_record"
+    elif not ct:
+        # Missing collection_type — data isn't a runtime collection dict.
+        # Route to list so Pydantic fails validation with a clear schema error
+        # rather than a discriminator error.
+        return "list"
+    else:
+        raise ValueError(f"Unknown collection_type for runtime discrimination: '{ct}'")
+
+
+CollectionRuntimeDiscriminated: Type = cast(
+    Type,
+    Annotated[
+        Union[
+            Annotated[DataCollectionListRuntime, Tag("list")],
+            Annotated[DataCollectionSampleSheetRuntime, Tag("sample_sheet")],
+            Annotated[DataCollectionPairedRuntime, Tag("paired")],
+            Annotated[DataCollectionRecordRuntime, Tag("record")],
+            Annotated[DataCollectionPairedOrUnpairedRuntime, Tag("paired_or_unpaired")],
+            Annotated[DataCollectionNestedListRuntime, Tag("nested_list")],
+            Annotated[DataCollectionNestedRecordRuntime, Tag("nested_record")],
+        ],
+        Discriminator(collection_runtime_discriminator),
+    ],
+)
 
 
 DataRequestInternal: Type = cast(
-    Type, Annotated[Union[DataRequestInternalHda, DataRequestInternalLdda, DataRequestUri], Field(discriminator="src")]
+    Type,
+    Annotated[
+        union_type(
+            [
+                tag(DataRequestInternalHda, "data_request_hda"),
+                tag(DataRequestInternalLdda, "data_request_ldda"),
+                tag(DataRequestInternalHdca, "data_request_hdca"),
+                tag(DataRequestInternalDce, "data_request_dce"),
+                tag(DataRequestUri, "data_request_uri"),
+                tag(DataRequestCollectionUri, "data_request_collection_uri"),
+            ]
+        ),
+        Field(discriminator=MultiDataInstanceDiscriminator),
+    ],
 )
+
+
+class DatasetCollectionElementReference(StrictModel):
+    src: Literal["dce"]
+    id: StrictInt
+    map_over_type: Optional[str] = None
+
+
+DataRequestInternalDereferencedT = Union[
+    DataRequestInternalHda, DataRequestInternalLdda, DatasetCollectionElementReference
+]
 DataRequestInternalDereferenced: Type = cast(
     Type,
-    Annotated[Union[DataRequestInternalHda, DataRequestInternalLdda], Field(discriminator="src")],
+    Annotated[DataRequestInternalDereferencedT, Field(discriminator="src")],
 )
-DataJobInternal = DataRequestInternalDereferenced
+
+DataJobInternalT = Union[DataRequestInternalHda, DataRequestInternalLdda, DatasetCollectionElementReference]
+DataJobInternal: Type = cast(
+    Type,
+    Annotated[DataJobInternalT, Field(discriminator="src")],
+)
 
 
-class BatchDataInstanceInternal(StrictModel):
-    src: MultiDataSrcT
+class BatchDataHdcaInstanceInternal(StrictModel):
+    src: Literal["hdca"]
     id: StrictInt
+    map_over_type: Optional[str] = None
+
+
+class BatchDataDceInstanceInternal(StrictModel):
+    src: Literal["dce"]
+    id: StrictInt
+    map_over_type: Optional[str] = None
+
+
+class BatchDataNonCollectionInstanceInternal(StrictModel):
+    src: Literal["hda", "ldda"]
+    id: StrictInt
+
+
+BatchDataInstanceInternal: Type = cast(
+    Type,
+    Annotated[
+        Union[BatchDataHdcaInstanceInternal, BatchDataDceInstanceInternal, BatchDataNonCollectionInstanceInternal],
+        Field(discriminator="src"),
+    ],
+)
 
 
 MultiDataInstanceInternal: Type = cast(
     Type,
     Annotated[
-        Union[DataRequestInternalHda, DataRequestInternalLdda, DataRequestInternalHdca, DataRequestUri],
+        Union[
+            DataRequestInternalHda,
+            DataRequestInternalLdda,
+            DataRequestInternalHdca,
+            DataRequestInternalDce,
+            DataRequestUri,
+        ],
         Field(discriminator="src"),
     ],
 )
 MultiDataInstanceInternalDereferenced: Type = cast(
     Type,
     Annotated[
-        Union[DataRequestInternalHda, DataRequestInternalLdda, DataRequestInternalHdca], Field(discriminator="src")
+        Union[DataRequestInternalHda, DataRequestInternalLdda, DataRequestInternalHdca, DataRequestInternalDce],
+        Field(discriminator="src"),
     ],
 )
 
@@ -598,11 +1134,14 @@ MultiDataRequestInternalDereferenced: Type = union_type(
 
 
 class DataParameterModel(BaseGalaxyToolParameterModelDefinition):
+    model_config = ConfigDict(populate_by_name=True)
+
     parameter_type: Literal["gx_data"] = "gx_data"
     type: Literal["data"]
     extensions: Annotated[
         List[str],
         Field(
+            validation_alias=AliasChoices("extensions", "format"),
             description="Limit inputs to datasets with these extensions. Use 'data' to allow all input datasets.",
             examples=["txt", "tabular", "tiff"],
         ),
@@ -610,6 +1149,24 @@ class DataParameterModel(BaseGalaxyToolParameterModelDefinition):
     multiple: Annotated[bool, Field(description="Allow multiple values to be selected.")] = False
     min: Optional[int] = None
     max: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_extensions_and_format(cls, data):
+        if isinstance(data, dict) and "extensions" in data and "format" in data:
+            raise ValueError("Specify either 'extensions' or 'format', not both")
+        return data
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        extra = kwargs["json_schema_extra"]
+        extra["gx_extensions"] = self.extensions
+        extra["gx_multiple"] = self.multiple
+        if self.min is not None:
+            extra["gx_min"] = self.min
+        if self.max is not None:
+            extra["gx_max"] = self.max
+        return kwargs
 
     @property
     def py_type(self) -> Type:
@@ -648,6 +1205,15 @@ class DataParameterModel(BaseGalaxyToolParameterModelDefinition):
         return optional_if_needed(base_model, self.optional)
 
     @property
+    def py_type_job_internal(self) -> Type:
+        base_model: Type
+        if self.multiple:
+            base_model = MultiDataRequestInternalDereferenced
+        else:
+            base_model = DataJobInternal
+        return optional_if_needed(base_model, self.optional)
+
+    @property
     def py_type_test_case(self) -> Type:
         base_model: Type
         if self.multiple:
@@ -657,9 +1223,9 @@ class DataParameterModel(BaseGalaxyToolParameterModelDefinition):
         return optional_if_needed(base_model, self.optional)
 
     def pydantic_template(self, state_representation: StateRepresentationT) -> DynamicModelInformation:
-        if state_representation == "request":
+        if state_representation in ["request", "relaxed_request"]:
             return allow_batching(dynamic_model_information_from_py_type(self, self.py_type), BatchDataInstance)
-        if state_representation == "landing_request":
+        elif state_representation == "landing_request":
             return allow_batching(
                 dynamic_model_information_from_py_type(self, self.py_type, requires_value=False), BatchDataInstance
             )
@@ -678,15 +1244,21 @@ class DataParameterModel(BaseGalaxyToolParameterModelDefinition):
                 BatchDataInstanceInternal,
             )
         elif state_representation == "job_internal":
-            return dynamic_model_information_from_py_type(self, self.py_type_internal_dereferenced, requires_value=True)
+            return dynamic_model_information_from_py_type(self, self.py_type_job_internal, requires_value=True)
         elif state_representation == "job_runtime":
             return dynamic_model_information_from_py_type(self, self.py_type_internal_json, requires_value=True)
         elif state_representation == "test_case_xml":
+            return dynamic_model_information_from_py_type(self, self.py_type_test_case)
+        elif state_representation == "test_case_json":
             return dynamic_model_information_from_py_type(self, self.py_type_test_case)
         elif state_representation == "workflow_step":
             return dynamic_model_information_from_py_type(self, type(None), requires_value=False)
         elif state_representation == "workflow_step_linked":
             return dynamic_model_information_from_py_type(self, ConnectedValue)
+        else:
+            raise NotImplementedError(
+                f"Have not implemented data collection parameter models for state representation {state_representation}"
+            )
 
     @property
     def request_requires_value(self) -> bool:
@@ -698,11 +1270,36 @@ class DataCollectionRequest(StrictModel):
     id: StrictStr
 
 
-class DataCollectionRequestInternal(StrictModel):
+class BatchCollectionInstance(StrictModel):
     src: CollectionStrT
+    id: StrictStr
+    map_over_type: Optional[str] = None
+
+
+class BatchCollectionInstanceInternal(StrictModel):
+    src: CollectionInternalSrcT
+    id: StrictInt
+    map_over_type: Optional[str] = None
+
+
+DataCollectionRequestOrCollectionUri: Type = union_type([DataCollectionRequest, DataRequestCollectionUri])
+
+
+class DataCollectionRequestInternal(StrictModel):
+    """Internal request for a collection - tracks source type.
+
+    src can be:
+    - "hdca": Direct collection input (HistoryDatasetCollectionAssociation)
+    - "dce": Subcollection mapping (DatasetCollectionElement)
+    """
+
+    src: CollectionInternalSrcT
     id: StrictInt
 
 
+DataCollectionRequestInternalOrCollectionUri: Type = union_type(
+    [DataCollectionRequestInternal, DataRequestCollectionUri]
+)
 CollectionAdapterSrcT = Literal["CollectionAdapter"]
 
 
@@ -734,12 +1331,7 @@ AdaptedDataCollectionRequest = Annotated[
     ],
     Field(discriminator="adapter_type"),
 ]
-AdaptedDataCollectionRequestTypeAdapter = TypeAdapter(AdaptedDataCollectionRequest)  # type:ignore[var-annotated]
-
-
-class DatasetCollectionElementReference(StrictModel):
-    src: Literal["dce"]
-    id: StrictInt
+AdaptedDataCollectionRequestTypeAdapter = TypeAdapter(AdaptedDataCollectionRequest)  # type: ignore[var-annotated]
 
 
 class AdaptedDataCollectionPromoteCollectionElementToCollectionRequestInternal(AdaptedDataCollectionRequestBase):
@@ -774,60 +1366,126 @@ AdaptedDataCollectionRequestInternal = Annotated[
 ]
 AdaptedDataCollectionRequestInternalTypeAdapter = TypeAdapter(
     AdaptedDataCollectionRequestInternal
-)  # type:ignore[var-annotated]
+)  # type: ignore[var-annotated]
+
+DataCollectionJobInternal: Type = Union[DataCollectionRequestInternal, AdaptedDataCollectionRequestInternal]  # type: ignore[assignment]
 
 
 class DataCollectionParameterModel(BaseGalaxyToolParameterModelDefinition):
+    model_config = ConfigDict(populate_by_name=True)
+
     parameter_type: Literal["gx_data_collection"] = "gx_data_collection"
     type: Literal["data_collection"]
     collection_type: Optional[str] = None
-    extensions: List[str] = ["data"]
+    extensions: Annotated[
+        List[str],
+        Field(validation_alias=AliasChoices("extensions", "format")),
+    ] = ["data"]
     value: Optional[Dict[str, Any]]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_extensions_and_format(cls, data):
+        if isinstance(data, dict) and "extensions" in data and "format" in data:
+            raise ValueError("Specify either 'extensions' or 'format', not both")
+        return data
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        kwargs["json_schema_extra"]["gx_extensions"] = self.extensions
+        return kwargs
 
     @property
     def py_type(self) -> Type:
-        return optional_if_needed(DataCollectionRequest, self.optional)
+        return optional_if_needed(DataCollectionRequestOrCollectionUri, self.optional)
 
     @property
     def py_type_internal(self) -> Type:
+        return optional_if_needed(DataCollectionRequestInternalOrCollectionUri, self.optional)
+
+    @property
+    def py_type_internal_dereferenced(self) -> Type:
         return optional_if_needed(DataCollectionRequestInternal, self.optional)
+
+    def _runtime_model_for_collection_type(self, ct: str) -> tuple:
+        """Map a single collection type to its runtime model and tag.
+
+        Returns tuple of (model, tag) for use in discriminated unions.
+        Uses build_collection_model_for_type which handles both leaf and nested types
+        via _LEAF_COLLECTION_MODELS lookup + recursive dynamic model generation.
+        """
+        model = build_collection_model_for_type(ct)
+        if model is not None:
+            return (model, ct)
+        return (None, None)
 
     @property
     def py_type_internal_json(self) -> Type:
-        if self.collection_type == "list":
-            return optional_if_needed(list_type(DataInternalJson), self.optional)
-        elif self.collection_type:
-            base_type: Optional[Type] = None
-            for subtype in reversed(self.collection_type.split(":")):
-                if subtype == "paired":
-                    base_type = DataCollectionPaired
-                elif subtype == "list":
-                    if base_type is None:
-                        base_type = Dict[str, DataInternalJson]
-                    else:
-                        base_type = Dict[str, base_type]  # type: ignore[valid-type]  # we use this at runtime to build pydantic model
+        # Return normalized collection runtime models with metadata
+        if not self.collection_type:
+            # Unknown collection_type - use full discriminated union
+            return optional_if_needed(CollectionRuntimeDiscriminated, self.optional)
+
+        # Handle comma-separated collection types (e.g., "list,paired")
+        if "," in self.collection_type:
+            types = [t.strip() for t in self.collection_type.split(",")]
+            tagged_types = []
+            tags_seen: set = set()
+
+            for t in types:
+                model, tag_str = self._runtime_model_for_collection_type(t)
+                if model and tag_str not in tags_seen:
+                    tags_seen.add(tag_str)
+                    tagged_types.append(Annotated[model, Tag(tag_str)])
+
+            if tagged_types:
+                if len(tagged_types) == 1:
+                    # Single type - no union needed, unwrap Annotated to get base model
+                    base_type: Type = get_args(tagged_types[0])[0]
                 else:
-                    raise Exception(f"unkown subtype '{subtype}' in collection_type '{self.collection_type}'")
-        else:
-            base_type = union_type(
-                [list_type(DataInternalJson), DataCollectionPaired, RecursiveDataCollectionInternalJson]
-            )
-        assert base_type
-        return optional_if_needed(base_type, self.optional)
+                    # Multiple types - build discriminated union
+                    # Use _collection_type_discriminator which returns full collection_type,
+                    # matching both simple tags ("list") and dynamic tags ("list:paired")
+                    base_type = cast(
+                        Type, Annotated[Union[tuple(tagged_types)], Discriminator(_collection_type_discriminator)]
+                    )
+                return optional_if_needed(base_type, self.optional)
+            # Fall through to full union if no models matched
+
+        # Single collection type
+        model, _tag = self._runtime_model_for_collection_type(self.collection_type)
+        if model:
+            return optional_if_needed(model, self.optional)
+
+        raise ValueError(f"Unknown collection_type for runtime model: '{self.collection_type}'")
 
     def pydantic_template(self, state_representation: StateRepresentationT) -> DynamicModelInformation:
-        if state_representation == "request":
-            return allow_batching(dynamic_model_information_from_py_type(self, self.py_type))
+        if state_representation in ["request", "relaxed_request"]:
+            return allow_batching(dynamic_model_information_from_py_type(self, self.py_type), BatchCollectionInstance)
         elif state_representation == "landing_request":
-            return allow_batching(dynamic_model_information_from_py_type(self, self.py_type, requires_value=False))
+            return allow_batching(
+                dynamic_model_information_from_py_type(self, self.py_type, requires_value=False),
+                BatchCollectionInstance,
+            )
         elif state_representation == "landing_request_internal":
             return allow_batching(
-                dynamic_model_information_from_py_type(self, self.py_type_internal, requires_value=False)
+                dynamic_model_information_from_py_type(self, self.py_type_internal, requires_value=False),
+                BatchCollectionInstanceInternal,
             )
-        elif state_representation in ["request_internal", "request_internal_dereferenced"]:
-            return allow_batching(dynamic_model_information_from_py_type(self, self.py_type_internal))
+        elif state_representation == "request_internal":
+            return allow_batching(
+                dynamic_model_information_from_py_type(self, self.py_type_internal),
+                BatchCollectionInstanceInternal,
+            )
+        elif state_representation == "request_internal_dereferenced":
+            return allow_batching(
+                dynamic_model_information_from_py_type(self, self.py_type_internal_dereferenced),
+                BatchCollectionInstanceInternal,
+            )
         elif state_representation == "job_internal":
-            return dynamic_model_information_from_py_type(self, self.py_type_internal, requires_value=True)
+            return dynamic_model_information_from_py_type(
+                self, optional_if_needed(DataCollectionJobInternal, self.optional), requires_value=True
+            )
         elif state_representation == "job_runtime":
             return dynamic_model_information_from_py_type(self, self.py_type_internal_json, requires_value=True)
         elif state_representation == "workflow_step":
@@ -835,6 +1493,8 @@ class DataCollectionParameterModel(BaseGalaxyToolParameterModelDefinition):
         elif state_representation == "workflow_step_linked":
             return dynamic_model_information_from_py_type(self, ConnectedValue)
         elif state_representation == "test_case_xml":
+            return dynamic_model_information_from_py_type(self, JsonTestCollectionDefDict)
+        elif state_representation == "test_case_json":
             return dynamic_model_information_from_py_type(self, JsonTestCollectionDefDict)
         else:
             raise NotImplementedError(
@@ -896,6 +1556,11 @@ class ColorParameterModel(BaseGalaxyToolParameterModelDefinition):
     type: Literal["color"]
     value: Optional[str] = None
 
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        kwargs["json_schema_extra"]["pattern"] = "^#[0-9a-f]{6}$"
+        return kwargs
+
     @property
     def py_type(self) -> Type:
         return optional_if_needed(StrictStr, self.optional)
@@ -930,9 +1595,10 @@ class ColorParameterModel(BaseGalaxyToolParameterModelDefinition):
             validators = {"color_format": field_validator(self.name)(ColorParameterModel.validate_color_str_if_value)}
         else:
             validators = {"color_format": field_validator(self.name)(ColorParameterModel.validate_color_str)}
+        field_kwargs = self.field_kwargs()
         return DynamicModelInformation(
             self.name,
-            (py_type, initialize),
+            (py_type, Field(initialize, **field_kwargs)),
             validators,
         )
 
@@ -985,7 +1651,12 @@ class DirectoryUriParameterModel(BaseGalaxyToolParameterModelDefinition):
         requires_value = self.request_requires_value
         if _is_landing_request(state_representation):
             requires_value = False
-        return dynamic_model_information_from_py_type(self, py_type, requires_value=requires_value)
+        return dynamic_model_information_from_py_type(
+            self,
+            py_type,
+            requires_value=requires_value,
+            extra_json_schema=_json_schema_extra_for_validators(self.validators),
+        )
 
     @property
     def request_requires_value(self) -> bool:
@@ -999,7 +1670,7 @@ class RulesMapping(StrictModel):
 
 class RulesModel(StrictModel):
     rules: List[Dict[str, Any]]
-    mappings: List[RulesMapping]
+    mapping: List[RulesMapping]
 
 
 class RulesParameterModel(BaseGalaxyToolParameterModelDefinition):
@@ -1027,6 +1698,14 @@ class SelectParameterModel(BaseGalaxyToolParameterModelDefinition):
     options: Optional[List[LabelValue]] = None
     multiple: bool = False
     validators: List[SelectCompatiableValidators] = []
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        extra = kwargs["json_schema_extra"]
+        if self.options is not None and self.options:
+            extra["gx_options"] = _label_value_dicts(self.options)
+        extra["gx_multiple"] = self.multiple
+        return kwargs
 
     @staticmethod
     def split_str(cls, data: Any) -> Any:
@@ -1076,6 +1755,11 @@ class SelectParameterModel(BaseGalaxyToolParameterModelDefinition):
             py_type = self.py_type_if_required(allow_connections=False)
             if self.multiple:
                 validators = {"from_string": field_validator(self.name, mode="before")(SelectParameterModel.split_str)}
+                py_type = union_type([StrictStr, py_type])
+            py_type = optional_if_needed(py_type, self.optional)
+        elif state_representation == "test_case_json":
+            # in JSON test case representation, lists are already validated as lists (no string splitting)
+            py_type = self.py_type_if_required(allow_connections=False)
             py_type = optional_if_needed(py_type, self.optional)
         elif state_representation in ("job_internal", "job_runtime"):
             requires_value = True
@@ -1094,6 +1778,7 @@ class SelectParameterModel(BaseGalaxyToolParameterModelDefinition):
 
     @property
     def default_value(self) -> Optional[str]:
+        assert not self.multiple
         if self.options:
             for option in self.options:
                 if option.selected:
@@ -1102,6 +1787,13 @@ class SelectParameterModel(BaseGalaxyToolParameterModelDefinition):
             if not self.optional:
                 return self.options[0].value
 
+        return None
+
+    @property
+    def default_values(self) -> Optional[List[str]]:
+        assert self.multiple
+        if self.options:
+            return [option.value for option in self.options if option.selected]
         return None
 
     @property
@@ -1122,12 +1814,17 @@ class GenomeBuildParameterModel(BaseGalaxyToolParameterModelDefinition):
     type: Literal["genomebuild"]
     multiple: bool
 
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        kwargs["json_schema_extra"]["gx_multiple"] = self.multiple
+        return kwargs
+
     @property
     def py_type(self) -> Type:
         py_type: Type = StrictStr
         if self.multiple:
             py_type = list_type(py_type)
-        return optional_if_needed(py_type, self.optional)
+        return optional_if_needed(py_type, self.optional or self.multiple)
 
     def pydantic_template(self, state_representation: StateRepresentationT) -> DynamicModelInformation:
         requires_value = self.request_requires_value
@@ -1176,6 +1873,11 @@ class DrillDownParameterModel(BaseGalaxyToolParameterModelDefinition):
     multiple: bool
     hierarchy: DrillDownHierarchyT
 
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        kwargs["json_schema_extra"]["gx_multiple"] = self.multiple
+        return kwargs
+
     @property
     def py_type(self) -> Type:
         if self.options is not None:
@@ -1199,6 +1901,9 @@ class DrillDownParameterModel(BaseGalaxyToolParameterModelDefinition):
 
     def pydantic_template(self, state_representation: StateRepresentationT) -> DynamicModelInformation:
         py_type = self.py_type_test_case_xml if state_representation == "test_case_xml" else self.py_type
+        if state_representation == "test_case_json":
+            # JSON test cases use the normal type (not string-based)
+            py_type = self.py_type
         requires_value = self.request_requires_value
         if state_representation in ("job_internal", "job_runtime"):
             requires_value = True
@@ -1266,6 +1971,11 @@ class DataColumnParameterModel(BaseGalaxyToolParameterModelDefinition):
     multiple: bool
     value: Optional[Union[int, List[int]]] = None
 
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        kwargs["json_schema_extra"]["gx_multiple"] = self.multiple
+        return kwargs
+
     @staticmethod
     def split_str(cls, data: Any) -> Any:
         if isinstance(data, str):
@@ -1288,11 +1998,19 @@ class DataColumnParameterModel(BaseGalaxyToolParameterModelDefinition):
                 validators = {
                     "from_string": field_validator(self.name, mode="before")(DataColumnParameterModel.split_str)
                 }
+                py_type = union_type([StrictStr, self.py_type])
             else:
                 validators = {}
+                py_type = self.py_type
             requires_value = self.request_requires_value
             return dynamic_model_information_from_py_type(
-                self, self.py_type, validators=validators, requires_value=requires_value
+                self, py_type, validators=validators, requires_value=requires_value
+            )
+        elif state_representation == "test_case_json":
+            # JSON test cases accept lists directly (no string splitting)
+            requires_value = self.request_requires_value
+            return dynamic_model_information_from_py_type(
+                self, self.py_type, validators={}, requires_value=requires_value
             )
         else:
             requires_value = self.request_requires_value
@@ -1309,6 +2027,11 @@ class GroupTagParameterModel(BaseGalaxyToolParameterModelDefinition):
     parameter_type: Literal["gx_group_tag"] = "gx_group_tag"
     type: Literal["group_tag"]
     multiple: bool
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        kwargs["json_schema_extra"]["gx_multiple"] = self.multiple
+        return kwargs
 
     @property
     def py_type(self) -> Type:
@@ -1348,7 +2071,7 @@ DiscriminatorType = Union[bool, str]
 
 
 def cond_test_parameter_default_value(
-    test_parameter: Union["BooleanParameterModel", "SelectParameterModel"],
+    test_parameter: Union[BooleanParameterModel, "SelectParameterModel"],
 ) -> Optional[DiscriminatorType]:
     default_value: Optional[DiscriminatorType] = None
     if isinstance(test_parameter, BooleanParameterModel):
@@ -1371,6 +2094,18 @@ class ConditionalParameterModel(BaseGalaxyToolParameterModelDefinition):
     type: Literal["conditional"]
     test_parameter: Union[BooleanParameterModel, SelectParameterModel]
     whens: List[ConditionalWhen]
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        extra = kwargs["json_schema_extra"]
+        test_param = self.test_parameter
+        if isinstance(test_param, SelectParameterModel) and test_param.options:
+            extra["gx_options"] = _label_value_dicts(test_param.options)
+        if test_param.label:
+            extra["gx_test_label"] = test_param.label
+        if test_param.help:
+            extra["gx_test_help"] = test_param.help
+        return kwargs
 
     def pydantic_template(self, state_representation: StateRepresentationT) -> DynamicModelInformation:
         is_boolean = isinstance(self.test_parameter, BooleanParameterModel)
@@ -1461,9 +2196,10 @@ class ConditionalParameterModel(BaseGalaxyToolParameterModelDefinition):
             else:
                 initialize_cond = None
 
+        field_kwargs = self.field_kwargs()
         return DynamicModelInformation(
             self.name,
-            (py_type, initialize_cond),
+            (py_type, Field(initialize_cond, **field_kwargs)),
             {},
         )
 
@@ -1478,6 +2214,15 @@ class RepeatParameterModel(BaseGalaxyToolParameterModelDefinition):
     parameters: List["ToolParameterT"]
     min: Optional[int] = None
     max: Optional[int] = None
+
+    def field_kwargs(self) -> Dict[str, Any]:
+        kwargs = super().field_kwargs()
+        extra = kwargs["json_schema_extra"]
+        if self.min is not None:
+            extra["gx_min"] = self.min
+        if self.max is not None:
+            extra["gx_max"] = self.max
+        return kwargs
 
     def pydantic_template(self, state_representation: StateRepresentationT) -> DynamicModelInformation:
         # Maybe validators for min and max...
@@ -1502,9 +2247,10 @@ class RepeatParameterModel(BaseGalaxyToolParameterModelDefinition):
         class RepeatType(RootModel):
             root: List[instance_class] = Field(initialize_repeat, min_length=min_length, max_length=max_length)  # type: ignore[valid-type]
 
+        field_kwargs = self.field_kwargs()
         return DynamicModelInformation(
             self.name,
-            (RepeatType, initialize_repeat),
+            (RepeatType, Field(initialize_repeat, **field_kwargs)),
             {},
         )
 
@@ -1536,9 +2282,10 @@ class SectionParameterModel(BaseGalaxyToolParameterModelDefinition):
             initialize_section = ...
         else:
             initialize_section = None
+        field_kwargs = self.field_kwargs()
         return DynamicModelInformation(
             self.name,
-            (instance_class, initialize_section),
+            (instance_class, Field(initialize_section, **field_kwargs)),
             {},
         )
 
@@ -1756,6 +2503,12 @@ RepeatParameterModel.model_rebuild()
 CwlUnionParameterModel.model_rebuild()
 
 
+class MaybeToolParameterBundle(Protocol):
+    """An object that may or may not be a ToolParameterModel, but if it is a model, it has a root that is a ToolParameterT"""
+
+    parameters: Optional[List[ToolParameterT]]
+
+
 class ToolParameterBundle(Protocol):
     """An object having a dictionary of input models (i.e. a 'Tool')"""
 
@@ -1774,12 +2527,14 @@ def to_simple_model(input_parameter: Union[ToolParameterModel, ToolParameterT]) 
         return cast(ToolParameterT, input_parameter)
 
 
-def simple_input_models(parameters: Union[List[ToolParameterModel], List[ToolParameterT]]) -> Iterable[ToolParameterT]:
+def simple_input_models(
+    parameters: Union[List[ToolParameterModel], List[ToolParameterT]],
+) -> Iterable[ToolParameterT]:
     return [to_simple_model(m) for m in parameters]
 
 
 def create_model_strict(*args, **kwd) -> Type[BaseModel]:
-    # proteted_namespaces here prevents tool with model_ parameter names from issueing warnings
+    # protected_namespaces here prevents tool with model_ parameter names from issuing warnings
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
     return create_model(*args, __config__=model_config, **kwd)
@@ -1793,6 +2548,7 @@ def create_model_factory(state_representation: StateRepresentationT):
     return create_method
 
 
+create_relaxed_request_model = create_model_factory("relaxed_request")
 create_request_model = create_model_factory("request")
 create_request_internal_model = create_model_factory("request_internal")
 create_request_internal_dereferenced_model = create_model_factory("request_internal_dereferenced")
@@ -1801,6 +2557,7 @@ create_landing_request_internal_model = create_model_factory("landing_request_in
 create_job_internal_model = create_model_factory("job_internal")
 create_job_runtime_model = create_model_factory("job_runtime")
 create_test_case_model = create_model_factory("test_case_xml")
+create_test_case_json_model = create_model_factory("test_case_json")
 create_workflow_step_model = create_model_factory("workflow_step")
 create_workflow_step_linked_model = create_model_factory("workflow_step_linked")
 

@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import joinedload
 
-import tool_shed.dependencies.repository
+import tool_shed.dependencies.repository.relation_builder
 from galaxy import (
     util,
     web,
@@ -59,7 +59,6 @@ from tool_shed.util.metadata_util import (
 from tool_shed.webapp import model
 from tool_shed.webapp.model.db import (
     get_repository_by_name_and_owner,
-    get_repository_query,
 )
 
 if TYPE_CHECKING:
@@ -242,17 +241,18 @@ def create_repository(
     final_repository_path = repository.ensure_hg_repository_path(app.config.file_path)
     os.rename(repository_path, final_repository_path)
     app.hgweb_config_manager.add_entry(lhs, final_repository_path)
-    # Update the repository registry.
-    app.repository_registry.add_entry(repository)
     message = f"Repository <b>{escape(str(repository.name))}</b> has been created."
     return repository, message
 
 
 def generate_sharable_link_for_repository_in_tool_shed(
-    repository: model.Repository, changeset_revision: Optional[str] = None
+    repository: model.Repository, changeset_revision: Optional[str] = None, base_url: Optional[str] = None
 ) -> str:
     """Generate the URL for sharing a repository that is in the tool shed."""
-    base_url = web.url_for("/", qualified=True).rstrip("/")
+    if base_url is None:
+        base_url = web.url_for("/", qualified=True).rstrip("/")
+    else:
+        base_url = base_url.rstrip("/")
     sharable_url = f"{base_url}/view/{repository.user.username}/{repository.name}"
     if changeset_revision:
         sharable_url += f"/{changeset_revision}"
@@ -261,10 +261,8 @@ def generate_sharable_link_for_repository_in_tool_shed(
 
 def get_repository_in_tool_shed(app: "ToolShedApp", id, eagerload_columns=None):
     """Get a repository on the tool shed side from the database via id."""
-    q = get_repository_query(app.model.context)
-    if eagerload_columns:
-        q = q.options(joinedload(*eagerload_columns))
-    return q.get(app.security.decode_id(id))
+    options = [joinedload(col) for col in eagerload_columns] if eagerload_columns else []
+    return app.model.context.get(model.Repository, app.security.decode_id(id), options=options)
 
 
 def get_repo_info_dict(trans: "ProvidesRepositoriesContext", repository_id, changeset_revision):
@@ -470,7 +468,7 @@ def update_validated_repository(
     if "category_ids" in kwds and isinstance(kwds["category_ids"], list):
 
         # Remove existing category associations
-        delete_repository_category_associations(sa_session, model.RepositoryCategoryAssociation, repository.id)
+        _delete_repository_category_associations(sa_session, model.RepositoryCategoryAssociation, repository.id)
 
         # Then (re)create category associations
         for category_id in kwds["category_ids"]:
@@ -590,7 +588,7 @@ def get_current_groups(session: "scoped_session"):
     return session.scalars(stmt)
 
 
-def delete_repository_category_associations(session, repository_category_assoc_model, repository_id):
+def _delete_repository_category_associations(session, repository_category_assoc_model, repository_id):
     stmt = delete(repository_category_assoc_model).where(repository_category_assoc_model.repository_id == repository_id)
     return session.execute(stmt)
 

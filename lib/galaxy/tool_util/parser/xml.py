@@ -18,6 +18,7 @@ from typing import (
 )
 
 from packaging.version import Version
+from pydantic import TypeAdapter
 
 from galaxy.tool_util.deps import requirements
 from galaxy.tool_util.parser.util import (
@@ -30,6 +31,10 @@ from galaxy.tool_util.parser.util import (
     DEFAULT_SORT,
 )
 from galaxy.tool_util_models.parameter_validators import AnyValidatorModel
+from galaxy.tool_util_models.testing_types import (
+    AssertionList,
+    DirectCredential,
+)
 from galaxy.tool_util_models.tool_source import (
     Citation,
     DrillDownOptionsDict,
@@ -52,10 +57,10 @@ from galaxy.util import (
     xml_to_string,
 )
 from .interface import (
-    AssertionList,
     DrillDownDynamicOptions,
     DynamicOptions,
     InputSource,
+    InputsStyleT,
     PageSource,
     PagesSource,
     RequiredFiles,
@@ -738,8 +743,16 @@ class XmlToolSource(ToolSource):
         for citation_elem in citations_elem:
             try:
                 citation = parse_citation_elem(citation_elem)
-            except Exception:
-                if Version(self.parse_profile()) < Version("24.2"):
+            except Exception as e:
+                # Only fail to load fatally for tools targeting 26.1+. Older tools
+                # skip the offending citation, but log it so the drop is visible
+                # rather than silent.
+                if Version(self.parse_profile()) < Version("26.1"):
+                    log.warning(
+                        "Tool '%s' has an invalid citation that will be skipped: %s",
+                        self._source_path or self.parse_id(),
+                        e,
+                    )
                     continue
                 else:
                     raise
@@ -765,7 +778,7 @@ class XmlToolSource(ToolSource):
         return configfiles
 
     def parse_input_configfiles(self) -> Sequence[InputConfigFile]:
-        config_files: list[InputConfigFile] = []
+        config_files: List[InputConfigFile] = []
         if (conf_parent_elem := self.root.find("configfiles")) is not None:
             inputs_elem = conf_parent_elem.find("inputs")
             if inputs_elem is not None:
@@ -778,7 +791,7 @@ class XmlToolSource(ToolSource):
         return config_files
 
     def parse_file_sources(self) -> Sequence[FileSourceConfigFile]:
-        config_files: list[FileSourceConfigFile] = []
+        config_files: List[FileSourceConfigFile] = []
         if (conf_parent_elem := self.root.find("configfiles")) is not None:
             file_sources_elem = conf_parent_elem.find("file_sources")
             if file_sources_elem is not None:
@@ -821,6 +834,8 @@ def _test_elem_to_dict(test_elem, i, profile=None) -> ToolSourceTest:
         expect_failure=string_as_bool(test_elem.get("expect_failure", False)),
         expect_test_failure=string_as_bool(test_elem.get("expect_test_failure", False)),
         maxseconds=test_elem.get("maxseconds", None),
+        value_state_representation="test_case_xml",
+        credentials=__parse_credentials_elems(test_elem),
     )
     _copy_to_dict_if_present(test_elem, rval, ["num_outputs"])
     return rval
@@ -926,6 +941,17 @@ def __parse_test_attributes(
         count = int(attrib.pop("count"))
     except KeyError:
         pass
+    min: Optional[int] = None
+    try:
+        min = int(attrib.pop("min"))
+    except KeyError:
+        pass
+    max: Optional[int] = None
+    try:
+        max = int(attrib.pop("max"))
+    except KeyError:
+        pass
+    has_count_assertions = count is not None or min is not None or max is not None
     extra_files: List[Dict[str, Any]] = []
     ftype: Optional[str] = None
     if "ftype" in attrib:
@@ -953,7 +979,16 @@ def __parse_test_attributes(
     has_checksum = md5sum or checksum
     has_nested_tests = extra_files or element_tests or primary_datasets
     has_object = value_object is not VALUE_OBJECT_UNSET
-    if not (assert_list or file or metadata or has_checksum or has_nested_tests or has_object):
+    if not (
+        assert_list
+        or file
+        or metadata
+        or ftype
+        or has_checksum
+        or has_nested_tests
+        or has_object
+        or has_count_assertions
+    ):
         raise Exception(
             "Test output defines nothing to check (e.g. must have a 'file' check against, assertions to check, metadata or checksum tests, etc...)"
         )
@@ -970,6 +1005,8 @@ def __parse_test_attributes(
         pin_labels=pin_labels,
         location=location,
         count=count,
+        min=min,
+        max=max,
         metadata=metadata,
         md5=md5sum,
         checksum=checksum,
@@ -1080,6 +1117,29 @@ def __parse_inputs_elems(test_elem, i) -> ToolSourceTestInputs:
         raw_inputs.append(__parse_param_elem(param_elem, i))
 
     return raw_inputs
+
+
+_direct_credential_adapter: TypeAdapter = TypeAdapter(List[DirectCredential])
+
+
+def __parse_credentials_elems(test_elem):
+    """
+    Parse credential definitions from test element.
+    Returns a list of DirectCredential dictionaries or None if no credentials are defined.
+    """
+    raw_list = []
+    for cred_elem in test_elem.findall("credentials"):
+        variables = [{"name": v.get("name"), "value": v.get("value")} for v in cred_elem.findall("variable")]
+        secrets = [{"name": s.get("name"), "value": s.get("value")} for s in cred_elem.findall("secret")]
+        raw: dict = {"name": cred_elem.get("name"), "variables": variables, "secrets": secrets}
+        version = cred_elem.get("version")
+        if version is not None:
+            raw["version"] = version
+        raw_list.append(raw)
+
+    if not raw_list:
+        return None
+    return _direct_credential_adapter.validate_python(raw_list)
 
 
 def _test_collection_def_dict(elem: Element) -> XmlTestCollectionDefDict:
@@ -1343,11 +1403,13 @@ class XmlPagesSource(PagesSource):
     def __init__(self, root):
         self.input_elem = root.find("inputs")
         page_sources = []
+        inputs_style: InputsStyleT = "none"
         if self.input_elem is not None:
+            inputs_style = "cheetah"
             pages_elem = self.input_elem.findall("page")
             for page in pages_elem or [self.input_elem]:
                 page_sources.append(XmlPageSource(page))
-        super().__init__(page_sources)
+        super().__init__(page_sources, inputs_style)
 
     @property
     def inputs_defined(self):
@@ -1489,7 +1551,7 @@ class XmlInputSource(InputSource):
 
         root_options: List[DrillDownOptionsDict] = []
         options_elem = elem.find("options")
-        assert options_elem, "Non-dynamic drilldown parameters must supply an options element"
+        assert options_elem is not None, "Non-dynamic drilldown parameters must supply an options element"
         _recurse_drill_down_elems(root_options, options_elem.findall("option"))
         return root_options
 
@@ -1550,7 +1612,7 @@ class XmlInputSource(InputSource):
             for element in elements:
                 identifier = element.get("name")
                 subcollection_elem = element.find("collection")
-                if subcollection_elem:
+                if subcollection_elem is not None:
                     collection_type = subcollection_elem.get("collection_type")
                     element_dicts.append(
                         {

@@ -176,6 +176,11 @@ class AuthenticationFailed(MessageException):
     err_code = error_codes_by_name["USER_AUTHENTICATION_FAILED"]
 
 
+class FileSourceCredentialExpired(MessageException):
+    status_code = 401
+    err_code = error_codes_by_name["FILE_SOURCE_CREDENTIAL_EXPIRED"]
+
+
 class AuthenticationRequired(MessageException):
     status_code = 403
     # TODO: as 401 and send WWW-Authenticate: ???
@@ -306,6 +311,16 @@ class ServerNotConfiguredForRequest(MessageException):
     # request being "forbidden". It just isn't configured.
     status_code = 501
     err_code = error_codes_by_name["SERVER_NOT_CONFIGURED_FOR_REQUEST"]
+
+
+class UpstreamProxyError(MessageException):
+    status_code = 502
+    err_code = error_codes_by_name["UPSTREAM_PROXY_ERROR"]
+
+
+class GatewayTimeoutException(MessageException):
+    status_code = 504
+    err_code = error_codes_by_name["UPSTREAM_PROXY_TIMEOUT"]
 
 
 class HandlerAssignmentError(Exception):

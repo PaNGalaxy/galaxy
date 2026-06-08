@@ -40,6 +40,7 @@ from galaxy.web.framework.base import walk_controller_modules
 
 if TYPE_CHECKING:
     from starlette.background import BackgroundTask
+    from starlette.routing import BaseRoute
     from starlette.types import (
         Receive,
         Scope,
@@ -55,7 +56,7 @@ log = getLogger(__name__)
 def _get_range_header(range_header: str, file_size: int) -> tuple[int, int]:
     def _invalid_range():
         return HTTPException(
-            status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            status.HTTP_416_RANGE_NOT_SATISFIABLE,
             detail=f"Invalid request range (Range:{range_header!r})",
         )
 
@@ -88,11 +89,17 @@ class GalaxyFileResponse(FileResponse):
         background: Optional["BackgroundTask"] = None,
         filename: Optional[str] = None,
         stat_result: Optional[os.stat_result] = None,
-        method: Optional[str] = None,
         content_disposition_type: str = "attachment",
     ) -> None:
         super().__init__(
-            path, status_code, headers, media_type, background, filename, stat_result, method, content_disposition_type
+            path=path,
+            status_code=status_code,
+            headers=headers,
+            media_type=media_type,
+            background=background,
+            filename=filename,
+            stat_result=stat_result,
+            content_disposition_type=content_disposition_type,
         )
         self.headers["accept-ranges"] = "bytes"
         self.xsendfile = self.nginx_x_accel_redirect_base or self.apache_xsendfile
@@ -243,6 +250,21 @@ def add_raw_context_middlewares(app: FastAPI):
 
 def add_request_id_middleware(app: FastAPI):
     app.add_middleware(RawContextMiddleware, plugins=(RequestIdPlugin(force_new_uuid=True),))
+
+
+def build_route_name_index(app: FastAPI) -> dict[str, list["BaseRoute"]]:
+    """Build a name -> [route] index for O(1) route lookup.
+
+    Routes are immutable after app startup, so this index is built once
+    and reused for all subsequent requests. For most route names there
+    is exactly one candidate, making lookups O(1) instead of O(n).
+    """
+    index: dict[str, list[BaseRoute]] = {}
+    for route in app.routes:
+        name = getattr(route, "name", None)
+        if name:
+            index.setdefault(name, []).append(route)
+    return index
 
 
 def include_all_package_routers(app: FastAPI, package_name: str):
