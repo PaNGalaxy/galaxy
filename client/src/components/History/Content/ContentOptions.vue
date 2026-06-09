@@ -60,9 +60,7 @@ const canShowCollectionDetails = computed(() => props.itemUrls.showDetails);
 const showCollectionDetailsUrl = computed(() => prependPath(props.itemUrls.showDetails));
 
 function onDelete($event: MouseEvent) {
-    if (props.isRunningInteractiveTool) {
-        stopInteractiveTool();
-    } else if (isCollection.value) {
+    if (isCollection.value) {
         deleteCollectionMenu.value?.show();
     } else {
         onDeleteItem();
