@@ -135,7 +135,7 @@ onMounted(() => {
                 </BAlert>
             </template>
 
-            <template v-slot:cell(actions)="{ item }">
+            <!-- <template v-slot:cell(actions)="{ item }">
                 <BButton
                     :id="createId('stop', item.id)"
                     v-g-tooltip.hover
@@ -145,7 +145,7 @@ onMounted(() => {
                     @click.stop="stopInteractiveTool(item.id, item.name)">
                     <FontAwesomeIcon :icon="faStop" />
                 </BButton>
-            </template>
+            </template> -->
 
             <template v-slot:cell(name)="{ item, index }">
                 <GLink
