@@ -1132,15 +1132,16 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             remote_system_properties = remote_job_config.get("system_properties", {})
             remote_galaxy_home = remote_system_properties.get("galaxy_home")
             set_meta_in_pulsar = remote_system_properties.get("set_meta_in_pulsar")
-            if not job_wrapper.use_metadata_binary and remote_galaxy_home:
-                if not set_meta_in_pulsar:
+            if not job_wrapper.use_metadata_binary:
+                if not remote_galaxy_home and not set_meta_in_pulsar:
                     raise Exception(NO_REMOTE_GALAXY_FOR_METADATA_MESSAGE)
-                metadata_kwds["exec_dir"] = remote_galaxy_home
-                metadata_kwds["compute_tmp_dir"] = metadata_directory
-                metadata_kwds["config_root"] = remote_galaxy_home
-                default_config_file = os.path.join(remote_galaxy_home, "config/galaxy.ini")
-                metadata_kwds["config_file"] = remote_system_properties.get("galaxy_config_file", default_config_file)
-                metadata_kwds["dataset_files_path"] = remote_system_properties.get("galaxy_dataset_files_path", None)
+                if not set_meta_in_pulsar:
+                    metadata_kwds["exec_dir"] = remote_galaxy_home
+                    metadata_kwds["compute_tmp_dir"] = metadata_directory
+                    metadata_kwds["config_root"] = remote_galaxy_home
+                    default_config_file = os.path.join(remote_galaxy_home, "config/galaxy.ini")
+                    metadata_kwds["config_file"] = remote_system_properties.get("galaxy_config_file", default_config_file)
+                    metadata_kwds["dataset_files_path"] = remote_system_properties.get("galaxy_dataset_files_path", None)
             if PulsarJobRunner.__use_remote_datatypes_conf(client):
                 remote_datatypes_config = remote_system_properties.get("galaxy_datatypes_config_file")
                 if not remote_datatypes_config:
