@@ -1131,8 +1131,9 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             metadata_kwds["output_fnames"] = rewritten_outputs
             remote_system_properties = remote_job_config.get("system_properties", {})
             remote_galaxy_home = remote_system_properties.get("galaxy_home")
-            if not job_wrapper.use_metadata_binary:
-                if not remote_galaxy_home:
+            set_meta_in_pulsar = remote_system_properties.get("set_meta_in_pulsar")
+            if not job_wrapper.use_metadata_binary and remote_galaxy_home:
+                if not set_meta_in_pulsar:
                     raise Exception(NO_REMOTE_GALAXY_FOR_METADATA_MESSAGE)
                 metadata_kwds["exec_dir"] = remote_galaxy_home
                 metadata_kwds["compute_tmp_dir"] = metadata_directory

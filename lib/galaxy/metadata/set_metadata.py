@@ -191,6 +191,8 @@ def set_metadata_portable(
             # to MetadataTempFile constructor. Remove if we ever remove TS datatypes.
             MetadataTempFile.tmp_dir = metadata_tmp_files_dir
     datatypes_config = tool_job_working_directory / metadata_params["datatypes_config"]
+    if not os.path.exists(datatypes_config):
+        datatypes_config = os.path.join(tool_job_working_directory, "configs", datatypes_config)
     datatypes_registry = validate_and_load_datatypes_config(datatypes_config)
     job_metadata = tool_job_working_directory / metadata_params["job_metadata"]
     provided_metadata_style = metadata_params.get("provided_metadata_style")
