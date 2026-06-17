@@ -328,6 +328,8 @@ class PSAAuthnz(IdentityProvider):
 
     def authenticate(self, trans, idphint=None) -> "HttpResponseProtocol":
         on_the_fly_config(trans.sa_session)
+        # Need the transaction to set cookies in the PingFed handler.
+        self.config["GALAXY_TRANS"] = trans
         strategy = Strategy(trans.request, trans.session, Storage, self.config)
         backend = self._load_backend(strategy, self.config["redirect_uri"])
         backend.DEFAULT_SCOPE = backend.DEFAULT_SCOPE or []
