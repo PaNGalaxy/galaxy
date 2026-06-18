@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faAngleDoubleLeft, faAngleLeft } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BButton } from "bootstrap-vue";
 import { computed } from "vue";
 
 import type { CollectionEntry } from "@/api";
-
-library.add(faAngleDoubleLeft, faAngleLeft);
 
 interface Props {
     historyName: string;
@@ -42,7 +39,7 @@ function close() {
 <template>
     <div class="mx-1 mt-1">
         <BButton
-            v-b-tooltip:hover="historyName"
+            v-g-tooltip:hover="historyName"
             size="sm"
             class="text-left text-decoration-none overflow-hidden text-nowrap w-100"
             style="text-overflow: ellipsis"

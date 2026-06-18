@@ -4,10 +4,40 @@ History
 .. to_doc
 
 ---------
-25.1.dev0
+26.1.dev0
 ---------
 
 
+
+-------------------
+26.0.0 (2026-04-08)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.1.2 (2026-03-09)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.1.1 (2026-02-03)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.1.0 (2025-12-12)
+-------------------
+
+No recorded changes since last release
+
+-------------------
+25.0.4 (2025-11-18)
+-------------------
+
+No recorded changes since last release
 
 -------------------
 25.0.3 (2025-09-23)

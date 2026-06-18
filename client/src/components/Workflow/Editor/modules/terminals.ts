@@ -3,14 +3,15 @@ import EventEmitter from "events";
 import type { DatatypesMapperModel } from "@/components/Datatypes/model";
 import type { useWorkflowStores } from "@/composables/workflowStores";
 import { getConnectionId } from "@/stores/workflowConnectionStore";
-import type {
-    CollectionOutput,
-    DataCollectionStepInput,
-    DataOutput,
-    DataStepInput,
-    ParameterOutput,
-    ParameterStepInput,
-    TerminalSource,
+import {
+    type CollectionOutput,
+    type DataCollectionStepInput,
+    type DataOutput,
+    type DataStepInput,
+    getCombinedStepInputs,
+    type ParameterOutput,
+    type ParameterStepInput,
+    type TerminalSource,
 } from "@/stores/workflowStepStore";
 import type { Connection, ConnectionId } from "@/stores/workflowStoreTypes";
 import { assertDefined } from "@/utils/assertions";
@@ -21,6 +22,7 @@ import {
     type CollectionTypeDescriptor,
     NULL_COLLECTION_TYPE_DESCRIPTION,
 } from "./collectionTypeDescription";
+import { applyCompaction, computePickValueCompaction, reverseCompaction } from "./pickValueCompact";
 
 export const NO_COLLECTION_TYPE_INFORMATION_MESSAGE =
     "No collection type or collection type source defined - this is fine but may lead to less intuitive connection logic.";
@@ -105,12 +107,35 @@ class Terminal extends EventEmitter {
         this.stores.connectionStore.addConnection(connection);
     }
     disconnect(other: Terminal | Connection) {
-        this.stores.undoRedoStore
-            .action()
-            .onRun(() => this.dropConnection(other))
-            .onUndo(() => this.makeConnection(other))
-            .setName("disconnect steps")
-            .apply();
+        const connection = this.buildConnection(other);
+        const step = this.stores.stepStore.getStep(connection.input.stepId);
+
+        if (step?.type === "pick_value") {
+            const compaction = computePickValueCompaction(step.input_connections, connection.input.name);
+            this.stores.undoRedoStore
+                .action()
+                .onRun(() => {
+                    this.dropConnection(other);
+                    if (compaction.renames.length > 0) {
+                        applyCompaction(step.id, compaction.renames, this.stores.connectionStore);
+                    }
+                })
+                .onUndo(() => {
+                    if (compaction.renames.length > 0) {
+                        reverseCompaction(step.id, compaction.renames, this.stores.connectionStore);
+                    }
+                    this.makeConnection(other);
+                })
+                .setName("disconnect steps")
+                .apply();
+        } else {
+            this.stores.undoRedoStore
+                .action()
+                .onRun(() => this.dropConnection(other))
+                .onUndo(() => this.makeConnection(other))
+                .setName("disconnect steps")
+                .apply();
+        }
     }
     dropConnection(other: Terminal | Connection) {
         const connection = this.buildConnection(other);
@@ -476,19 +501,21 @@ export class InputTerminal extends BaseInputTerminal {
                     );
                 }
             }
-            if (mapOver.isCollection && mapOver.canMatch(otherCollectionType)) {
+            if (mapOver.isCollection && mapOver.accepts(otherCollectionType)) {
                 return this._producesAcceptableDatatypeAndOptionalness(other);
             } else if (
                 this.multiple &&
-                new CollectionTypeDescription("list").append(this.mapOver).canMatch(otherCollectionType)
+                new CollectionTypeDescription("list").append(this.mapOver).accepts(otherCollectionType)
             ) {
                 // This handles the special case of a list input being connected to a multiple="true" data input.
                 // Nested lists would be correctly mapped over by the above condition.
                 return this._producesAcceptableDatatypeAndOptionalness(other);
             } else {
                 //  Need to check if this would break constraints...
+                // Sibling map-over states: use symmetric ``compatible`` so order
+                // of arrival of sibling inputs doesn't change the answer.
                 const mappingConstraints = this._mappingConstraints();
-                if (mappingConstraints.every(otherCollectionType.canMatch.bind(otherCollectionType))) {
+                if (mappingConstraints.every((constraint) => constraint.compatible(otherCollectionType))) {
                     return this._producesAcceptableDatatypeAndOptionalness(other);
                 } else {
                     if (mapOver.isCollection) {
@@ -594,8 +621,8 @@ export class InputCollectionTerminal extends BaseInputTerminal {
     }
     _effectiveMapOver(otherCollectionType: CollectionTypeDescriptor) {
         const collectionTypes = this.collectionTypes;
-        const canMatch = collectionTypes.some((collectionType) => collectionType.canMatch(otherCollectionType));
-        if (!canMatch) {
+        const directlyAccepted = collectionTypes.some((collectionType) => collectionType.accepts(otherCollectionType));
+        if (!directlyAccepted) {
             for (const collectionTypeIndex in collectionTypes) {
                 const collectionType = collectionTypes[collectionTypeIndex]!;
 
@@ -618,10 +645,26 @@ export class InputCollectionTerminal extends BaseInputTerminal {
         if (otherCollectionType.isCollection) {
             const effectiveCollectionTypes = this._effectiveCollectionTypes();
             const mapOver = this.mapOver;
-            const canMatch = effectiveCollectionTypes.some((effectiveCollectionType) =>
-                effectiveCollectionType.canMatch(otherCollectionType),
-            );
-            if (canMatch) {
+            // Defense-in-depth: ``accepts`` carries the sample_sheet asymmetry
+            // guard, but only when the receiver type itself starts with
+            // "sample_sheet". A non-null ``localMapOver`` could in principle
+            // produce an effective type like "list:sample_sheet" that hides
+            // the guard from ``accepts``. Re-check against the raw declared
+            // input type to be safe — matches the structure HEAD had inline.
+            const accepted = effectiveCollectionTypes.some((effectiveCollectionType, i) => {
+                if (!effectiveCollectionType.accepts(otherCollectionType)) {
+                    return false;
+                }
+                const rawInputType = this.collectionTypes[i]?.collectionType;
+                if (
+                    rawInputType?.startsWith("sample_sheet") &&
+                    !otherCollectionType.collectionType?.startsWith("sample_sheet")
+                ) {
+                    return false;
+                }
+                return true;
+            });
+            if (accepted) {
                 // Only way a direct match...
                 return this._producesAcceptableDatatypeAndOptionalness(other);
                 // Otherwise we need to mapOver
@@ -642,8 +685,10 @@ export class InputCollectionTerminal extends BaseInputTerminal {
                 // we're not mapped over - but hey maybe we could be... lets check.
                 const effectiveMapOver = this._effectiveMapOver(otherCollectionType);
                 //  Need to check if this would break constraints...
+                // Sibling map-over states: use symmetric ``compatible`` so order
+                // of arrival of sibling inputs doesn't change the answer.
                 const mappingConstraints = this._mappingConstraints();
-                if (mappingConstraints.every((d) => effectiveMapOver.canMatch(d))) {
+                if (mappingConstraints.every((d) => d.compatible(effectiveMapOver))) {
                     return this._producesAcceptableDatatypeAndOptionalness(other);
                 } else {
                     return new ConnectionAcceptable(
@@ -695,10 +740,8 @@ class BaseOutputTerminal extends Terminal {
             const inputStep = this.stores.stepStore.getStep(connection.input.stepId);
             assertDefined(inputStep, `Invalid step. Could not find step with id ${connection.input.stepId} in store.`);
 
-            const extraStepInput = this.stores.stepStore.getStepExtraInputs(inputStep.id);
-            const terminalSource = [...extraStepInput, ...inputStep.inputs].find(
-                (input) => input.name === connection.input.name,
-            );
+            const allInputs = getCombinedStepInputs(inputStep, this.stores.stepStore);
+            const terminalSource = allInputs.find((input) => input.name === connection.input.name);
             if (!terminalSource) {
                 return new InvalidInputTerminal({
                     valid: false,
@@ -808,10 +851,13 @@ export class OutputCollectionTerminal extends BaseOutputTerminal {
                     const otherCollectionType = inputTerminal._otherCollectionType(outputTerminal);
                     // we need to find which of the possible input collection types is connected
                     if ("collectionTypes" in inputTerminal) {
-                        // collection_type_source must point at input collection terminal
+                        // collection_type_source must point at input collection terminal.
+                        // Direction here is input_type.accepts(output_type): the
+                        // receiver is the declared input collection type; the
+                        // argument is the connected output's shape.
                         const connectedCollectionType = inputTerminal.collectionTypes.find(
                             (collectionType) =>
-                                otherCollectionType.canMatch(collectionType) ||
+                                collectionType.accepts(otherCollectionType) ||
                                 otherCollectionType.canMapOver(collectionType),
                         );
                         if (connectedCollectionType) {

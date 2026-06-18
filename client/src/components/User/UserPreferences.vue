@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import axios from "axios";
-import { BAlert, BModal } from "bootstrap-vue";
+import { BAlert } from "bootstrap-vue";
 import {
     faBell,
     faBroadcastTower,
@@ -11,6 +12,7 @@ import {
     faKey,
     faLock,
     faPalette,
+    faPerson,
     faRadiation,
     faSignOut,
     faUsers,
@@ -18,16 +20,21 @@ import {
 import { computed, onMounted, ref } from "vue";
 
 import { getGalaxyInstance } from "@/app";
+import { hasSingleOidcProfile, type OIDCConfig } from "@/components/User/ExternalIdentities/ExternalIDHelper";
 import { getUserPreferencesModel } from "@/components/User/UserPreferencesModel";
 import { useConfig } from "@/composables/config";
 import { useConfirmDialog } from "@/composables/confirmDialog";
+import { useToast } from "@/composables/toast";
 import { useFileSourceTemplatesStore } from "@/stores/fileSourceTemplatesStore";
 import { useObjectStoreTemplatesStore } from "@/stores/objectStoreTemplatesStore";
 import localize from "@/utils/localization";
 import { userLogoutAll } from "@/utils/logout";
 import QueryStringParsing from "@/utils/query-string-parsing";
 import { withPrefix } from "@/utils/redirect";
+import { errorMessageAsString } from "@/utils/simple-error";
 
+import GLink from "../BaseComponents/GLink.vue";
+import GModal from "../BaseComponents/GModal.vue";
 import BreadcrumbHeading from "@/components/Common/BreadcrumbHeading.vue";
 import Heading from "@/components/Common/Heading.vue";
 import UserBeaconSettings from "@/components/User/UserBeaconSettings.vue";
@@ -46,6 +53,8 @@ const { config, isConfigLoaded } = useConfig(true);
 const objectStoreTemplatesStore = useObjectStoreTemplatesStore();
 const fileSourceTemplatesStore = useFileSourceTemplatesStore();
 
+const Toast = useToast();
+
 const messageVariant = ref(null);
 const message = ref(null);
 const showBeaconModal = ref(false);
@@ -58,6 +67,16 @@ const activePreferences = computed(() => {
     const userPreferencesEntries = getUserPreferencesModel();
     const enabledPreferences = Object.entries(userPreferencesEntries).filter(([, value]) => !value.disabled);
     return Object.fromEntries(enabledPreferences);
+});
+// Show the OIDC profile management widget if local account editing is disabled and OIDC profile is configured
+// through a single provider
+const showOidcProfile = computed<boolean>(() => {
+    if (isConfigLoaded.value) {
+        const oidcConfig: OIDCConfig = config.value.oidc;
+        return config.value.enable_oidc && !config.value.enable_account_interface && hasSingleOidcProfile(oidcConfig);
+    } else {
+        return false;
+    }
 });
 const hasLogout = computed(() => {
     if (isConfigLoaded.value) {
@@ -75,9 +94,6 @@ const hasThemes = computed(() => {
         return false;
     }
 });
-const userPermissionsUrl = computed(() => {
-    return withPrefix("/user/permissions");
-});
 
 async function makeDataPrivate() {
     const confirmed = await confirm(
@@ -92,27 +108,26 @@ async function makeDataPrivate() {
         ),
         {
             title: "Do you want to make all data private?",
-            okTitle: "Yes, make all data private",
-            cancelTitle: "No, do not make data private",
-            cancelVariant: "outline-primary",
-            centered: true,
+            okText: "Yes, make all data private",
+            cancelText: "No, do not make data private",
         },
     );
     if (confirmed) {
-        axios.post(withPrefix(`/history/make_private?all_histories=true`)).then(() => {
+        try {
+            await axios.post(withPrefix(`/history/make_private?all_histories=true`));
             showDataPrivateModal.value = true;
-        });
+        } catch (error) {
+            Toast.error(errorMessageAsString(error), "Error making data private");
+        }
     }
 }
 
 async function signOut() {
     const confirmed = await confirm(localize("Do you want to continue and sign out of all active sessions?"), {
         title: "Sign out of all sessions",
-        okTitle: "Yes, sign out",
-        okVariant: "danger",
-        cancelTitle: "Cancel",
-        cancelVariant: "outline-primary",
-        centered: true,
+        okText: "Yes, sign out",
+        okColor: "red",
+        okIcon: faSignOut,
     });
 
     if (confirmed) {
@@ -154,7 +169,7 @@ onMounted(async () => {
     <div class="d-flex flex-column">
         <BreadcrumbHeading :items="breadcrumbItems" />
 
-        <Heading h2 size="sm">
+        <Heading v-localize h2 size="sm">
             Manage your user preferences on this page, including email address, password, and other settings.
         </Heading>
 
@@ -166,6 +181,14 @@ onMounted(async () => {
 
         <div class="d-flex flex-gapy-1 flex-column">
             <div class="d-flex flex-wrap mb-4 user-preferences-cards">
+                <UserPreferencesElement
+                    v-if="showOidcProfile"
+                    id="oidc-profile"
+                    title="Manage my profile"
+                    :icon="faPerson"
+                    description="Manage my profile information (username, email, password)."
+                    to="/user/oidc-profile" />
+
                 <UserPreferencesElement
                     v-for="(link, index) in activePreferences"
                     :id="link.id"
@@ -179,76 +202,80 @@ onMounted(async () => {
                     v-if="isConfigLoaded && !config.single_user"
                     id="edit-preferences-permissions"
                     :icon="faUsers"
-                    title="Set Dataset Permissions for New Histories"
-                    description="Grant others default access to newly created histories. Changes made here will only affect histories created after these settings have been stored."
+                    :title="localize('Set Dataset Permissions for New Histories')"
+                    :description="
+                        localize(
+                            'Grant others default access to newly created histories. Changes made here will only affect histories created after these settings have been stored.',
+                        )
+                    "
                     to="/user/permissions" />
 
                 <UserPreferencesElement
                     id="edit-preferences-api-key"
                     :icon="faKey"
-                    title="Manage Galaxy API Key"
-                    description="Access your current Galaxy API key or create a new one."
+                    :title="localize('Manage Galaxy API Key')"
+                    :description="localize('Access your current Galaxy API key or create a new one.')"
                     to="/user/api_key" />
 
                 <UserPreferencesElement
                     id="edit-preferences-credentials"
                     :icon="faKey"
-                    title="Manage Your Tools Credentials"
-                    description="Manage your tools credentials groups for accessing external services."
+                    :title="localize('Manage Your Tools Credentials')"
+                    :description="localize('Manage your tools credentials groups for accessing external services.')"
                     to="/user/credentials" />
 
                 <UserPreferencesElement
                     id="edit-preferences-notifications"
                     :icon="faBell"
-                    title="Manage Notifications"
-                    description="Manage your notification settings."
+                    :title="localize('Manage Notifications')"
+                    :description="localize('Manage your notification settings.')"
                     to="/user/notifications/preferences" />
 
                 <UserPreferencesElement
                     v-if="isConfigLoaded && config.enable_oidc && !config.fixed_delegated_auth"
                     id="manage-third-party-identities"
                     :icon="faIdCard"
-                    title="Manage Third-Party Identities"
-                    description="Connect or disconnect access to your third-party identities."
+                    :title="localize('Manage Third-Party Identities')"
+                    :description="localize('Connect or disconnect access to your third-party identities.')"
                     to="/user/external_ids" />
 
                 <UserPreferencesElement
                     id="edit-preferences-custom-builds"
                     :icon="faCubes"
-                    title="Manage Custom Builds"
-                    description="Add or remove custom builds using history datasets."
+                    :title="localize('Manage Custom Builds')"
+                    :description="localize('Add or remove custom builds using history datasets.')"
                     to="/custom_builds" />
 
                 <UserPreferencesElement
                     v-if="hasThemes"
                     id="edit-preferences-theme"
                     :icon="faPalette"
-                    title="Pick a Color Theme"
-                    description="Click here to change the user interface color theme."
+                    :title="localize('Pick a Color Theme')"
+                    :description="localize('Click here to change the user interface color theme.')"
                     @click="toggleThemeModal" />
 
                 <UserPreferencesElement
                     v-if="isConfigLoaded && !config.single_user"
                     id="edit-preferences-make-data-private"
                     :icon="faLock"
-                    title="Make All Data Private"
-                    description="Click here to make all data private."
+                    :title="localize('Make All Data Private')"
+                    :description="localize('Click here to make all data private.')"
                     @click="makeDataPrivate" />
 
                 <UserPreferencesElement
                     v-if="isConfigLoaded && config.enable_beacon_integration"
                     id="edit-preferences-beacon"
                     :icon="faBroadcastTower"
-                    title="Manage Beacon"
-                    description="Contribute variants to Beacon"
+                    :title="localize('Manage Beacon')"
+                    :description="localize('Contribute variants to Beacon')"
                     @click="toggleBeaconModal" />
 
                 <UserPreferencesElement
                     v-if="isConfigLoaded && config.object_store_allows_id_selection"
                     id="manage-preferred-object-store"
                     :icon="faHdd"
-                    title="Manage Your Preferred Galaxy Storage"
-                    description="Select a Preferred Galaxy storage for the outputs of new jobs."
+                    :title="localize('Manage Your Preferred Galaxy Storage')"
+                    :description="localize('Select a Preferred Galaxy storage for the outputs of new jobs.')"
                     @click="togglePreferredStorageModal" />
 
                 <UserPreferencesElement
@@ -256,8 +283,8 @@ onMounted(async () => {
                     id="manage-object-stores"
                     class="manage-object-stores"
                     :icon="faHdd"
-                    title="Manage Your Galaxy Storage"
-                    description="Add, remove, or update your personally configured Galaxy storage."
+                    :title="localize('Manage Your Galaxy Storage')"
+                    :description="localize('Add, remove, or update your personally configured Galaxy storage.')"
                     to="/object_store_instances/index" />
 
                 <UserPreferencesElement
@@ -265,8 +292,12 @@ onMounted(async () => {
                     id="manage-file-sources"
                     class="manage-file-sources"
                     :icon="faFile"
-                    title="Manage Your Repositories"
-                    description="Add, remove, or update your personally configured location to find files from and write files to."
+                    :title="localize('Manage Your Repositories')"
+                    :description="
+                        localize(
+                            'Add, remove, or update your personally configured location to find files from and write files to.',
+                        )
+                    "
                     to="/file_source_instances/index" />
             </div>
 
@@ -276,8 +307,8 @@ onMounted(async () => {
                     id="delete-account"
                     danger-zone
                     :icon="faRadiation"
-                    title="Delete Account"
-                    description="Click here to delete your account."
+                    :title="localize('Delete Account')"
+                    :description="localize('Click here to delete your account.')"
                     @click="toggleUserDeletion" />
 
                 <UserPreferencesElement
@@ -285,23 +316,23 @@ onMounted(async () => {
                     id="edit-preferences-sign-out"
                     danger-zone
                     :icon="faSignOut"
-                    title="Sign Out of All Sessions"
-                    description="Click here to sign out of all sessions."
+                    :title="localize('Sign Out of All Sessions')"
+                    :description="localize('Click here to sign out of all sessions.')"
                     @click="signOut" />
             </div>
 
-            <BModal
-                v-model="showDataPrivateModal"
-                title="Datasets are now private"
-                title-class="font-weight-bold"
-                ok-only>
-                <span v-localize>
-                    All of your histories and datasets have been made private. If you'd like to make all *future*
+            <GModal :show.sync="showDataPrivateModal" title="Datasets are now private" size="small">
+                <BAlert variant="info" show>
+                    All of your histories and datasets have been made private. If you'd like to make all
+                    <strong>future</strong>
                     histories private please use the
-                </span>
-                <a :href="userPermissionsUrl">User Permissions</a>
-                <span v-localize>interface</span>.
-            </BModal>
+                    <GLink to="/user/permissions">
+                        <FontAwesomeIcon :icon="faUsers" />
+                        Set Permissions for New Histories
+                    </GLink>
+                    interface.
+                </BAlert>
+            </GModal>
 
             <UserPickTheme v-if="hasThemes && showThemPickerModal" @reset="toggleThemeModal" />
 

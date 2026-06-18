@@ -6,6 +6,7 @@ import type {
     TemplateSecret,
     TemplateSummary,
     TemplateVariable,
+    TemplateVariableValidator,
     VariableData,
     VariableValueType,
 } from "@/api/configTemplates";
@@ -17,7 +18,9 @@ export interface FormEntry {
     optional?: boolean;
     help?: string | null;
     type: string;
+    area?: boolean;
     value?: any;
+    validators?: TemplateVariableValidator[];
 }
 
 export function metadataFormEntryName(what: string): FormEntry {
@@ -35,7 +38,8 @@ export function metadataFormEntryDescription(what: string): FormEntry {
         name: "_meta_description",
         label: "Description",
         optional: true,
-        type: "textarea",
+        type: "text",
+        area: true,
         help: `Provide some notes to yourself about this ${what} - perhaps to remind you how it is configured, where it stores the data, etc..`,
     };
 }
@@ -45,24 +49,26 @@ export function templateVariableFormEntry(variable: TemplateVariable, variableVa
         name: variable.name,
         label: variable.label ?? variable.name,
         help: markup(variable.help || "", true),
+        validators: variable.validators ?? [],
+        optional: variable.optional || false,
     };
     if (variable.type == "string") {
         const defaultValue = variable.default ?? "";
         return {
             type: "text",
+            area: variable.multiline || false,
             value: variableValue == undefined ? defaultValue : variableValue,
             ...common_fields,
         };
     } else if (variable.type == "path_component") {
         const defaultValue = variable.default ?? "";
-        // TODO: do extra validation with form somehow...
         return {
             type: "text",
             value: variableValue == undefined ? defaultValue : variableValue,
             ...common_fields,
         };
     } else if (variable.type == "integer") {
-        const defaultValue = variable.default ?? 0;
+        const defaultValue = variable.default ?? (variable.optional ? "" : 0);
         return {
             type: "integer",
             value: variableValue == undefined ? defaultValue : variableValue,
@@ -84,9 +90,11 @@ export function templateSecretFormEntry(secret: TemplateSecret): FormEntry {
     return {
         name: secret.name,
         label: secret.label ?? secret.name,
-        type: "password",
+        type: secret.multiline ? "text" : "password",
+        area: secret.multiline || false,
         help: markup(secret.help || "", true),
         value: "",
+        optional: secret.optional || false,
     };
 }
 
@@ -193,7 +201,7 @@ export function formDataTypedGet(variableDefinition: TemplateVariable, formData:
             return String(rawValue).toLowerCase() == "true";
         }
     } else if (variableType == "integer") {
-        if (rawValue == null || rawValue == undefined || typeof rawValue == "boolean") {
+        if (rawValue == null || rawValue == undefined || rawValue === "" || typeof rawValue == "boolean") {
             return undefined;
         } else {
             if (typeof rawValue == "string") {

@@ -1,20 +1,18 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
-import { faCog, faHourglassHalf, faRetweet } from "@fortawesome/free-solid-svg-icons";
+import { faCheck, faCog, faRetweet, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { BAlert, BButton, BButtonGroup, BCollapse, BFormCheckbox } from "bootstrap-vue";
+import { BAlert, BButton, BButtonGroup, BFormCheckbox } from "bootstrap-vue";
 import { storeToRefs } from "pinia";
 import { computed, ref } from "vue";
 
 import type { UserNotification } from "@/api/notifications";
 import { useNotificationsStore } from "@/stores/notificationsStore";
 
+import GCollapse from "@/components/BaseComponents/GCollapse.vue";
 import Heading from "@/components/Common/Heading.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
 import NotificationCard from "@/components/Notifications/NotificationCard.vue";
 import NotificationsPreferences from "@/components/User/Notifications/NotificationsPreferences.vue";
-
-library.add(faCog, faHourglassHalf, faRetweet);
 
 const notificationsStore = useNotificationsStore();
 const { notifications, loadingNotifications } = storeToRefs(notificationsStore);
@@ -91,11 +89,11 @@ function togglePreferences() {
             </BButton>
         </div>
 
-        <BCollapse v-model="preferencesOpen">
+        <GCollapse v-slot="{ contentActive }" v-model="preferencesOpen">
             <div class="notifications-list-preferences card-container">
-                <NotificationsPreferences v-if="preferencesOpen" header-size="h-md" :embedded="false" />
+                <NotificationsPreferences v-if="contentActive" header-size="h-md" :embedded="false" />
             </div>
-        </BCollapse>
+        </GCollapse>
 
         <BAlert v-if="loadingNotifications" show>
             <LoadingSpan message="Loading notifications" />
@@ -122,12 +120,12 @@ function togglePreferences() {
 
                     <div v-if="haveSelected">
                         <BButton size="sm" variant="outline-primary" @click="updateNotifications({ seen: true })">
-                            <FontAwesomeIcon icon="check" />
+                            <FontAwesomeIcon :icon="faCheck" />
                             Mark as read
                         </BButton>
 
                         <BButton size="sm" variant="outline-primary" @click="updateNotifications({ deleted: true })">
-                            <FontAwesomeIcon icon="trash" />
+                            <FontAwesomeIcon :icon="faTrash" />
                             Delete
                         </BButton>
                     </div>
@@ -143,7 +141,7 @@ function togglePreferences() {
                             :pressed="showUnread"
                             variant="outline-primary"
                             @click="showUnread = !showUnread">
-                            <FontAwesomeIcon icon="check" />
+                            <FontAwesomeIcon :icon="faCheck" />
                             Unread
                         </BButton>
 
@@ -153,7 +151,7 @@ function togglePreferences() {
                             :pressed="showShared"
                             variant="outline-primary"
                             @click="showShared = !showShared">
-                            <FontAwesomeIcon icon="retweet" />
+                            <FontAwesomeIcon :icon="faRetweet" />
                             Shared
                         </BButton>
                     </BButtonGroup>
@@ -183,7 +181,7 @@ function togglePreferences() {
 </template>
 
 <style lang="scss" scoped>
-@import "scss/theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .notifications-list-container {
     .notifications-list-header {

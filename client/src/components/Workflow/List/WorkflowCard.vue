@@ -18,7 +18,6 @@ interface Props {
     filterable?: boolean;
     publishedView?: boolean;
     editorView?: boolean;
-    compact?: boolean;
     current?: boolean;
     selected?: boolean;
     selectable?: boolean;
@@ -32,7 +31,6 @@ const props = withDefaults(defineProps<Props>(), {
     hideRuns: false,
     filterable: true,
     editorView: false,
-    compact: false,
     current: false,
     selected: false,
     selectable: false,
@@ -131,10 +129,10 @@ function onKeyDown(event: KeyboardEvent) {
     <GCard
         :id="workflow.id"
         class="workflow-card"
-        can-rename-title
+        :can-rename-title="!props.workflow.deleted"
         :title="workflowCardTitle"
         :title-badges="workflowCardTitleBadges"
-        :title-n-lines="props.compact ? 2 : undefined"
+        :title-n-lines="2"
         :description="description || ''"
         :grid-view="props.gridView"
         :badges="workflowCardBadges"
@@ -167,8 +165,8 @@ function onKeyDown(event: KeyboardEvent) {
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
-@import "_breakpoints.scss";
+@import "@/style/scss/theme/blue.scss";
+@import "@/style/scss/_breakpoints.scss";
 
 .workflow-card {
     .workflow-rename {

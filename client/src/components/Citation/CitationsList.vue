@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { faCopy, faDownload } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { BButton, BCard, BCollapse, BNav, BNavItem, BSpinner } from "bootstrap-vue";
+import { BButton, BCard, BNav, BNavItem } from "bootstrap-vue";
 import { computed, onMounted, onUpdated, ref, toRef } from "vue";
 
 import { getCitations } from "@/components/Citation/services";
@@ -12,8 +12,11 @@ import { copy } from "@/utils/clipboard";
 import type { Citation } from ".";
 import { Cite } from "./cite";
 
+import GAlert from "@/components/BaseComponents/GAlert.vue";
+import GCollapse from "@/components/BaseComponents/GCollapse.vue";
 import CitationItem from "@/components/Citation/CitationItem.vue";
 import BreadcrumbHeading from "@/components/Common/BreadcrumbHeading.vue";
+import LoadingSpan from "@/components/LoadingSpan.vue";
 
 const outputFormats = Object.freeze({
     CITATION: "bibliography",
@@ -37,7 +40,9 @@ const emit = defineEmits(["rendered", "show", "shown", "hide", "hidden"]);
 
 const outputFormat = ref<string>(outputFormats.CITATION);
 const fetchedCitations = ref<Citation[]>([]);
+const warnings = ref<string[]>([]);
 const isLoading = ref<boolean>(false);
+const citationsOpen = ref(false);
 
 onUpdated(() => {
     emit("rendered");
@@ -46,7 +51,9 @@ onUpdated(() => {
 onMounted(async () => {
     try {
         isLoading.value = true;
-        fetchedCitations.value = await getCitations(props.source, props.id);
+        const result = await getCitations(props.source, props.id);
+        fetchedCitations.value = result.citations;
+        warnings.value = result.warnings;
     } catch (e) {
         console.error(e);
     } finally {
@@ -127,8 +134,7 @@ function citationsToBibtexAsText() {
         <BreadcrumbHeading :items="breadcrumbItems" />
 
         <div v-if="isLoading" class="text-center">
-            <BSpinner />
-            <p class="ml-2">Loading references...</p>
+            <LoadingSpan message="Loading references" />
         </div>
         <div v-else>
             <BCard v-if="!simple" class="citation-card" header-tag="nav">
@@ -148,7 +154,7 @@ function citationsToBibtexAsText() {
                     </BNav>
                     <BButton
                         v-if="outputFormat === outputFormats.CITATION"
-                        v-b-tooltip.hover
+                        v-g-tooltip.hover
                         title="Copy all references as APA"
                         variant="link"
                         size="sm"
@@ -158,7 +164,7 @@ function citationsToBibtexAsText() {
                     </BButton>
                     <div v-if="outputFormat === outputFormats.BIBTEX" class="bibtex-actions">
                         <BButton
-                            v-b-tooltip.hover
+                            v-g-tooltip.hover
                             title="Copy all references as BibTeX"
                             variant="link"
                             size="sm"
@@ -167,7 +173,7 @@ function citationsToBibtexAsText() {
                             <FontAwesomeIcon :icon="faCopy" />
                         </BButton>
                         <BButton
-                            v-b-tooltip.hover
+                            v-g-tooltip.hover
                             title="Download references as .bib file"
                             variant="link"
                             size="sm"
@@ -182,6 +188,12 @@ function citationsToBibtexAsText() {
                     <div v-html="config?.citations_export_message_html"></div>
                 </div>
 
+                <GAlert v-if="warnings.length > 0" variant="warning" show>
+                    <ul class="mb-0">
+                        <li v-for="(warning, idx) in warnings" :key="idx">{{ warning }}</li>
+                    </ul>
+                </GAlert>
+
                 <div class="citations-formatted">
                     <CitationItem
                         v-for="(citation, index) in citations"
@@ -192,10 +204,10 @@ function citationsToBibtexAsText() {
                 </div>
             </BCard>
             <div v-else-if="citations.length">
-                <BButton v-b-toggle="id" variant="primary">References</BButton>
+                <BButton variant="primary" @click="citationsOpen = !citationsOpen">References</BButton>
 
-                <BCollapse
-                    :id="id.replace(/ /g, '_')"
+                <GCollapse
+                    v-model="citationsOpen"
                     class="mt-2"
                     @show="$emit('show')"
                     @shown="$emit('shown')"
@@ -209,7 +221,7 @@ function citationsToBibtexAsText() {
                             :citation="citation"
                             :output-format="outputFormat" />
                     </BCard>
-                </BCollapse>
+                </GCollapse>
             </div>
         </div>
     </div>

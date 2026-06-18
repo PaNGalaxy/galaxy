@@ -153,7 +153,7 @@ function createNew(event: Event) {
     <ActivityPanel title="Workflows">
         <template v-slot:header-buttons>
             <BButton
-                v-b-tooltip.hover.top.noninteractive
+                v-g-tooltip.hover.top
                 size="sm"
                 variant="link"
                 class="create-button"
@@ -178,7 +178,6 @@ function createNew(event: Event) {
                 :filterable="false"
                 :current-workflow-id="props.currentWorkflowId"
                 editor-view
-                compact
                 @insertWorkflow="(...args) => emit('insertWorkflow', ...args)"
                 @insertWorkflowSteps="(...args) => emit('insertWorkflowSteps', ...args)"
                 @refreshList="refresh" />
@@ -196,7 +195,7 @@ function createNew(event: Event) {
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .workflow-scroll-list {
     overflow-y: auto;

@@ -1,19 +1,17 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faPen } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { BButton, BFormInput, BInputGroup, BInputGroupAppend } from "bootstrap-vue";
+import { BButton, BFormInput, BFormTextarea, BInputGroup, BInputGroupAppend } from "bootstrap-vue";
 import { computed, ref } from "vue";
 
 import { markup } from "@/components/ObjectStore/configurationMarkdown";
-
-library.add(faPen);
 
 interface Props {
     name: string;
     label: string;
     help: string;
     isSet: boolean;
+    multiline?: boolean;
 }
 const props = defineProps<Props>();
 
@@ -60,7 +58,8 @@ async function onOk() {
         </div>
         <b-modal ref="edit-modal" v-model="showEdit" :title="editTitle" ok-title="Update" @ok="onOk">
             <div>
-                <BFormInput v-model="secretValue" type="password" />
+                <BFormTextarea v-if="multiline" v-model="secretValue" rows="8" no-resize />
+                <BFormInput v-else v-model="secretValue" type="password" />
                 <!-- eslint-disable-next-line vue/no-v-html -->
                 <span class="ui-form-info form-text text-muted" v-html="helpHtml" />
             </div>

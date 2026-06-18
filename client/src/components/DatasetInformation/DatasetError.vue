@@ -34,7 +34,7 @@ const jobDetails = ref<JobDetails>();
 const jobProblems = ref<JobInputSummary>();
 const dataset = ref<HDADetailed>();
 
-const showWizard = computed(() => isConfigLoaded && config.value?.llm_api_configured && !isAnonymous.value);
+const showWizard = computed(() => isConfigLoaded.value && config.value?.llm_api_configured && !isAnonymous.value);
 
 async function getDatasetDetails() {
     datasetLoading.value = true;
@@ -155,7 +155,7 @@ onMounted(async () => {
                         may not always be accurate.
                     </span>
                 </p>
-                <BCard v-if="'tool_stderr' in jobDetails" class="mb-2">
+                <BCard v-if="'tool_stderr' in jobDetails" class="mb-2" data-description="galaxy wizard card">
                     <GalaxyWizard
                         view="error"
                         :query="jobDetails.tool_stderr ?? ''"

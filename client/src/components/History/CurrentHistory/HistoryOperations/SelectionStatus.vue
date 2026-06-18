@@ -2,6 +2,8 @@
 import { BButton, BButtonGroup } from "bootstrap-vue";
 import { computed } from "vue";
 
+import localize from "@/utils/localization";
+
 interface Props {
     selectionSize: number;
 }
@@ -26,8 +28,8 @@ function resetSelection() {
     <BButtonGroup size="sm">
         <BButton
             v-if="hasSelection"
-            v-b-tooltip.hover
-            title="Clear selection"
+            v-g-tooltip.hover
+            :title="localize('Clear selection')"
             variant="link"
             data-test-id="clear-btn"
             @click="resetSelection">
@@ -35,7 +37,7 @@ function resetSelection() {
         </BButton>
 
         <BButton v-else variant="link" data-test-id="select-all-btn" @click="selectAll">
-            <span>Select All</span>
+            <span v-localize>Select All</span>
         </BButton>
     </BButtonGroup>
 </template>

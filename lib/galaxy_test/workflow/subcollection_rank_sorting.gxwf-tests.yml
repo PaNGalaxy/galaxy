@@ -1,11 +1,24 @@
-- doc: | 
+- doc: |
     Test to verify a tool that takes in a list or nested list is sent the most
     specific list possible during workflow execution (the nested list). This should
     not trigger subcollection mapping.
   job:
     input:
-      type: collection
+      class: Collection
       collection_type: list:list
+      elements:
+        - identifier: test_level_1
+          class: Collection
+          elements:
+            - identifier: data1
+              class: File
+              contents: "TestData123"
+            - identifier: data2
+              class: File
+              contents: "TestData123"
+            - identifier: data3
+              class: File
+              contents: "TestData123"
   outputs:
     out:
       asserts:
@@ -15,8 +28,24 @@
     Once again with mapping, should reduce the result into a flat list.
   job:
     input:
-      type: collection
+      class: Collection
       collection_type: list:list:list
+      elements:
+        - identifier: test_level_2
+          class: Collection
+          elements:
+            - identifier: test_level_1
+              class: Collection
+              elements:
+                - identifier: data1
+                  class: File
+                  contents: "TestData123"
+                - identifier: data2
+                  class: File
+                  contents: "TestData123"
+                - identifier: data3
+                  class: File
+                  contents: "TestData123"
   outputs:
     out:
       class: Collection
@@ -34,14 +63,34 @@
     two levels should be mapped over.
   job:
     input:
-      type: collection
+      class: Collection
       collection_type: list:list:list:list
+      elements:
+        - identifier: test_level_3
+          class: Collection
+          elements:
+            - identifier: test_level_2
+              class: Collection
+              elements:
+                - identifier: test_level_1
+                  class: Collection
+                  elements:
+                    - identifier: data1
+                      class: File
+                      contents: "TestData123"
+                    - identifier: data2
+                      class: File
+                      contents: "TestData123"
+                    - identifier: data3
+                      class: File
+                      contents: "TestData123"
   outputs:
     out:
       class: Collection
       collection_type: list:list
       elements:
         test_level_3:
+          class: Collection
           elements:
             test_level_2:
               asserts:

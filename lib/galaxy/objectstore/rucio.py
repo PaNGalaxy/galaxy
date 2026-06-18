@@ -164,24 +164,19 @@ class RucioBroker:
     def get_rucio_client(self):
         if not self.rucio_config_path:
             temp_directory = self.extra_dirs["temp"]
-            self.rucio_config_path = os.path.join(temp_directory, "rucio.cfg")
             key_for_pass = "password"
             os.makedirs(temp_directory, exist_ok=True)
-            with open(self.rucio_config_path, "w") as f:
-                f.write(
-                    f"""[client]
+            rucio_config_path = os.path.join(temp_directory, "rucio.cfg")
+            with open(rucio_config_path, "w") as f:
+                f.write(f"""[client]
 rucio_host = {self.config['host']}
 auth_host = {self.config['auth_host']}
 account = {self.config['account']}
 auth_type = {self.config['auth_type']}
 username = {self.config['username']}
 {key_for_pass} = {self.config[key_for_pass]}
-"""
-                )
-            try:
-                os.chmod(self.rucio_config_path, 0o666)
-            except OSError:
-                pass
+""")
+            self.rucio_config_path = rucio_config_path
         # We may have crossed a forkpool boundary. No harm setting the env var again.
         # Fixes rucio integration tests
         os.environ["RUCIO_CONFIG"] = self.rucio_config_path
@@ -585,7 +580,7 @@ class RucioObjectStore(CachingConcreteObjectStore):
             try:
                 if source_file != cache_file and self.cache_updated_data:
                     try:
-                        shutil.copy2(source_file, cache_file)
+                        shutil.copy(source_file, cache_file)
                     except OSError:
                         os.makedirs(os.path.dirname(cache_file))
                         shutil.copy2(source_file, cache_file)

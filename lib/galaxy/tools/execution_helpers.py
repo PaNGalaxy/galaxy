@@ -79,8 +79,8 @@ def on_text_for_numeric_ids(ids: Optional[list[int]], prefix: Optional[str] = No
     # and once as param_name1.
     groups = []
     unique_ids = sorted(set(ids))
-    for group in consecutive_groups(unique_ids):
-        group = list(group)
+    for group_it in consecutive_groups(unique_ids):
+        group = list(group_it)
         if len(group) == 1:
             groups.append(str(group[0]))
         elif len(group) == 2:
@@ -96,16 +96,13 @@ def on_text_for_dataset_and_collections(
     collection_hids: Optional[list[int]] = None,
     element_ids: Optional[list[str]] = None,
 ) -> str:
-    on_text_datasets = on_text_for_numeric_ids(dataset_hids, "dataset")
-    on_text_collection = on_text_for_numeric_ids(collection_hids, "collection")
-    on_text_elements = on_text_for_names(element_ids)
 
     on_text = []
-    if on_text_datasets:
+    if on_text_datasets := on_text_for_numeric_ids(dataset_hids, "dataset"):
         on_text.append(on_text_datasets)
-    if on_text_collection:
+    if on_text_collection := on_text_for_numeric_ids(collection_hids, "collection"):
         on_text.append(on_text_collection)
-    if on_text_elements:
+    if on_text_elements := on_text_for_names(element_ids):
         on_text.append(on_text_elements)
 
     if len(on_text) == 0:

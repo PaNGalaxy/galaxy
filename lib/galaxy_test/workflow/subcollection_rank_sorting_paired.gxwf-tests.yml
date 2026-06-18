@@ -1,11 +1,21 @@
-- doc: | 
+- doc: |
     Test to verify a tool that takes in a paired or list of paired is sent the most
     specific list possible during workflow execution (the list of paired datasets). This should
     not trigger subcollection mapping.
   job:
     input:
-      type: collection
+      class: Collection
       collection_type: list:paired
+      elements:
+        - identifier: test_level_1
+          class: Collection
+          elements:
+            - identifier: forward
+              class: File
+              contents: "TestData123"
+            - identifier: reverse
+              class: File
+              contents: "TestData123"
   outputs:
     out:
       asserts:
@@ -16,8 +26,21 @@
     Once again with mapping, should reduce the result into a flat list.
   job:
     input:
-      type: collection
+      class: Collection
       collection_type: list:list:paired
+      elements:
+        - identifier: test_level_2
+          class: Collection
+          elements:
+            - identifier: test_level_1
+              class: Collection
+              elements:
+                - identifier: forward
+                  class: File
+                  contents: "TestData123"
+                - identifier: reverse
+                  class: File
+                  contents: "TestData123"
   outputs:
     out:
       class: Collection
@@ -34,14 +57,31 @@
     Once again with double mapping, should reduce the result into a nested list (list:list).
   job:
     input:
-      type: collection
+      class: Collection
       collection_type: list:list:list:paired
+      elements:
+        - identifier: test_level_3
+          class: Collection
+          elements:
+            - identifier: test_level_2
+              class: Collection
+              elements:
+                - identifier: test_level_1
+                  class: Collection
+                  elements:
+                    - identifier: forward
+                      class: File
+                      contents: "TestData123"
+                    - identifier: reverse
+                      class: File
+                      contents: "TestData123"
   outputs:
     out:
       class: Collection
       collection_type: list:list
       elements:
         test_level_3:
+          class: Collection
           elements:
             test_level_2:
               asserts:

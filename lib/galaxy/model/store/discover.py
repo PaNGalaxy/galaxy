@@ -9,10 +9,13 @@ corresponding to files in other contexts.
 import abc
 import logging
 import os
-from collections.abc import Iterable
+from collections.abc import (
+    Callable,
+    Iterable,
+)
+from decimal import Decimal
 from typing import (
     Any,
-    Callable,
     NamedTuple,
     Optional,
     TYPE_CHECKING,
@@ -22,7 +25,11 @@ from typing import (
 import galaxy.model
 from galaxy import util
 from galaxy.exceptions import RequestParameterInvalidException
-from galaxy.model import LibraryFolder
+from galaxy.model import (
+    Dataset,
+    JobOutputNameTooLongError,
+    LibraryFolder,
+)
 from galaxy.model.dataset_collections.builder import BoundCollectionBuilder
 from galaxy.model.tags import GalaxySessionlessTagHandler
 from galaxy.objectstore import (
@@ -166,6 +173,7 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
                 if metadata_element and metadata_element.set_in_upload:
                     setattr(primary_data.metadata, key, value)
 
+        assert primary_data.dataset is not None
         for source_dict in sources:
             source = galaxy.model.DatasetSource()
             source.source_uri = source_dict["source_uri"]
@@ -244,10 +252,11 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
         output_name,
         init_from,
     ):
+        assert primary_data.dataset is not None
         if primary_data.dataset.purged:
             # metadata won't be set, maybe we should do that, then purge ?
-            primary_data.dataset.file_size = 0
-            primary_data.dataset.total_size = 0
+            primary_data.dataset.file_size = Decimal(0)
+            primary_data.dataset.total_size = Decimal(0)
             return
         # Move data from temp location to dataset location
         if not link_data:
@@ -433,20 +442,27 @@ class ModelPersistenceContext(metaclass=abc.ABCMeta):
             element_datasets["rows"].append(discovered_file.match.row)
 
         self.add_tags_to_datasets(datasets=element_datasets["datasets"], tag_lists=element_datasets["tag_lists"])
-        for element_identifiers, dataset, row in zip(
-            element_datasets["element_identifiers"], element_datasets["datasets"], element_datasets["rows"]
-        ):
-            current_builder: CollectionBuilder = root_collection_builder
-            for element_identifier in element_identifiers[:-1]:
-                current_builder = current_builder.get_level(element_identifier, row=row)
-                if row:
-                    row = None
-            current_builder.add_dataset(element_identifiers[-1], dataset, row=row)
+        try:
+            for element_identifiers, dataset, row in zip(
+                element_datasets["element_identifiers"], element_datasets["datasets"], element_datasets["rows"]
+            ):
+                current_builder: CollectionBuilder = root_collection_builder
+                for element_identifier in element_identifiers[:-1]:
+                    current_builder = current_builder.get_level(element_identifier, row=row)
+                    if row:
+                        row = None
+                current_builder.add_dataset(element_identifiers[-1], dataset, row=row)
 
-            # Associate new dataset with job
-            element_identifier_str = ":".join(element_identifiers)
-            association_name = f"__new_primary_file_{name}|{element_identifier_str}__"
-            self.add_output_dataset_association(association_name, dataset)
+                # Associate new dataset with job
+                element_identifier_str = ":".join(element_identifiers)
+                association_name = f"__new_primary_file_{name}|{element_identifier_str}__"
+                self.add_output_dataset_association(association_name, dataset)
+        except JobOutputNameTooLongError:
+            for dataset in element_datasets["datasets"]:
+                dataset.dataset.state = Dataset.states.DISCARDED
+                dataset.dataset.file_size = 0
+            self.add_datasets_to_history(element_datasets["datasets"])
+            raise
 
         add_datasets_timer = ExecutionTimer()
         self.add_datasets_to_history(element_datasets["datasets"])

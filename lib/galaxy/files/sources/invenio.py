@@ -5,13 +5,13 @@ import urllib.request
 from typing import (
     Any,
     cast,
+    Literal,
     Optional,
 )
 from urllib.error import HTTPError
 from urllib.parse import quote
 
 from typing_extensions import (
-    Literal,
     TypedDict,
 )
 
@@ -26,6 +26,7 @@ from galaxy.files.models import (
     FilesSourceRuntimeContext,
     RemoteDirectory,
     RemoteFile,
+    RemoteFileHash,
 )
 from galaxy.files.sources import DEFAULT_PAGE_LIMIT
 from galaxy.files.sources._defaults import DEFAULT_SCHEME
@@ -42,6 +43,7 @@ from galaxy.util import (
     requests,
     stream_to_open_named_file,
 )
+from galaxy.util.hash_util import as_hash_function_name
 
 AccessStatus = Literal["public", "restricted"]
 
@@ -267,10 +269,12 @@ class InvenioRepositoryInteractor(RDMRepositoryInteractor):
         """Gets the records in the repository and returns the total count of records."""
         params: dict[str, Any] = {}
         request_url = self.records_url
+        if self.plugin.get_authorization_token(context) or write_intent:
+            # Authenticated users should browse only their own records.
+            request_url = self.user_records_url
         if write_intent:
             # Only draft records owned by the user can be written to.
             params["is_published"] = "false"
-            request_url = self.user_records_url
         size, page = self._to_size_page(limit, offset)
         params["size"] = size
         params["page"] = page
@@ -295,7 +299,7 @@ class InvenioRepositoryInteractor(RDMRepositoryInteractor):
         writeable: bool,
         query: Optional[str] = None,
     ) -> list[RemoteFile]:
-        conditionally_draft = "/draft" if writeable else ""
+        conditionally_draft = "/draft" if writeable or self._is_draft_record(container_id, context) else ""
         request_url = f"{self.records_url}/{container_id}{conditionally_draft}/files"
         response_data = self._get_response(context, request_url)
         return self._get_record_files_from_response(container_id, response_data)
@@ -372,10 +376,9 @@ class InvenioRepositoryInteractor(RDMRepositoryInteractor):
                     page, f.fileno(), file_path, source_encoding=get_charset_from_http_headers(page.headers)
                 )
         except HTTPError as e:
-            # TODO: We can only download files from published records for now
             if e.code in [401, 403, 404]:
                 raise Exception(
-                    f"Cannot download file '{file_identifier}' from record '{container_id}'. Please make sure the record exists and it is public."
+                    f"Cannot download file '{file_identifier}' from record '{container_id}'. Please make sure the record exists and you have access to it."
                 )
 
     def _get_download_file_url(
@@ -387,6 +390,9 @@ class InvenioRepositoryInteractor(RDMRepositoryInteractor):
         """
         file_details_url = self._get_file_details_url(record_id, filename)
         if self._is_published_record(record_id, context):
+            # For restricted content, we need to use the regular API endpoint with credentials
+            if self._is_record_content_restricted(record_id, context):
+                return f"{file_details_url}/content"
             return self._file_url_to_download_url(file_details_url)
         if self._is_draft_record(record_id, context):
             draft_download_url = f"{self._to_draft_url(file_details_url)}/content"
@@ -412,6 +418,15 @@ class InvenioRepositoryInteractor(RDMRepositoryInteractor):
         headers = self._get_request_headers(context)
         response = requests.head(request_url, headers=headers)
         return response.status_code == 200
+
+    def _is_record_content_restricted(
+        self, record_id: str, context: FilesSourceRuntimeContext[RDMFileSourceConfiguration]
+    ):
+        request_url = self._get_record_url(record_id)
+        response_data = self._get_response(context, request_url)
+        metadata = response_data.get("metadata", {})
+        access_right = metadata.get("access_right", "public")
+        return access_right == "restricted"
 
     def _get_record_url(self, record_id: str):
         return f"{self.records_url}/{record_id}"
@@ -472,9 +487,24 @@ class InvenioRepositoryInteractor(RDMRepositoryInteractor):
                         ctime=entry["created"],
                         uri=uri,
                         path=path,
+                        hashes=self._get_file_hashes(entry),
                     )
                 )
         return rval
+
+    def _get_file_hashes(self, info: dict) -> Optional[list[RemoteFileHash]]:
+        """Get optional file hashes provided by InvenioRDM for the RemoteFile entry."""
+        # InvenioRDM may provide an optional "checksum" field with the file hash.
+        checksum = info.get("checksum")
+        if checksum and isinstance(checksum, str):
+            # InvenioRDM's checksum field is a string in the format "<hash_function>:<hash_value>", e.g. "md5:1B2M2Y8AsgTpgAmY7PhCfg=="
+            parts = checksum.split(":", 1)
+            if len(parts) == 2:
+                hash_function, hash_value = parts
+                hash_function_name = as_hash_function_name(hash_function)
+                if hash_function_name:
+                    return [RemoteFileHash(hash_function=hash_function_name, hash_value=hash_value)]
+        return None
 
     def _get_creator_from_public_name(self, public_name: Optional[str] = None) -> Creator:
         given_name = "Anonymous"

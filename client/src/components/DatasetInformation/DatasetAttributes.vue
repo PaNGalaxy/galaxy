@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faBars, faCog, faDatabase, faExchangeAlt, faRedo, faSave, faUser } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import type { AxiosError } from "axios";
-import { BAlert, BTab, BTabs } from "bootstrap-vue";
+import { BAlert } from "bootstrap-vue";
 import { onMounted, ref } from "vue";
 
 import { fetchDatasetAttributes } from "@/api/datasets";
@@ -13,10 +12,10 @@ import localize from "@/utils/localization";
 
 import Heading from "../Common/Heading.vue";
 import GButton from "@/components/BaseComponents/GButton.vue";
+import GTab from "@/components/BaseComponents/GTab.vue";
+import GTabs from "@/components/BaseComponents/GTabs.vue";
 import FormDisplay from "@/components/Form/FormDisplay.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
-
-library.add(faBars, faCog, faDatabase, faExchangeAlt, faRedo, faSave, faUser);
 
 interface Props {
     datasetId: string;
@@ -91,7 +90,7 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div aria-labelledby="dataset-attributes-heading">
+    <div class="dataset-attributes" aria-labelledby="dataset-attributes-heading">
         <Heading id="dataset-attributes-heading" h1 separator inline size="md">
             {{ localize("Edit Dataset Attributes") }}
         </Heading>
@@ -104,8 +103,8 @@ onMounted(async () => {
             <LoadingSpan message="Loading dataset attributes..." />
         </BAlert>
         <div v-else-if="!loadingFailed" class="mt-3">
-            <BTabs>
-                <BTab v-if="!datasetAttributes['attribute_disable']">
+            <GTabs>
+                <GTab v-if="!datasetAttributes['attribute_disable']">
                     <template v-slot:title>
                         <FontAwesomeIcon :icon="faBars" class="mr-1" />
                         {{ localize("Attributes") }}
@@ -133,9 +132,9 @@ onMounted(async () => {
                             {{ localize("Auto-detect") }}
                         </GButton>
                     </div>
-                </BTab>
+                </GTab>
 
-                <BTab
+                <GTab
                     v-if="
                         (!datasetAttributes['conversion_disable'] || !datasetAttributes['datatype_disable']) &&
                         !datasetAttributes['metadata_disable']
@@ -206,9 +205,9 @@ onMounted(async () => {
                             </div>
                         </div>
                     </div>
-                </BTab>
+                </GTab>
 
-                <BTab v-if="!datasetAttributes['permission_disable']">
+                <GTab v-if="!datasetAttributes['permission_disable']">
                     <template v-slot:title>
                         <FontAwesomeIcon :icon="faUser" class="mr-1" />
                         {{ localize("Permissions") }}
@@ -225,8 +224,16 @@ onMounted(async () => {
                             {{ localize("Save") }}
                         </GButton>
                     </div>
-                </BTab>
-            </BTabs>
+                </GTab>
+            </GTabs>
         </div>
     </div>
 </template>
+
+<style>
+.dataset-attributes {
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+</style>

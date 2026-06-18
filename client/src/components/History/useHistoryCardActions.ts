@@ -63,12 +63,10 @@ export function useHistoryCardActions(
         const confirmed = await confirm(
             `Are you sure you want to ${purge ? "permanently delete" : "delete"} this history?`,
             {
-                id: "delete-history",
                 title: purge ? "Permanently Delete History" : "Delete History",
-                okTitle: purge ? "Permanently Delete" : "Delete",
-                okVariant: "danger",
-                cancelVariant: "outline-primary",
-                centered: true,
+                okText: purge ? "Permanently Delete" : "Delete",
+                okColor: "red",
+                okIcon: faBurn,
             },
         );
 
@@ -109,8 +107,9 @@ export function useHistoryCardActions(
                 `Are you sure you want to import a new copy of this history? This will create a new history with the same datasets contained in the associated export snapshot.`,
             ),
             {
-                id: "history-import-copy",
                 title: localize(`Import Copy of '${hti.name}'?`),
+                okText: localize("Import"),
+                okIcon: faCopy,
             },
         );
 
@@ -130,6 +129,7 @@ export function useHistoryCardActions(
             body: {
                 model_store_format: hti.export_record_data?.model_store_format,
                 store_content_uri: hti.export_record_data?.target_uri,
+                discarded_data: "forbid",
             },
         });
 
@@ -166,11 +166,9 @@ export function useHistoryCardActions(
                   );
 
         const confirmed = await confirm(confirmMessage, {
-            id: "history-unarchive",
             title: localize(`Unarchive '${htr.name}'?`),
-            okTitle: localize("Unarchive"),
-            cancelVariant: "outline-primary",
-            centered: true,
+            okText: localize("Unarchive"),
+            okIcon: faTrashRestore,
         });
 
         if (!confirmed) {
@@ -248,25 +246,6 @@ export function useHistoryCardActions(
                 visible: history.value.deleted && !history.value.purged && isMyHistory(history.value),
             },
             {
-                id: "switch",
-                title: localize("Set as current history"),
-                label: localize("Set as Current"),
-                variant: "outline-primary",
-                icon: faExchangeAlt,
-                handler: () => historyStore.setCurrentHistory(String(history.value.id)),
-                visible:
-                    (isMyHistory(history.value) || archivedView) && historyStore.currentHistoryId !== history.value.id,
-            },
-            {
-                title: "current history",
-                id: "current",
-                label: "Current",
-                variant: "outline-primary",
-                disabled: true,
-                visible:
-                    (isMyHistory(history.value) || archivedView) && historyStore.currentHistoryId === history.value.id,
-            },
-            {
                 id: "import-copy",
                 label: localize("Import Copy"),
                 title: localize("Import a new copy of this history from the associated export record"),
@@ -291,8 +270,27 @@ export function useHistoryCardActions(
                 label: localize("View"),
                 title: localize("View this history"),
                 icon: faEye,
-                variant: "primary",
+                variant: "outline-primary",
                 to: `/histories/view?id=${history.value.id}`,
+            },
+            {
+                id: "switch",
+                title: localize("Set as current history"),
+                label: localize("Set as Current"),
+                variant: "primary",
+                icon: faExchangeAlt,
+                handler: () => historyStore.setCurrentHistory(String(history.value.id)),
+                visible:
+                    (isMyHistory(history.value) || archivedView) && historyStore.currentHistoryId !== history.value.id,
+            },
+            {
+                title: "current history",
+                id: "current",
+                label: "Current",
+                variant: "outline-primary",
+                disabled: true,
+                visible:
+                    (isMyHistory(history.value) || archivedView) && historyStore.currentHistoryId === history.value.id,
             },
         ];
     });

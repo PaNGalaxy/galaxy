@@ -49,6 +49,7 @@ from galaxy.model import (
     DatasetInstance,
     HistoryDatasetAssociation,
     Job,
+    JobOutputNameTooLongError,
     store,
 )
 from galaxy.model.custom_types import total_size
@@ -95,6 +96,7 @@ def push_if_necessary(object_store: ObjectStore, dataset: DatasetInstance, exter
     # or a remote object store from its cache path.
     # empty files could happen when outputs are discovered from working dir,
     # empty file check needed for e.g. test/integration/test_extended_metadata_outputs_to_working_directory.py::test_tools[multi_output_assign_primary]
+    assert dataset.dataset is not None
     if not dataset.dataset.purged and os.path.getsize(external_filename):
         object_store.update_from_file(dataset.dataset, file_name=external_filename, create=True)
 
@@ -189,6 +191,8 @@ def set_metadata_portable(
             # to MetadataTempFile constructor. Remove if we ever remove TS datatypes.
             MetadataTempFile.tmp_dir = metadata_tmp_files_dir
     datatypes_config = tool_job_working_directory / metadata_params["datatypes_config"]
+    if not os.path.exists(datatypes_config):
+        datatypes_config = os.path.join(tool_job_working_directory, "configs", "registry.xml")
     datatypes_registry = validate_and_load_datatypes_config(datatypes_config)
     job_metadata = tool_job_working_directory / metadata_params["job_metadata"]
     provided_metadata_style = metadata_params.get("provided_metadata_style")
@@ -222,6 +226,7 @@ def set_metadata_portable(
 
     export_store = None
     final_job_state = Job.states.OK
+    discovery_failed = False
     job_messages: list[AnyJobMessage] = []
     if extended_metadata_collection:
         tool_dict = metadata_params["tool"]
@@ -318,6 +323,7 @@ def set_metadata_portable(
         tool_job_working_directory / "working",
         final_job_state=final_job_state,
         max_discovered_files=max_discovered_files,
+        job=job,
     )
 
     if extended_metadata_collection:
@@ -345,7 +351,9 @@ def set_metadata_portable(
                 input_ext=input_ext,
             )
             collect_dynamic_outputs(job_context, output_collections)
-        except MaxDiscoveredFilesExceededError as e:
+        except (MaxDiscoveredFilesExceededError, JobOutputNameTooLongError) as e:
+            log.warning("Job failed during extended metadata output discovery: %s", e)
+            discovery_failed = True
             final_job_state = Job.states.ERROR
             job_messages.append(
                 {
@@ -368,7 +376,6 @@ def set_metadata_portable(
                             continue
                         command_line_lines.append(line)
                     job.command_line = "".join(command_line_lines).strip()
-                    export_store.export_job(job, include_job_data=False)
 
     unnamed_id_to_path = {}
     unnamed_is_deferred = {}
@@ -539,6 +546,16 @@ def set_metadata_portable(
     if export_store:
         export_store.push_metadata_files()
         export_store._finalize()
+        if discovery_failed and job:
+            # _finalize() builds the jobs attrs file from included_datasets /
+            # included_collections via `creating_job_associations`. For tools
+            # whose only discoverable outputs are dynamic collections, nothing
+            # reaches either of those before discovery fails, so _finalize()
+            # writes an empty jobs list - and the ERROR state (plus
+            # job_messages) we set on the job is not persisted. Export the job
+            # once here so perform_import on the host side picks it up from
+            # the jobs attrs file.
+            export_store.export_job(job, include_job_data=False)
     write_job_metadata(tool_job_working_directory, job_metadata, set_meta, tool_provided_metadata)
     if not set_meta_ok:
         sys.exit(1)

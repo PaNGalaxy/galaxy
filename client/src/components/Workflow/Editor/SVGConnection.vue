@@ -1,29 +1,29 @@
 <script setup lang="ts">
-import { curveBasis, line } from "d3";
-import { computed } from "vue";
+import { computed, type PropType } from "vue";
 
 import { useWorkflowStores } from "@/composables/workflowStores";
 import { getConnectionId } from "@/stores/workflowConnectionStore";
 import type { TerminalPosition } from "@/stores/workflowEditorStateStore";
 import type { Connection } from "@/stores/workflowStoreTypes";
+import { curveBasisPath } from "@/utils/connectionPath";
 
-interface Props {
-    id: string;
-    connection: Connection;
-    terminalPosition?: TerminalPosition | null;
-    flowing?: boolean;
-    breathing?: boolean;
-}
-
-const props = withDefaults(defineProps<Props>(), {
-    terminalPosition: null,
-    flowing: false,
-    breathing: false,
+const props = defineProps({
+    id: String,
+    connection: {
+        type: Object as PropType<Connection>,
+        required: true,
+    },
+    terminalPosition: {
+        type: Object as PropType<TerminalPosition | null>,
+        default: null,
+    },
+    focusedNodeIds: {
+        type: Object as PropType<Set<number> | null>,
+        default: null,
+    },
 });
 
 const ribbonMargin = 4;
-
-const curve = line().curve(curveBasis);
 
 const { connectionStore, stateStore, stepStore } = useWorkflowStores();
 
@@ -163,25 +163,7 @@ const paths = computed(() => {
         }
     });
 
-    return lines.map((l) => curve(l)!);
-});
-
-// Estimate path length for animation timing on flowing connections
-const estimatedPathLength = computed(() => {
-    if (!props.flowing) {
-        return 0;
-    }
-
-    if (!connectionPosition.value) {
-        return 100;
-    }
-
-    const deltaX = connectionPosition.value.endX - connectionPosition.value.startX;
-    const deltaY = connectionPosition.value.endY - connectionPosition.value.startY;
-    const straightDistance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-
-    // Add some extra length to account for curves
-    return Math.max(100, straightDistance * 1.3);
+    return lines.map((l) => curveBasisPath(l));
 });
 
 const lineWidth = computed(() => {
@@ -190,6 +172,27 @@ const lineWidth = computed(() => {
     } else {
         return 4;
     }
+});
+
+/**
+ * The connection is considered out of focus if either the input or output node is not focused.
+ * The connection will never be considered out of focus if there are no focused nodes
+ * (i.e. in non-focus mode).
+ */
+const isOutOfFocus = computed(() => {
+    const ids = props.focusedNodeIds;
+    if (!ids) {
+        return false;
+    }
+
+    // make sure dragging connections are never dimmed (though we aren't passing the `focusedNodeIds`
+    // prop to dragging connections for now, we add this check just in case)
+    if (props.terminalPosition) {
+        return false;
+    }
+
+    const { output, input } = props.connection;
+    return !ids.has(output.stepId) || !ids.has(input.stepId);
 });
 
 const connectionClass = computed(() => {
@@ -203,8 +206,8 @@ const connectionClass = computed(() => {
         classList.push("invalid");
     }
 
-    if (props.breathing) {
-        classList.push("breathing");
+    if (isOutOfFocus.value) {
+        classList.push("out-of-focus");
     }
 
     return classList.join(" ");
@@ -253,32 +256,17 @@ function keyForIndex(index: number) {
             :stroke-width="lineWidth"
             fill="none">
         </path>
-
-        <template v-if="props.flowing">
-            <path
-                v-for="(path, index) in paths"
-                :key="`particle-${keyForIndex(index)}`"
-                class="connection-particle"
-                :d="path"
-                :stroke-width="lineWidth * 2"
-                :style="{
-                    '--path-length': `${estimatedPathLength}px`,
-                    '--animation-duration': `${Math.max(2, estimatedPathLength / 80)}s`,
-                }"
-                stroke-linecap="round"
-                fill="none">
-            </path>
-        </template>
     </g>
 </template>
 
 <style lang="scss">
-@import "~bootstrap/scss/_functions.scss";
-@import "theme/blue.scss";
+@import "bootstrap/scss/_functions.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .workflow-editor-drawable-connection {
     .connection {
         stroke: #{$brand-primary};
+        transition: opacity 0.2s ease;
 
         &.optional {
             stroke-dasharray: 5 3;
@@ -288,44 +276,9 @@ function keyForIndex(index: number) {
             stroke: #{$brand-warning};
         }
 
-        &.breathing {
-            animation: breathe 2s ease-in-out infinite;
+        &.out-of-focus {
+            opacity: 0.2;
         }
-    }
-
-    .connection-particle {
-        stroke: white;
-        stroke-dasharray: 0 calc(var(--path-length, 100px) / 2) 0 var(--path-length, 100px);
-        animation: flow var(--animation-duration, 1s) linear infinite;
-    }
-}
-
-@keyframes flow {
-    0% {
-        stroke-dashoffset: 0;
-    }
-    100% {
-        stroke-dashoffset: calc(-2 * var(--path-length, 100px) - 8px);
-    }
-}
-
-@keyframes breathe {
-    0%,
-    100% {
-        stroke-width: var(--stroke-width, 4px);
-        opacity: 0.8;
-    }
-    25% {
-        stroke-width: calc(var(--stroke-width, 4px) * 1.2);
-        opacity: 0.9;
-    }
-    50% {
-        stroke-width: calc(var(--stroke-width, 4px) * 1.4);
-        opacity: 1;
-    }
-    75% {
-        stroke-width: calc(var(--stroke-width, 4px) * 1.2);
-        opacity: 0.9;
     }
 }
 </style>

@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { faExclamation, faSpinner, faSquare, faTimes } from "@fortawesome/free-solid-svg-icons";
+import {
+    faAngleDoubleDown,
+    faAngleDoubleUp,
+    faExclamation,
+    faSpinner,
+    faSquare,
+} from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BAlert, BBadge, BNav, BNavItem } from "bootstrap-vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 
 import { type InvocationStep, isWorkflowInvocationElementView } from "@/api/invocations";
+import { usePersistentToggle } from "@/composables/persistentToggle";
 import { useInvocationStore } from "@/stores/invocationStore";
 import { useWorkflowStore } from "@/stores/workflowStore";
 import { errorMessageAsString } from "@/utils/simple-error";
@@ -24,17 +31,21 @@ import WorkflowInvocationSteps from "../Workflow/Invocation/Graph/WorkflowInvoca
 import InvocationReport from "../Workflow/InvocationReport.vue";
 import WorkflowAnnotation from "../Workflow/WorkflowAnnotation.vue";
 import WorkflowNavigationTitle from "../Workflow/WorkflowNavigationTitle.vue";
+import TabsDisabledAlert from "./TabsDisabledAlert.vue";
 import WorkflowInvocationExportOptions from "./WorkflowInvocationExportOptions.vue";
 import WorkflowInvocationFeedback from "./WorkflowInvocationFeedback.vue";
 import WorkflowInvocationInputOutputTabs from "./WorkflowInvocationInputOutputTabs.vue";
 import WorkflowInvocationMetrics from "./WorkflowInvocationMetrics.vue";
 import WorkflowInvocationOverview from "./WorkflowInvocationOverview.vue";
+import WorkflowInvocationSearch from "./WorkflowInvocationSearch.vue";
 import WorkflowInvocationShare from "./WorkflowInvocationShare.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
 
+type InvocationViewTab = "steps" | "inputs" | "outputs" | "report" | "export" | "metrics" | "debug";
+
 interface Props {
     invocationId: string;
-    tab?: "steps" | "inputs" | "outputs" | "report" | "export" | "metrics" | "debug";
+    tab?: InvocationViewTab;
     isSubworkflow?: boolean;
     isFullPage?: boolean;
     success?: boolean;
@@ -58,6 +69,8 @@ const errorMessage = ref<string | null>(null);
 const cancellingInvocation = ref(false);
 const isPolling = ref(false);
 
+const { toggled: headerCollapsed, toggle: toggleHeaderCollapse } = usePersistentToggle("invocation-header-collapsed");
+
 const uniqueMessages = computed(() => {
     const messages = invocation.value?.messages || [];
     const uniqueMessagesSet = new Set(messages.map((message) => JSON.stringify(message)));
@@ -76,12 +89,17 @@ const tabsDisabled = computed(
 const disabledTabTooltip = computed(() => {
     const state = invocationState.value;
     if (state != "scheduled") {
-        return `This workflow is not currently scheduled. The current state is ${state}. Once the workflow is fully scheduled and jobs have complete any disabled tabs will become available.`;
+        return `This workflow is not currently scheduled. The current state is ${state}. Disabled tabs are available if the workflow is fully scheduled and all jobs have completed.`;
     } else if (stateCounts.value && stateCounts.value.runningCount != 0) {
         return `The workflow invocation still contains ${stateCounts.value.runningCount} running job(s). Once these jobs have completed any disabled tabs will become available.`;
     } else {
         return "Steps for this workflow are still running. Any disabled tabs will be available once complete.";
     }
+});
+
+/** We are on the default "Overview" tab if the tab prop is not set or is not one of the expected tab values */
+const onOverviewTab = computed(() => {
+    return !props.tab || !["steps", "inputs", "outputs", "report", "export", "metrics", "debug"].includes(props.tab);
 });
 
 const invocation = computed(() => {
@@ -98,7 +116,8 @@ const invocationSchedulingTerminal = computed(() => {
     return (
         invocationState.value == "scheduled" ||
         invocationState.value == "cancelled" ||
-        invocationState.value == "failed"
+        invocationState.value == "failed" ||
+        invocationState.value == "completed"
     );
 });
 const jobStatesTerminal = computed(() => {
@@ -123,7 +142,9 @@ const stepsJobsSummary = computed(() => {
 
 const invocationStateSuccess = computed(() => {
     return (
-        invocationState.value == "scheduled" && stateCounts.value?.runningCount === 0 && invocationAndJobTerminal.value
+        (invocationState.value == "scheduled" || invocationState.value == "completed") &&
+        stateCounts.value?.runningCount === 0 &&
+        invocationAndJobTerminal.value
     );
 });
 
@@ -230,6 +251,19 @@ watch(
     },
 );
 
+// If a workflow is run just now (success prop), we want to have the header expanded
+watch(
+    () => props.success,
+    (success) => {
+        if (success && headerCollapsed.value) {
+            setTimeout(() => {
+                headerCollapsed.value = false;
+            }, 1500);
+        }
+    },
+    { immediate: true },
+);
+
 onUnmounted(() => {
     clearTimeout(stepStatesInterval.value);
     clearTimeout(jobStatesInterval.value);
@@ -268,12 +302,26 @@ async function onCancel() {
 </script>
 
 <template>
-    <div v-if="invocation" class="d-flex flex-column w-100" data-description="workflow invocation state">
+    <div
+        v-if="invocation"
+        class="d-flex flex-column w-100 overflow-x-hidden"
+        data-description="workflow invocation state">
         <WorkflowNavigationTitle
             v-if="props.isFullPage"
             :invocation="invocation"
             :workflow-id="invocation.workflow_id"
             :success="props.success">
+            <template v-slot:before-icon>
+                <GButton
+                    transparent
+                    size="small"
+                    :title="headerCollapsed ? 'Expand header' : 'Collapse header'"
+                    icon-only
+                    inline
+                    @click="toggleHeaderCollapse">
+                    <FontAwesomeIcon :icon="headerCollapsed ? faAngleDoubleDown : faAngleDoubleUp" fixed-width />
+                </GButton>
+            </template>
             <template v-slot:workflow-title-actions>
                 <GButton
                     v-if="!invocationAndJobTerminal"
@@ -295,51 +343,53 @@ async function onCancel() {
             </template>
         </WorkflowNavigationTitle>
 
-        <WorkflowAnnotation
-            v-if="props.isFullPage"
-            :workflow-id="invocation.workflow_id"
-            :invocation-update-time="invocation.update_time"
-            :history-id="invocation.history_id">
-            <template v-slot:middle-content>
-                <div class="progress-bars mx-1">
-                    <ProgressBar
-                        v-if="!stepCount"
-                        note="Loading step state summary..."
-                        :loading="true"
-                        class="steps-progress" />
-                    <ProgressBar
-                        v-else-if="invocationState == 'cancelled'"
-                        note="Invocation scheduling cancelled - expected jobs and outputs may not be generated."
-                        :error-count="1"
-                        class="steps-progress" />
-                    <ProgressBar
-                        v-else-if="invocationState == 'failed'"
-                        note="Invocation scheduling failed - Galaxy administrator may have additional details in logs."
-                        :error-count="1"
-                        class="steps-progress" />
-                    <ProgressBar
-                        v-else
-                        :note="stepStatesStr"
-                        :total="stepCount"
-                        :ok-count="stepStates.scheduled"
-                        :loading="!invocationSchedulingTerminal"
-                        class="steps-progress" />
-                    <ProgressBar
-                        v-if="stateCounts"
-                        :note="jobStatesStr"
-                        :total="jobCount"
-                        :ok-count="stateCounts.okCount"
-                        :running-count="stateCounts.runningCount"
-                        :new-count="stateCounts.newCount"
-                        :error-count="stateCounts.errorCount"
-                        :loading="!invocationAndJobTerminal"
-                        class="jobs-progress" />
-                </div>
-            </template>
-        </WorkflowAnnotation>
+        <Transition name="header-collapse">
+            <WorkflowAnnotation
+                v-if="props.isFullPage && !headerCollapsed"
+                :workflow-id="invocation.workflow_id"
+                :invocation-create-time="invocation.create_time"
+                :history-id="invocation.history_id">
+                <template v-slot:middle-content>
+                    <div class="progress-bars mx-1">
+                        <ProgressBar
+                            v-if="!stepCount"
+                            note="Loading step state summary..."
+                            :loading="true"
+                            class="steps-progress" />
+                        <ProgressBar
+                            v-else-if="invocationState == 'cancelled'"
+                            note="Invocation scheduling cancelled - expected jobs and outputs may not be generated."
+                            :error-count="1"
+                            class="steps-progress" />
+                        <ProgressBar
+                            v-else-if="invocationState == 'failed'"
+                            note="Invocation scheduling failed - Galaxy administrator may have additional details in logs."
+                            :error-count="1"
+                            class="steps-progress" />
+                        <ProgressBar
+                            v-else
+                            :note="stepStatesStr"
+                            :total="stepCount"
+                            :ok-count="stepStates.scheduled"
+                            :loading="!invocationSchedulingTerminal"
+                            class="steps-progress" />
+                        <ProgressBar
+                            v-if="stateCounts"
+                            :note="jobStatesStr"
+                            :total="jobCount"
+                            :ok-count="stateCounts.okCount"
+                            :running-count="stateCounts.runningCount"
+                            :new-count="stateCounts.newCount"
+                            :error-count="stateCounts.errorCount"
+                            :loading="!invocationAndJobTerminal"
+                            class="jobs-progress" />
+                    </div>
+                </template>
+            </WorkflowAnnotation>
+        </Transition>
 
         <BNav v-if="props.isFullPage" pills class="mb-2 p-2 bg-light border-bottom">
-            <BNavItem title="Overview" :active="!props.tab" :to="`/workflows/invocations/${props.invocationId}`">
+            <BNavItem title="Overview" :active="onOverviewTab" :to="`/workflows/invocations/${props.invocationId}`">
                 Overview
             </BNavItem>
             <BNavItem
@@ -361,17 +411,17 @@ async function onCancel() {
                 Outputs
             </BNavItem>
             <BNavItem
-                title="Report"
+                :title="!tabsDisabled ? 'Report' : disabledTabTooltip"
                 class="invocation-report-tab"
-                :active="props.tab === 'report'"
+                :active="!tabsDisabled && props.tab === 'report'"
                 :to="`/workflows/invocations/${props.invocationId}/report`"
                 :disabled="tabsDisabled">
                 Report
             </BNavItem>
             <BNavItem
-                title="Export"
+                :title="!tabsDisabled ? 'Export' : disabledTabTooltip"
                 class="invocation-export-tab"
-                :active="props.tab === 'export'"
+                :active="!tabsDisabled && props.tab === 'export'"
                 :to="`/workflows/invocations/${props.invocationId}/export`"
                 :disabled="tabsDisabled">
                 Export
@@ -391,39 +441,22 @@ async function onCancel() {
                 Debug
             </BNavItem>
 
-            <div class="ml-auto d-flex align-items-center">
-                <BBadge
-                    v-if="tabsDisabled"
-                    v-b-tooltip.hover.noninteractive
-                    class="mr-1"
-                    :title="disabledTabTooltip"
-                    variant="primary">
+            <div class="ml-auto d-flex align-items-center flex-gapx-1">
+                <WorkflowInvocationSearch
+                    v-if="!props.tab"
+                    :invocation-id="props.invocationId"
+                    :workflow-id="invocation.workflow_id" />
+                <BBadge v-if="tabsDisabled" v-g-tooltip.hover :title="disabledTabTooltip" variant="primary">
                     <FontAwesomeIcon :icon="faExclamation" />
                 </BBadge>
-                <BBadge
-                    v-if="isPolling"
-                    v-b-tooltip.hover.noninteractive
-                    class="mr-1"
-                    title="Polling for updates"
-                    variant="link">
+                <BBadge v-if="isPolling" v-g-tooltip.hover title="Polling for updates" variant="link">
                     <FontAwesomeIcon :icon="faSpinner" spin />
                 </BBadge>
-                <GButton
-                    v-if="!props.isFullPage && !invocationAndJobTerminal"
-                    tooltip
-                    class="my-1"
-                    title="Cancel scheduling of workflow invocation"
-                    data-description="cancel invocation button"
-                    size="small"
-                    @click="onCancel">
-                    <FontAwesomeIcon :icon="faTimes" fixed-width />
-                    Cancel Workflow
-                </GButton>
             </div>
         </BNav>
 
-        <div class="mt-1 d-flex flex-column overflow-auto">
-            <div v-if="!props.tab">
+        <div class="mt-1 d-flex flex-column tab-content-container">
+            <div v-if="onOverviewTab">
                 <WorkflowInvocationOverview
                     class="invocation-overview"
                     :invocation="invocation"
@@ -433,7 +466,7 @@ async function onCancel() {
                     :is-subworkflow="isSubworkflow"
                     :invocation-messages="uniqueMessages" />
             </div>
-            <div v-if="props.tab === 'steps'">
+            <div v-if="props.tab === 'steps'" class="steps-tab-content">
                 <BAlert v-if="isSubworkflow" variant="info" show>
                     <span v-localize>Subworkflow steps are not available.</span>
                 </BAlert>
@@ -444,6 +477,7 @@ async function onCancel() {
                     :is-full-page="props.isFullPage" />
             </div>
             <WorkflowInvocationInputOutputTabs
+                v-if="props.tab === 'inputs' || props.tab === 'outputs'"
                 :invocation="invocation"
                 :terminal="invocationAndJobTerminal"
                 :tab="props.tab" />
@@ -451,15 +485,17 @@ async function onCancel() {
                 <BAlert v-if="isSubworkflow" variant="info" show>
                     <span v-localize>Report is not available for subworkflow.</span>
                 </BAlert>
-                <BAlert v-else-if="!invocationStateSuccess" variant="info" show>
-                    <span v-localize>{{ disabledTabTooltip }}</span>
-                </BAlert>
+                <TabsDisabledAlert
+                    v-else-if="tabsDisabled"
+                    :invocation-id="props.invocationId"
+                    :tooltip="disabledTabTooltip" />
                 <InvocationReport v-else :invocation-id="invocation.id" />
             </div>
             <div v-if="props.tab === 'export'">
-                <BAlert v-if="!invocationAndJobTerminal" variant="info" show>
-                    <span v-localize>{{ disabledTabTooltip }}</span>
-                </BAlert>
+                <TabsDisabledAlert
+                    v-if="tabsDisabled"
+                    :invocation-id="props.invocationId"
+                    :tooltip="disabledTabTooltip" />
                 <div v-else>
                     <WorkflowInvocationExportOptions :invocation-id="invocation.id" />
                 </div>
@@ -502,11 +538,41 @@ async function onCancel() {
 </style>
 
 <style scoped lang="scss">
+.header-collapse-enter-active,
+.header-collapse-leave-active {
+    overflow: hidden;
+    max-height: 600px;
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+        max-height 0.3s ease,
+        opacity 0.25s ease,
+        transform 0.25s ease;
+}
+
+// TODO(vue3): rename .header-collapse-enter to .header-collapse-enter-from
+.header-collapse-enter,
+.header-collapse-leave-to {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+}
+
+.tab-content-container {
+    flex: 1;
+    min-height: 0;
+}
+
+.steps-tab-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
 .progress-bars {
     // progress bar shrinks to fit divs on either side
     flex-grow: 1;
     flex-shrink: 1;
-    max-width: 50%;
 
     .steps-progress,
     .jobs-progress {

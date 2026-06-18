@@ -5,9 +5,11 @@ searches for tests for packages in the bioconda-recipes repo and on Anaconda, lo
 
 A shallow search (default for singularity and conda generation scripts) just checks once on Anaconda for the specified version.
 """
+
 import json
 import logging
-from glob import glob
+import os.path
+from pathlib import Path
 from typing import (
     Any,
     Dict,
@@ -108,13 +110,6 @@ def get_anaconda_url(container, anaconda_channel="bioconda"):
     return f"https://anaconda.org/{anaconda_channel}/{name[0]}/{name[1]}/download/linux-64/{'-'.join(name)}.tar.bz2"
 
 
-def prepend_anaconda_url(url):
-    """
-    Take a partial url and prepend 'https://anaconda.org'
-    """
-    return f"https://anaconda.org{url}"
-
-
 def get_test_from_anaconda(url: str) -> Optional[Dict[str, Any]]:
     """
     Given the URL of an anaconda tarball, return tests
@@ -132,20 +127,26 @@ def get_test_from_anaconda(url: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def find_anaconda_versions(name, anaconda_channel="bioconda"):
+def find_anaconda_download_url(
+    name: str, version: str, build: Optional[str] = None, anaconda_channel: str = "bioconda"
+) -> Optional[str]:
     """
-    Find a list of available anaconda versions for a given container name
+    Find the anaconda download url for a given package.
     """
     r = requests.get(
-        f"https://anaconda.org/{anaconda_channel}/{name}/files",
+        f"https://api.anaconda.org/package/{anaconda_channel}/{name}/files",
         timeout=MULLED_SOCKET_TIMEOUT,
     )
     r.raise_for_status()
-    urls = []
-    for line in r.text.splitlines():
-        if "download/linux" in line:
-            urls.append(line.split('"')[1])
-    return urls
+    package_files = r.json()
+    for package_file in reversed(package_files):
+        if (
+            package_file["version"] == version
+            and (build is None or package_file["attrs"]["build"] == build)
+            and package_file["attrs"]["subdir"] in ["linux-64", "noarch"]
+        ):
+            return f"https:{package_file['download_url']}"
+    return None
 
 
 def open_recipe_file(file, recipes_path=None, github_repo="bioconda/bioconda-recipes"):
@@ -153,7 +154,7 @@ def open_recipe_file(file, recipes_path=None, github_repo="bioconda/bioconda-rec
     Open a file at a particular location and return contents as string
     """
     if recipes_path:
-        return open(f"{recipes_path}/{file}").read()
+        return open(os.path.join(recipes_path, file)).read()
     else:  # if no clone of the repo is available locally, download from GitHub
         r = requests.get(
             f"https://raw.githubusercontent.com/{github_repo}/master/{file}",
@@ -170,7 +171,7 @@ def get_alternative_versions(filepath, filename, recipes_path=None, github_repo=
     Return files that match ``filepath/*/filename`` in the bioconda-recipes repository
     """
     if recipes_path:
-        return [n.replace(f"{recipes_path}/", "") for n in glob(f"{recipes_path}/{filepath}/*/{filename}")]
+        return [str(p.relative_to(recipes_path)) for p in Path(recipes_path).glob(f"{filepath}/*/{filename}")]
     # else use the GitHub API:
     versions = []
     r = requests.get(
@@ -211,50 +212,55 @@ def deep_test_search(
     """
     Look in bioconda-recipes repo as well as anaconda for the tests, checking in multiple possible locations. If no test is found for the specified version, search if other package versions have a test available.
     """
-    name = split_container_name(container)
+    name_tuple = split_container_name(container)
+    assert len(name_tuple) in (2, 3)
+    name = name_tuple[0]
+    version = name_tuple[1]
+    build = name_tuple[2] if len(name_tuple) == 3 else None
     for f in [
         (
             get_commands_from_yaml,
             open_recipe_file,
-            (f"recipes/{name[0]}/{name[1]}/meta.yaml", recipes_path, github_repo),
+            (f"recipes/{name}/{version}/meta.yaml", recipes_path, github_repo),
             container,
         ),
         (
             get_run_test,
             open_recipe_file,
-            (f"recipes/{name[0]}/{name[1]}/run_test.sh", recipes_path, github_repo),
+            (f"recipes/{name}/{version}/run_test.sh", recipes_path, github_repo),
             container,
         ),
         (
             get_commands_from_yaml,
             open_recipe_file,
-            (f"recipes/{name[0]}/meta.yaml", recipes_path, github_repo),
+            (f"recipes/{name}/meta.yaml", recipes_path, github_repo),
             container,
         ),
-        (get_run_test, open_recipe_file, (f"recipes/{name[0]}/run_test.sh", recipes_path, github_repo), container),
+        (get_run_test, open_recipe_file, (f"recipes/{name}/run_test.sh", recipes_path, github_repo), container),
         (get_test_from_anaconda, get_anaconda_url, (container, anaconda_channel), container),
     ]:
         result = try_a_func(*f)
         if result:
             return result
 
-    versions = get_alternative_versions(f"recipes/{name[0]}", "meta.yaml", recipes_path, github_repo)
-    for version in versions:
-        result = try_a_func(get_commands_from_yaml, open_recipe_file, (version, recipes_path, github_repo), container)
+    alt_versions = get_alternative_versions(f"recipes/{name}", "meta.yaml", recipes_path, github_repo)
+    for alt_version in alt_versions:
+        result = try_a_func(
+            get_commands_from_yaml, open_recipe_file, (alt_version, recipes_path, github_repo), container
+        )
         if result:
             return result
 
-    versions = get_alternative_versions(f"recipes/{name[0]}", "run_test.sh", recipes_path, github_repo)
-    for version in versions:
-        result = try_a_func(get_run_test, open_recipe_file, (version, recipes_path, github_repo), container)
+    alt_versions = get_alternative_versions(f"recipes/{name}", "run_test.sh", recipes_path, github_repo)
+    for alt_version in alt_versions:
+        result = try_a_func(get_run_test, open_recipe_file, (alt_version, recipes_path, github_repo), container)
         if result:
             return result
 
-    versions = find_anaconda_versions(name[0], anaconda_channel)
-    for version in versions:
-        result = try_a_func(get_test_from_anaconda, prepend_anaconda_url, (version,), container)
-        if result:
-            return result
+    url = find_anaconda_download_url(name, version, build=build, anaconda_channel=anaconda_channel)
+    result = try_a_func(get_test_from_anaconda, lambda x: x, (url,), container)
+    if result:
+        return result
 
     # if everything fails
     return {"container": container}

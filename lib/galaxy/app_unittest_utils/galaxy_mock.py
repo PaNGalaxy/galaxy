@@ -119,6 +119,7 @@ class MockApp(di.Container, GalaxyDataTestApp):
     history_manager: HistoryManager
     job_metrics: JobMetrics
     vault: Optional[Vault] = None
+    execution_timer_factory: Any
     stop: bool
     is_webapp: bool = True
 
@@ -159,10 +160,8 @@ class MockApp(di.Container, GalaxyDataTestApp):
         self.application_stack = ApplicationStack()
         self.auth_manager = AuthManager(self.config)
         self.user_manager = UserManager(cast(BasicSharedApp, self))
-        self.execution_timer_factory = Bunch(get_timer=StructuredExecutionTimer)
-        self.interactivetool_manager = Bunch(
-            create_interactivetool=lambda *args, **kwargs: None, get_job_subdomain=lambda *args, **kwargs: None
-        )
+        self.execution_timer_factory = Bunch(get_timer=StructuredExecutionTimer, galaxy_statsd_client=None)
+        self.interactivetool_manager = Bunch(create_interactivetool=lambda *args, **kwargs: None)
         self.is_job_handler = False
         self.biotools_metadata_source = None
         self.trs_proxy = Bunch()
@@ -293,6 +292,7 @@ class MockAppConfig(GalaxyDataTestConfig, CommonConfigurationMixin):
         self.monitor_thread_join_timeout = 1
         self.integrated_tool_panel_config = None
         self.vault_config_file = kwargs.get("vault_config_file")
+        self.url_headers_config_file = None
         self.max_discovered_files = 10000
         self.display_builtin_converters = True
         self.enable_notification_system = True
@@ -410,7 +410,6 @@ class MockTrans:
 
 
 class MockVisualizationsRegistry:
-    BUILT_IN_VISUALIZATIONS = ["trackster"]
 
     def get_visualizations(self, trans, target):
         return []

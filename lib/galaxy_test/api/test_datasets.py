@@ -1,5 +1,4 @@
 import textwrap
-import urllib
 import zipfile
 from io import BytesIO
 from urllib.parse import quote
@@ -10,8 +9,10 @@ from galaxy.model.unittest_utils.store_fixtures import (
     TEST_SOURCE_URI,
 )
 from galaxy.tool_util.verify.test_data import TestDataResolver
-from galaxy.util.unittest_utils import skip_if_github_down
-from galaxy_test.base.api_asserts import assert_has_keys
+from galaxy_test.base.api_asserts import (
+    assert_error_message_contains,
+    assert_has_keys,
+)
 from galaxy_test.base.decorators import (
     requires_admin,
     requires_new_history,
@@ -331,16 +332,27 @@ class TestDatasetsApi(ApiTestCase):
         assert input_hda["id"] == query_hda["id"]
 
     def test_display(self, history_id):
-        contents = textwrap.dedent(
-            """\
+        contents = textwrap.dedent("""\
         1   2   3   4
         A   B   C   D
         10  20  30  40
-        """
-        )
+        """)
         hda1 = self.dataset_populator.new_dataset(history_id, content=contents, wait=True)
         display_response = self._get(f"histories/{history_id}/contents/{hda1['id']}/display", {"raw": "True"})
         self._assert_status_code_is(display_response, 200)
+        assert display_response.text == contents
+
+    def test_display_preview_binary_as_text_uses_text_plain(self, history_id):
+        # Regression test for https://github.com/galaxyproject/galaxy/issues/22395
+        # When previewing an unknown / binary dataset as text the response must use
+        # a text/plain content-type so the iframe preserves whitespace/newlines and
+        # does not interpret stray characters as HTML.
+        contents = "header line\nrow with < and > and &\nfinal line\n"
+        hda1 = self.dataset_populator.new_dataset(history_id, content=contents, file_type="data", wait=True)
+        display_response = self._get(f"histories/{history_id}/contents/{hda1['id']}/display", {"preview": "True"})
+        self._assert_status_code_is(display_response, 200)
+        content_type = display_response.headers.get("content-type", "")
+        assert content_type.startswith("text/plain"), content_type
         assert display_response.text == contents
 
     def test_display_extra_paths(self, history_id: str):
@@ -376,13 +388,11 @@ class TestDatasetsApi(ApiTestCase):
         )
 
     def test_get_content_as_text(self, history_id):
-        contents = textwrap.dedent(
-            """\
+        contents = textwrap.dedent("""\
         1   2   3   4
         A   B   C   D
         10  20  30  40
-        """
-        )
+        """)
         hda1 = self.dataset_populator.new_dataset(history_id, content=contents, wait=True)
         get_content_as_text_response = self._get(f"datasets/{hda1['id']}/get_content_as_text")
         self._assert_status_code_is(get_content_as_text_response, 200)
@@ -414,13 +424,11 @@ class TestDatasetsApi(ApiTestCase):
             self._assert_status_code_is(get_content_as_text_response, 403)
 
     def test_dataprovider_chunk(self, history_id):
-        contents = textwrap.dedent(
-            """\
+        contents = textwrap.dedent("""\
         1   2   3   4
         A   B   C   D
         10  20  30  40
-        """
-        )
+        """)
         # test first chunk
         hda1 = self.dataset_populator.new_dataset(history_id, content=contents, wait=True)
         kwds = {
@@ -464,6 +472,48 @@ class TestDatasetsApi(ApiTestCase):
         self._assert_has_key(display, "data")
         assert "\nA" in display["data"][0]
 
+    def test_raw_data_tabular_missing_columns_returns_400(self, history_id):
+        # Regression for https://github.com/galaxyproject/galaxy/issues/22393 — a tabular
+        # dataset queried via data_type=raw_data without a `columns` parameter used to raise
+        # a bare TypeError that bubbled up as a 500; it should be a 400 MessageException.
+        contents = "1\t2\t3\nA\tB\tC\n"
+        hda = self.dataset_populator.new_dataset(history_id, content=contents, wait=True, file_type="tabular")
+        response = self._get(f"datasets/{hda['id']}", {"data_type": "raw_data"})
+        self._assert_status_code_is(response, 400)
+        assert_error_message_contains(response, "columns")
+
+    def test_raw_data_tabular_invalid_column_index_returns_400(self, history_id):
+        contents = "1\t2\t3\nA\tB\tC\n"
+        hda = self.dataset_populator.new_dataset(history_id, content=contents, wait=True, file_type="tabular")
+        response = self._get(
+            f"datasets/{hda['id']}",
+            {"data_type": "raw_data", "columns": "[99]"},
+        )
+        self._assert_status_code_is(response, 400)
+        assert_error_message_contains(response, "column index")
+
+    def test_raw_data_tabular_invalid_columns_json_returns_400(self, history_id):
+        contents = "1\t2\t3\nA\tB\tC\n"
+        hda = self.dataset_populator.new_dataset(history_id, content=contents, wait=True, file_type="tabular")
+        response = self._get(
+            f"datasets/{hda['id']}",
+            {"data_type": "raw_data", "columns": "not-json"},
+        )
+        self._assert_status_code_is(response, 400)
+        assert_error_message_contains(response, "JSON")
+
+    def test_raw_data_no_converter_returns_400(self, history_id):
+        # Requesting a provider whose name requires a converter that is not available should
+        # return a 400 MessageException, not a bare NoConverterException bubbling up as a 500.
+        contents = "1\t2\t3\nA\tB\tC\n"
+        hda = self.dataset_populator.new_dataset(history_id, content=contents, wait=True, file_type="tabular")
+        response = self._get(
+            f"datasets/{hda['id']}",
+            {"data_type": "raw_data", "provider": "column_with_stats"},
+        )
+        self._assert_status_code_is(response, 400)
+        assert_error_message_contains(response, "Conversion")
+
     def test_bam_chunking_through_display_endpoint(self, history_id):
         # This endpoint does not use data providers and instead overrides display_data
         # in the bam datatype. This is the endpoint is very close to the legacy non-API
@@ -488,13 +538,11 @@ class TestDatasetsApi(ApiTestCase):
         return self.dataset_populator.display_chunk(dataset_id, offset, ck_size)
 
     def test_tabular_chunking_through_display_endpoint(self, history_id):
-        contents = textwrap.dedent(
-            """\
+        contents = textwrap.dedent("""\
         1   2   3   4
         A   B   C   D
         10  20  30  40
-        """
-        )
+        """)
         # test first chunk
         hda1 = self.dataset_populator.new_dataset(history_id, content=contents, wait=True, file_type="tabular")
         dataset_id = hda1["id"]
@@ -575,7 +623,7 @@ class TestDatasetsApi(ApiTestCase):
 
     def test_anon_tag_permissions(self):
         with self._different_user(anon=True):
-            history_id = self._get(urllib.parse.urljoin(self.url, "history/current_history_json")).json()["id"]
+            history_id = self._get_current_history_id()
             hda_id = self.dataset_populator.new_dataset(history_id, content="abc", wait=True)["id"]
             payload = {
                 "item_id": hda_id,
@@ -887,11 +935,14 @@ class TestDatasetsApi(ApiTestCase):
         assert len(sources) == 1
         assert sources[0]["source_uri"] == TEST_SOURCE_URI
 
-    @skip_if_github_down
-    def test_display_application_link(self, history_id):
+    def test_display_application_link(self, history_id, mock_http_server):
+        url = mock_http_server.get_url(
+            remote_url="https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bam",
+            file_path="test-data/1.bam",
+        )
         item = {
             "src": "url",
-            "url": "https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bam",
+            "url": url,
             "ext": "bam",
         }
         output = self.dataset_populator.fetch_hda(history_id, item)
@@ -903,7 +954,7 @@ class TestDatasetsApi(ApiTestCase):
         self.dataset_populator.wait_for_history_jobs(history_id)
 
         # once we purge the history, it becomes immutable
-        self._delete(f"histories/{history_id}", data={"purge": True}, json=True)
+        self.dataset_populator.purge_history(history_id)
 
         # now we can't update the datatype
         response = self._put(f"histories/{history_id}/contents/{hda_id}", data={"datatype": "tabular"}, json=True)

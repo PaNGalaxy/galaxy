@@ -20,8 +20,7 @@ from ._base import BaseObjectStoreIntegrationTestCase
 
 SCRIPT_DIRECTORY = os.path.abspath(os.path.dirname(__file__))
 
-DISTRIBUTED_OBJECT_STORE_CONFIG_TEMPLATE = string.Template(
-    """<?xml version="1.0"?>
+DISTRIBUTED_OBJECT_STORE_CONFIG_TEMPLATE = string.Template("""<?xml version="1.0"?>
 <object_store type="distributed" id="primary" order="0">
     <backends>
         <backend id="default" allow_selection="true" type="disk" weight="1" name="Default Store">
@@ -49,8 +48,7 @@ DISTRIBUTED_OBJECT_STORE_CONFIG_TEMPLATE = string.Template(
         </backend>
     </backends>
 </object_store>
-"""
-)
+""")
 
 
 TEST_WORKFLOW = """
@@ -141,6 +139,32 @@ WORKFLOW_WITH_COLLECTIONS_1_TEST_DATA = """
 text_input1: |
   samp1\t10.0
   samp2\t20.0
+"""
+
+WORKFLOW_WITH_MAPPED_COLLECTION_OUTPUT = """
+class: GalaxyWorkflow
+inputs:
+  input_collection:
+    type: collection
+    collection_type: list
+outputs:
+  wf_output_1:
+    outputSource: cat_mapped/out_file1
+steps:
+  cat_mapped:
+    tool_id: cat
+    in:
+      input1: input_collection
+"""
+
+WORKFLOW_MAPPED_COLLECTION_TEST_DATA = """
+input_collection:
+  collection_type: list
+  elements:
+    - identifier: el1
+      content: "data 1"
+    - identifier: el2
+      content: "data 2"
 """
 
 
@@ -368,6 +392,67 @@ class TestObjectStoreSelectionWithPreferredObjectStoresIntegration(BaseObjectSto
             assert_storage_name_is(output_info, "Static Storage")
             assert_storage_name_is(intermediate_dict, "Dynamic EBS")
 
+    def test_workflow_mapped_collection_objectstore_selection(self):
+        # Regression for https://github.com/galaxyproject/galaxy/issues/21846
+        with self.dataset_populator.test_history() as history_id:
+            element_storages = self._run_workflow_with_mapped_collection(
+                history_id,
+                WORKFLOW_WITH_MAPPED_COLLECTION_OUTPUT,
+                WORKFLOW_MAPPED_COLLECTION_TEST_DATA,
+            )
+            for storage in element_storages:
+                assert_storage_name_is(storage, "Default Store")
+
+        with self.dataset_populator.test_history() as history_id:
+            element_storages = self._run_workflow_with_mapped_collection(
+                history_id,
+                WORKFLOW_WITH_MAPPED_COLLECTION_OUTPUT,
+                WORKFLOW_MAPPED_COLLECTION_TEST_DATA,
+                extra_invocation_kwds={"preferred_object_store_id": "static"},
+            )
+            for storage in element_storages:
+                assert_storage_name_is(storage, "Static Storage")
+
+    def test_workflow_mapped_collection_objectstore_selection_split(self):
+        # Regression for https://github.com/galaxyproject/galaxy/issues/21846
+        with self.dataset_populator.test_history() as history_id:
+            element_storages = self._run_workflow_with_mapped_collection(
+                history_id,
+                WORKFLOW_WITH_MAPPED_COLLECTION_OUTPUT,
+                WORKFLOW_MAPPED_COLLECTION_TEST_DATA,
+                extra_invocation_kwds={
+                    "preferred_outputs_object_store_id": "static",
+                    "preferred_intermediate_object_store_id": "dynamic_ebs",
+                },
+            )
+            for storage in element_storages:
+                assert_storage_name_is(storage, "Static Storage")
+
+    def _run_workflow_with_mapped_collection(
+        self,
+        history_id: str,
+        workflow: str,
+        test_data: str,
+        extra_invocation_kwds: Optional[dict[str, Any]] = None,
+    ):
+        self.workflow_populator.run_workflow(
+            workflow,
+            test_data=test_data,
+            history_id=history_id,
+            extra_invocation_kwds=extra_invocation_kwds,
+        )
+        # Find the implicit collection in the history and inspect element storage
+        history_contents = self.dataset_populator.get_history_contents(history_id, data={"v": "dev"})
+        hdca = None
+        for entry in history_contents:
+            if entry.get("history_content_type") == "dataset_collection" and entry.get("visible", True):
+                hdca = entry
+        assert hdca is not None, "No collection found in history"
+        hdca_details = self.dataset_populator.get_history_collection_details(history_id, content_id=hdca["id"])
+        elements = hdca_details["elements"]
+        assert len(elements) > 0, "Collection has no elements"
+        return [self._storage_info(element["object"]) for element in elements]
+
     def _run_workflow_with_collections_1(self, history_id: str, extra_invocation_kwds: Optional[dict[str, Any]] = None):
         wf_run = self.workflow_populator.run_workflow(
             WORKFLOW_WITH_COLLECTIONS_1,
@@ -494,3 +579,35 @@ class TestObjectStoreSelectionWithPreferredObjectStoresIntegration(BaseObjectSto
             select(Dataset).order_by(Dataset.table.c.id.desc()).limit(1)
         ).first()
         return latest_dataset
+
+
+class TestObjectStoreSelectionWithExtendedMetadataIntegration(
+    TestObjectStoreSelectionWithPreferredObjectStoresIntegration
+):
+    @classmethod
+    def handle_galaxy_config_kwds(cls, config):
+        super().handle_galaxy_config_kwds(config)
+        config["metadata_strategy"] = "extended"
+        config["retry_metadata_internally"] = False
+
+    def test_objectstore_selection_dynamic_output_tools(self):
+        with self.dataset_populator.test_history() as history_id:
+            self._set_user_preferred_object_store_id("static")
+            response = self.dataset_populator.run_tool(
+                "collection_creates_dynamic_list_of_pairs",
+                {"foo": "bar"},
+                history_id,
+            )
+            self.dataset_populator.wait_for_job(response["jobs"][0]["id"], assert_ok=True)
+            output_collections = response["output_collections"]
+            assert len(output_collections) == 1
+            hdca = self.dataset_populator.get_history_collection_details(
+                history_id, content_id=output_collections[0]["id"]
+            )
+            # Check all leaf datasets in the collection use the preferred store
+            for outer_element in hdca["elements"]:
+                for inner_element in outer_element["object"]["elements"]:
+                    dataset = inner_element["object"]
+                    storage_dict = self._storage_info(dataset)
+                    assert_storage_name_is(storage_dict, "Static Storage")
+            self._reset_user_preferred_object_store_id()

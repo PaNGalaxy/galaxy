@@ -3,6 +3,7 @@ from enum import Enum
 from typing import (
     Annotated,
     Any,
+    Literal,
     Optional,
     Union,
 )
@@ -17,16 +18,16 @@ from pydantic import (
     TypeAdapter,
     UUID4,
 )
-from typing_extensions import Literal
 
 from galaxy.schema.fields import DecodedDatabaseIdField
-from galaxy.schema.schema import (
-    Model,
+from galaxy.schema.schema import Model
+from galaxy.schema.terms import HelpTerms
+from galaxy.schema.types import CoercedStringType
+from galaxy.tool_util_models.parameters import FileOrCollectionRequest
+from galaxy.tool_util_models.sample_sheet import (
     SampleSheetColumnDefinitions,
     SampleSheetRow,
 )
-from galaxy.schema.terms import HelpTerms
-from galaxy.schema.types import CoercedStringType
 from galaxy.util.hash_util import HashFunctionNames
 
 HELP_TERMS = HelpTerms()
@@ -94,6 +95,7 @@ class BaseCollectionTarget(BaseFetchDataTarget):
     tags: Optional[list[str]] = None
     name: Optional[str] = None
     column_definitions: Optional[SampleSheetColumnDefinitions] = None
+    rows: Optional[dict[str, SampleSheetRow]] = None
 
 
 class LibraryDestination(FetchBaseModel):
@@ -156,6 +158,7 @@ class PastedDataElement(BaseDataElement):
 class UrlDataElement(BaseDataElement):
     src: Literal["url"]
     url: str = Field(..., description="URL to upload")
+    headers: Optional[dict[str, str]] = Field(None, description="Optional headers to include in the URL fetch request")
 
 
 class ServerDirElement(BaseDataElement):
@@ -307,10 +310,24 @@ class DataLandingRequestState(Model):
     targets: Targets
 
 
+FileOrCollectionRequests = list[FileOrCollectionRequest]
+
+FileOrCollectionRequestsAdapter = TypeAdapter(FileOrCollectionRequests)
+
+
 # Vaguely matches the schema.schema.ToolLandingState but we don't allow data_fetch to be called directly
 # via the tool API so we have a more specific model here.
 class CreateDataLandingPayload(Model):
     request_state: DataLandingRequestState
+    client_secret: Optional[str] = None
+    public: bool = False
+    origin: Optional[HttpUrl] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CreateFileLandingPayload(Model):
+    request_state: FileOrCollectionRequests
     client_secret: Optional[str] = None
     public: bool = False
     origin: Optional[HttpUrl] = None

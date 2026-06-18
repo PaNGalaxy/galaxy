@@ -25,6 +25,7 @@ from pydantic import (
     UUID1,
     UUID4,
 )
+from sqlalchemy import select
 from starlette.responses import StreamingResponse
 
 from galaxy import (
@@ -48,6 +49,7 @@ from galaxy.managers.workflows import (
     WorkflowCreateOptions,
     WorkflowUpdateOptions,
 )
+from galaxy.model import WorkflowInvocationCompletion
 from galaxy.model.item_attrs import UsesAnnotations
 from galaxy.schema.fields import DecodedDatabaseIdField
 from galaxy.schema.invocation import (
@@ -62,6 +64,7 @@ from galaxy.schema.invocation import (
     InvocationStepJobsResponseStepModel,
     InvocationUpdatePayload,
     ReportInvocationErrorPayload,
+    WorkflowInvocationCompletionResponse,
     WorkflowInvocationRequestModel,
     WorkflowInvocationResponse,
 )
@@ -70,12 +73,14 @@ from galaxy.schema.schema import (
     AsyncTaskResultSummary,
     ClaimLandingPayload,
     CreateWorkflowLandingRequestPayload,
+    InvocationIndexPayload,
     InvocationSortByEnum,
     InvocationsStateCounts,
     SetSlugPayload,
     ShareWithPayload,
     ShareWithStatus,
     SharingStatus,
+    WorkflowIndexPayload,
     WorkflowJobMetric,
     WorkflowLandingRequest,
     WorkflowSortByEnum,
@@ -83,6 +88,8 @@ from galaxy.schema.schema import (
 from galaxy.schema.workflows import (
     InvokeWorkflowPayload,
     StoredWorkflowDetailed,
+    WorkflowExtractionByIdsPayload,
+    WorkflowExtractionResult,
 )
 from galaxy.structured_app import StructuredApp
 from galaxy.tool_shed.galaxy_install.install_manager import InstallRepositoryManager
@@ -117,15 +124,11 @@ from galaxy.webapps.galaxy.services.base import (
     ServesExportStores,
 )
 from galaxy.webapps.galaxy.services.invocations import (
-    InvocationIndexPayload,
     InvocationsService,
     PrepareStoreDownloadPayload,
     WriteInvocationStoreToPayload,
 )
-from galaxy.webapps.galaxy.services.workflows import (
-    WorkflowIndexPayload,
-    WorkflowsService,
-)
+from galaxy.webapps.galaxy.services.workflows import WorkflowsService
 from galaxy.workflow.extract import extract_workflow
 from galaxy.workflow.modules import module_factory
 
@@ -342,13 +345,27 @@ class WorkflowsAPIController(
         style = kwd.get("style", "export")
         download_format = kwd.get("format")
         version = kwd.get("version")
+        if version is not None:
+            try:
+                version = int(version)
+            except ValueError:
+                raise exceptions.RequestParameterInvalidException("Invalid version specified.")
         history = None
         if history_id := kwd.get("history_id"):
             history = self.history_manager.get_accessible(
                 self.decode_id(history_id), trans.user, current_history=trans.history
             )
+        preserve_external_subworkflow_links = util.string_as_bool(
+            kwd.get("preserve_external_subworkflow_links", "false")
+        )
         ret_dict = self.workflow_contents_manager.workflow_to_dict(
-            trans, stored_workflow, style=style, version=version, history=history, instance_id=instance_id
+            trans,
+            stored_workflow,
+            style=style,
+            version=version,
+            history=history,
+            instance_id=instance_id,
+            preserve_external_subworkflow_links=preserve_external_subworkflow_links,
         )
         if download_format == "json-download":
             sname = stored_workflow.name
@@ -531,7 +548,7 @@ class WorkflowsAPIController(
         module_type = payload.get("type", "tool")
         inputs = payload.get("inputs", {})
         trans.workflow_building_mode = workflow_building_modes.ENABLED
-        from_tool_form = True if module_type != "data_collection_input" else False
+        from_tool_form = True if module_type not in ("data_collection_input", "pick_value") else False
         if not from_tool_form and "tool_state" not in payload and "inputs" in payload:
             # tool state not sent, use the manually constructed inputs
             payload["tool_state"] = payload["inputs"]
@@ -1077,6 +1094,22 @@ class FastAPIWorkflows:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.post(
+        "/api/workflows/extract",
+        summary="Extract a workflow from selected jobs and history items by encoded IDs.",
+    )
+    def extract_by_ids(
+        self,
+        payload: WorkflowExtractionByIdsPayload = Body(...),
+        trans: ProvidesHistoryContext = DependsOnTrans,
+    ) -> WorkflowExtractionResult:
+        """ID-based workflow extraction.
+
+        Per-item permission checks make this history-optional and allow
+        cross-history extraction.
+        """
+        return self.service.extract_by_ids(trans, payload)
+
+    @router.post(
         "/api/workflows/{workflow_id}/invocations",
         name="Invoke workflow",
         summary="Schedule the workflow specified by `workflow_id` to run.",
@@ -1202,12 +1235,10 @@ LegacyJobStateQueryParam = Annotated[
     bool,
     Query(
         title="Replace with job state",
-        description=(
-            """Populate the invocation step state with the job state instead of the invocation step state.
+        description=("""Populate the invocation step state with the job state instead of the invocation step state.
         This will also produce one step per job in mapping jobs to mimic the older behavior with respect to collections.
         Partially scheduled steps may provide incomplete information and the listed steps outputs
-        are not the mapped over step outputs but the individual job outputs."""
-        ),
+        are not the mapped over step outputs but the individual job outputs."""),
     ),
 ]
 
@@ -1793,3 +1824,37 @@ class FastAPIInvocations:
         trans: ProvidesHistoryContext = DependsOnTrans,
     ) -> list[WorkflowJobMetric]:
         return self.invocations_service.show_invocation_metrics(trans=trans, invocation_id=invocation_id)
+
+    @router.get(
+        "/api/invocations/{invocation_id}/completion",
+        summary="Get workflow invocation completion details.",
+    )
+    def show_invocation_completion(
+        self,
+        invocation_id: InvocationIDPathParam,
+        trans: ProvidesUserContext = DependsOnTrans,
+    ) -> Optional[WorkflowInvocationCompletionResponse]:
+        """
+        Get completion details for a workflow invocation.
+
+        Returns None if the invocation has not completed yet.
+        Completion occurs when all jobs have reached terminal states
+        (ok, error, deleted, skipped, paused, stopped).
+        """
+        # Verify invocation exists and is accessible
+        invocation = self.invocations_service.get_invocation(trans, invocation_id)
+
+        # Query completion
+        stmt = select(WorkflowInvocationCompletion).where(
+            WorkflowInvocationCompletion.workflow_invocation_id == invocation.id
+        )
+        completion = trans.sa_session.execute(stmt).scalar_one_or_none()
+
+        if completion is None:
+            return None
+
+        return WorkflowInvocationCompletionResponse(
+            completion_time=completion.completion_time,
+            job_state_summary=completion.job_state_summary or {},
+            hooks_executed=completion.hooks_executed or [],
+        )

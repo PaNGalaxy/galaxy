@@ -4,8 +4,8 @@ import { computed } from "vue";
 
 import { useWorkflowStores } from "@/composables/workflowStores";
 import type { FreehandWorkflowComment } from "@/stores/workflowEditorCommentStore";
+import { vecSubtract } from "@/utils/geometry";
 
-import { vecSubtract } from "../modules/geometry";
 import { colors } from "./colors";
 
 const props = defineProps<{
@@ -71,7 +71,7 @@ function onClick() {
 </template>
 
 <style scoped lang="scss">
-@import "theme/blue.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .freehand-workflow-comment {
     --color: #{$brand-primary};

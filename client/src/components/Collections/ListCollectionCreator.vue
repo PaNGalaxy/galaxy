@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import "ui/hoverhighlight";
-
 import { faSquare } from "@fortawesome/free-regular-svg-icons";
 import { faMinus, faSortAlphaDown, faTimes, faUndo } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
@@ -249,12 +247,11 @@ async function attemptCreate() {
     const returnedElements = props.fromSelection ? workingElements.value : inListElements.value;
     atLeastOneElement.value = returnedElements.length > 0;
 
-    let confirmed = false;
+    let confirmed: boolean | null = false;
     if (!atLeastOneElement.value) {
         confirmed = await confirm("Are you sure you want to create a list with no datasets?", {
             title: "Create an empty list",
-            okTitle: "Create",
-            okVariant: "primary",
+            okText: "Create",
         });
     }
 
@@ -704,8 +701,8 @@ function selectionAsHdaSummary(value: any): HDASummary {
 </template>
 
 <style scoped lang="scss">
-@import "base.scss";
-@import "theme/blue.scss";
+@import "@/style/scss/base.scss";
+@import "@/style/scss/theme/blue.scss";
 
 .list-collection-creator {
     .footer {

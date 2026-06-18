@@ -7,6 +7,7 @@ from typing import (
     Union,
 )
 
+from galaxy.exceptions import RequestParameterInvalidException
 from galaxy.tools.parameters.basic import (
     DataCollectionToolParameter,
     DataToolParameter,
@@ -200,7 +201,11 @@ def process_key(incoming_key: str, incoming_value: Any, d: dict[str, Any]):
     else:
         # Section / Conditional
         input_name = key_parts[0]
+        if not input_name or input_name.isdigit():
+            raise RequestParameterInvalidException(f"Parameter '{incoming_key}' has an invalid key structure.")
         subdict = d.get(input_name, {})
+        if not isinstance(subdict, dict):
+            raise RequestParameterInvalidException(f"Parameter '{incoming_key}' received conflicting value.")
         d[input_name] = subdict
         process_key("|".join(key_parts[1:]), incoming_value=incoming_value, d=subdict)
 

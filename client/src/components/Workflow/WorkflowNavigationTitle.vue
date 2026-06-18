@@ -108,10 +108,8 @@ async function rerunWorkflow() {
             "Rerunning this workflow requires changing the history to the one with the original inputs. Do you want to continue?",
         ),
         {
-            id: "change-history-rerun-workflow",
             title: localize("Change History and Rerun Workflow"),
-            okTitle: localize("Change History and Rerun"),
-            okVariant: "primary",
+            okText: localize("Change History and Rerun"),
         },
     );
 
@@ -138,8 +136,9 @@ async function rerunWorkflow() {
 
         <div class="position-relative">
             <div v-if="workflow" class="bg-secondary px-2 py-1 rounded d-flex flex-gapx-1 justify-content-between">
-                <div class="py-1 d-flex flex-wrap align-items-center flex-gapx-1" data-description="workflow heading">
-                    <FontAwesomeIcon :icon="faSitemap" fixed-width />
+                <div class="py-1 align-items-center" data-description="workflow heading">
+                    <slot name="before-icon" />
+                    <FontAwesomeIcon class="mr-1" :icon="faSitemap" fixed-width />
                     <b> {{ props.invocation ? "Invoked " : "" }}Workflow: {{ getWorkflowName() }} </b>
                     <span>(Version: {{ workflow.version + 1 }})</span>
                 </div>
@@ -152,7 +151,7 @@ async function rerunWorkflow() {
                             transparent
                             color="blue"
                             size="small"
-                            title="Edit Workflow"
+                            :title="localize('Edit Workflow')"
                             disabled-title="This workflow has been deleted."
                             :disabled="workflow.deleted"
                             :to="`/workflows/edit?id=${workflow.id}&version=${workflow.version}`">
@@ -181,11 +180,11 @@ async function rerunWorkflow() {
                         :disabled="runDisabled"
                         size="small"
                         :tooltip="executeButtonTooltip"
-                        :title="!props.validRerun ? 'Run Workflow' : 'Rerun Workflow'"
+                        :title="!props.validRerun ? localize('Run Workflow') : localize('Rerun Workflow')"
                         @onClick="emit('on-execute')" />
                     <GButtonGroup v-else>
                         <GButton
-                            title="Run Workflow"
+                            :title="localize('Run Workflow')"
                             disabled-title="This workflow has been deleted."
                             data-button-run
                             tooltip
@@ -197,7 +196,7 @@ async function rerunWorkflow() {
                             <span v-localize>Run</span>
                         </GButton>
                         <GButton
-                            title="Rerun Workflow with same inputs"
+                            :title="localize('Rerun Workflow with same inputs')"
                             disabled-title="This workflow has been deleted."
                             data-button-rerun
                             tooltip

@@ -6,11 +6,11 @@ from argparse import (
     ArgumentParser,
     Namespace,
 )
+from collections.abc import Callable
 from io import StringIO
 from textwrap import TextWrapper
 from typing import (
     Any,
-    Callable,
     NamedTuple,
     Optional,
 )
@@ -19,7 +19,7 @@ import yaml
 from boltons.iterutils import remap
 
 try:
-    from gravity.util import settings_to_sample
+    from gravity.settings import settings_to_sample
 except ImportError:
     settings_to_sample = None
 
@@ -202,6 +202,7 @@ OPTION_ACTIONS: dict[str, _OptionAction] = {
     "legacy_eager_objectstore_initialization": _DeprecatedAndDroppedAction(),
     "enable_openid": _DeprecatedAndDroppedAction(),
     "openid_consumer_cache_path": _DeprecatedAndDroppedAction(),
+    "enable_beta_workflow_modules": _DeprecatedAndDroppedAction(),
     "ga4gh_service_organization_name": _RenameAction("organization_name"),
     "ga4gh_service_organization_url": _RenameAction("organization_url"),
 }

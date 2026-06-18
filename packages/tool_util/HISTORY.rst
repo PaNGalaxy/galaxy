@@ -4,10 +4,141 @@ History
 .. to_doc
 
 ---------
-25.1.dev0
+26.1.dev0
 ---------
 
 
+
+-------------------
+26.0.0 (2026-04-08)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* When getting tool by uuid, get that exact tool by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21844 <https://github.com/galaxyproject/galaxy/pull/21844>`_
+* Fix Pydantic UnsupportedFieldAttributeWarning for Field defaults in Annotated by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21923 <https://github.com/galaxyproject/galaxy/pull/21923>`_
+* Backport paired or unpaired mapping fix by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21936 <https://github.com/galaxyproject/galaxy/pull/21936>`_
+* Fix ToolExpressionOutput.to_model() for boolean type. by `@jmchilton <https://github.com/jmchilton>`_ in `#22038 <https://github.com/galaxyproject/galaxy/pull/22038>`_
+* Model hidden_data params as optional data in tool meta-models. by `@jmchilton <https://github.com/jmchilton>`_ in `#22116 <https://github.com/galaxyproject/galaxy/pull/22116>`_
+* Fix validation of certain classes of text validators in tools. by `@jmchilton <https://github.com/jmchilton>`_ in `#22280 <https://github.com/galaxyproject/galaxy/pull/22280>`_
+
+============
+Enhancements
+============
+
+* Tool Request API  by `@jmchilton <https://github.com/jmchilton>`_ in `#20935 <https://github.com/galaxyproject/galaxy/pull/20935>`_
+* Remove Trackster by `@guerler <https://github.com/guerler>`_ in `#20974 <https://github.com/galaxyproject/galaxy/pull/20974>`_
+* Add Playwright Backend Support to Galaxy Browser Automation Framework by `@jmchilton <https://github.com/jmchilton>`_ in `#21102 <https://github.com/galaxyproject/galaxy/pull/21102>`_
+* Fix various bugs/hacks with tool_data_table handling. by `@jmchilton <https://github.com/jmchilton>`_ in `#21163 <https://github.com/galaxyproject/galaxy/pull/21163>`_
+* Update Python dependencies by `@galaxybot <https://github.com/galaxybot>`_ in `#21368 <https://github.com/galaxyproject/galaxy/pull/21368>`_
+* Enable attaching sample sheet to landing requests by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21489 <https://github.com/galaxyproject/galaxy/pull/21489>`_
+* Tool testing: add min/max attributes to test output collections by `@bernt-matthias <https://github.com/bernt-matthias>`_ in `#21495 <https://github.com/galaxyproject/galaxy/pull/21495>`_
+* Extend `image_diff` and image content assertions to handle boolean images by `@kostrykin <https://github.com/kostrykin>`_ in `#21527 <https://github.com/galaxyproject/galaxy/pull/21527>`_
+* Apply 2026 black style by `@galaxybot <https://github.com/galaxybot>`_ in `#21618 <https://github.com/galaxyproject/galaxy/pull/21618>`_
+* Fix slow startup regression by `@ksuderman <https://github.com/ksuderman>`_ in `#21637 <https://github.com/galaxyproject/galaxy/pull/21637>`_
+* Remove sanitization from built-in grep tool by `@wm75 <https://github.com/wm75>`_ in `#21648 <https://github.com/galaxyproject/galaxy/pull/21648>`_
+* Update Python dependencies by `@galaxybot <https://github.com/galaxybot>`_ in `#21653 <https://github.com/galaxyproject/galaxy/pull/21653>`_
+* Add linter to validate required_files include paths exist by `@mvdbeek <https://github.com/mvdbeek>`_ in `#22061 <https://github.com/galaxyproject/galaxy/pull/22061>`_
+
+=============
+Other changes
+=============
+
+* Fix tool request API for multiple select parameters with defaults. by `@jmchilton <https://github.com/jmchilton>`_ in `#21416 <https://github.com/galaxyproject/galaxy/pull/21416>`_
+
+-------------------
+25.1.2 (2026-03-09)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Properly parse build info from requirement info by `@bernt-matthias <https://github.com/bernt-matthias>`_ in `#21481 <https://github.com/galaxyproject/galaxy/pull/21481>`_
+* Fix loading non-tool files from watched tool directories by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21880 <https://github.com/galaxyproject/galaxy/pull/21880>`_
+
+-------------------
+25.1.1 (2026-02-03)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Fix data manager .loc file selection logic by `@jdavcs <https://github.com/jdavcs>`_ in `#21664 <https://github.com/galaxyproject/galaxy/pull/21664>`_
+
+============
+Enhancements
+============
+
+* Document security considerations for using secrets by `@bernt-matthias <https://github.com/bernt-matthias>`_ in `#21654 <https://github.com/galaxyproject/galaxy/pull/21654>`_
+
+=============
+Other changes
+=============
+
+* Improve tempdir cleanup in integration tests by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21520 <https://github.com/galaxyproject/galaxy/pull/21520>`_
+
+-------------------
+25.1.0 (2025-12-12)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Check for ``format="input"`` as well as ``format="auto"`` in datatype linter by `@bernt-matthias <https://github.com/bernt-matthias>`_ in `#20177 <https://github.com/galaxyproject/galaxy/pull/20177>`_
+* Test and fix CORS on exceptions by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21105 <https://github.com/galaxyproject/galaxy/pull/21105>`_
+* Apply tool test timeout only once by `@bernt-matthias <https://github.com/bernt-matthias>`_ in `#21246 <https://github.com/galaxyproject/galaxy/pull/21246>`_
+* Update the mulled.py script to check json output by `@nilchia <https://github.com/nilchia>`_ in `#21276 <https://github.com/galaxyproject/galaxy/pull/21276>`_
+* Use anaconda API to find package download URL by `@nsoranzo <https://github.com/nsoranzo>`_ in `#21360 <https://github.com/galaxyproject/galaxy/pull/21360>`_
+
+============
+Enhancements
+============
+
+* Support credentials(secrets/variables) in tool requirements by `@arash77 <https://github.com/arash77>`_ in `#19084 <https://github.com/galaxyproject/galaxy/pull/19084>`_
+* Implement Sample Sheets  by `@jmchilton <https://github.com/jmchilton>`_ in `#19305 <https://github.com/galaxyproject/galaxy/pull/19305>`_
+* Prepare ``ToolBox.dynamic_tool_to_tool()`` for CWL formats by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20364 <https://github.com/galaxyproject/galaxy/pull/20364>`_
+* Type annotation fixes for mypy 1.16.0 by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20424 <https://github.com/galaxyproject/galaxy/pull/20424>`_
+* Remove deprecated tool document cache by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20510 <https://github.com/galaxyproject/galaxy/pull/20510>`_
+* Implement Data Landing Requests by `@jmchilton <https://github.com/jmchilton>`_ in `#20592 <https://github.com/galaxyproject/galaxy/pull/20592>`_
+* Clean up code from pyupgrade by `@nsoranzo <https://github.com/nsoranzo>`_ in `#20642 <https://github.com/galaxyproject/galaxy/pull/20642>`_
+* Add markdown hint to schema by `@bgruening <https://github.com/bgruening>`_ in `#20654 <https://github.com/galaxyproject/galaxy/pull/20654>`_
+* Add configfiles support and various enhancements for user defined tools by `@mvdbeek <https://github.com/mvdbeek>`_ in `#20761 <https://github.com/galaxyproject/galaxy/pull/20761>`_
+* Add support for hierarchical module systems in lmod + module dependency resolvers by `@t1mk1k <https://github.com/t1mk1k>`_ in `#20866 <https://github.com/galaxyproject/galaxy/pull/20866>`_
+* Small cleanup of tool execution code. by `@jmchilton <https://github.com/jmchilton>`_ in `#20899 <https://github.com/galaxyproject/galaxy/pull/20899>`_
+* Add support for picking ``from_work_dir`` directory by `@mvdbeek <https://github.com/mvdbeek>`_ in `#20916 <https://github.com/galaxyproject/galaxy/pull/20916>`_
+* Allow addressing user defined tools in job config by `@mvdbeek <https://github.com/mvdbeek>`_ in `#20932 <https://github.com/galaxyproject/galaxy/pull/20932>`_
+* Wire up and test resource requirement via tpv  by `@mvdbeek <https://github.com/mvdbeek>`_ in `#20936 <https://github.com/galaxyproject/galaxy/pull/20936>`_
+* Allow specifying a command for determining a docker host port by `@natefoo <https://github.com/natefoo>`_ in `#20953 <https://github.com/galaxyproject/galaxy/pull/20953>`_
+* Use workflow-style payload in data landing request by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21107 <https://github.com/galaxyproject/galaxy/pull/21107>`_
+* Update tool profile version for credentials by `@davelopez <https://github.com/davelopez>`_ in `#21273 <https://github.com/galaxyproject/galaxy/pull/21273>`_
+
+=============
+Other changes
+=============
+
+* Merge `release_25.0` into `dev` by `@davelopez <https://github.com/davelopez>`_ in `#20484 <https://github.com/galaxyproject/galaxy/pull/20484>`_
+
+-------------------
+25.0.4 (2025-11-18)
+-------------------
+
+
+=========
+Bug fixes
+=========
+
+* Fix has_size assertion  by `@bernt-matthias <https://github.com/bernt-matthias>`_ in `#21081 <https://github.com/galaxyproject/galaxy/pull/21081>`_
+* Fix workflow run form input restrictions by `@mvdbeek <https://github.com/mvdbeek>`_ in `#21095 <https://github.com/galaxyproject/galaxy/pull/21095>`_
+* Fix direct tool execution not using the latest version by `@jmchilton <https://github.com/jmchilton>`_ in `#21240 <https://github.com/galaxyproject/galaxy/pull/21240>`_
 
 -------------------
 25.0.3 (2025-09-23)

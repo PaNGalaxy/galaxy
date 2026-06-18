@@ -53,7 +53,7 @@ class HistoryController(BaseUIController, SharableMixin, UsesAnnotations, UsesIt
         return ""
 
     @expose_api_anonymous
-    def view(self, trans, id=None, show_deleted=False, show_hidden=False, use_panels=True):
+    def view(self, trans, id=None, show_deleted=False, show_hidden=False, use_panels=True, **kwargs):
         """
         View a history. If a history is importable, then it is viewable by any user.
         """
@@ -140,7 +140,8 @@ class HistoryController(BaseUIController, SharableMixin, UsesAnnotations, UsesIt
         if trans.request.method == "GET":
             inputs = []
             all_roles = set(trans.user.all_roles())
-            private_role_emails = get_private_role_user_emails_dict(trans.sa_session)
+            role_ids = {r.id for r in all_roles}
+            private_role_emails = get_private_role_user_emails_dict(trans.sa_session, role_ids=role_ids)
             current_actions = history.default_permissions
             for action_key, action in Dataset.permitted_actions.items():
                 in_roles = set()
@@ -216,7 +217,7 @@ class HistoryController(BaseUIController, SharableMixin, UsesAnnotations, UsesIt
                     trans.app.security_agent.set_all_dataset_permissions(hda.dataset, private_permissions)
 
             importable = history.importable
-            link_access = self.service.shareable_service.disable_link_access(trans, history_id)
+            link_access = self.service.shareable_service.disable_link_access(trans, history.id)
         return {
             "message": f"Success, requested permissions have been changed in {'all histories' if all_histories else history.name}.",
             "sharing_status_changed": importable != link_access.importable,
@@ -341,10 +342,17 @@ class HistoryController(BaseUIController, SharableMixin, UsesAnnotations, UsesIt
     def current_history_json(self, trans, since=None, **kwargs):
         """Return the current user's current history in a serialized, dictionary form."""
         history = trans.get_history(most_recent=True, create=True)
-        if since and history.update_time <= isoparse(since):
-            # Should ideally be a 204 response, but would require changing web.json
-            # This endpoint should either give way to a proper API or a SSE loop
-            return
+        if since:
+            if not isinstance(since, str):
+                raise exceptions.RequestParameterInvalidException("'since' must be a date string")
+            try:
+                parsed_since = isoparse(since)
+            except (ValueError, TypeError):
+                raise exceptions.RequestParameterInvalidException(f"Invalid date format for 'since': {since!r}")
+            if history.update_time <= parsed_since:
+                # Should ideally be a 204 response, but would require changing web.json
+                # This endpoint should either give way to a proper API or a SSE loop
+                return
         return self.history_data(trans, history)
 
     @web.json

@@ -22,6 +22,7 @@ from typing import (
     Union,
 )
 
+import defusedxml.ElementTree as ET
 import h5py
 import numpy as np
 import pysam
@@ -487,6 +488,12 @@ class CompressedZarrZipArchive(CompressedZipArchive):
                     dataset.metadata.zarr_format = format_version
 
     def sniff(self, filename: str) -> bool:
+        """
+        >>> from galaxy.datatypes.sniff import get_test_fname
+        >>> fname = get_test_fname('Images.zarr.zip')
+        >>> CompressedZarrZipArchive().sniff(fname)
+        True
+        """
         # Check if the zip file contains a zarr store.
         # In theory, the zarr store must be in the root of the zip file.
         # See: https://github.com/zarr-developers/zarr-python/issues/756#issuecomment-852134901
@@ -768,33 +775,38 @@ class BamNative(CompressedArchive, _BamOrSam):
                 ) as bamfile:
                     if ck_size is None:
                         ck_size = 300  # 300 lines
-                    if offset == 0:
-                        offset = bamfile.tell()
-                        ck_lines = bamfile.text.strip().replace("\t", " ").splitlines()  # type: ignore[attr-defined]
+                    if offset < bamfile.tell():
+                        # interpret an offset before the first alignment start as the index of
+                        # the header line at which the chunk should start
+                        header_lines = bamfile.text.strip().replace("\t", " ").splitlines()  # type: ignore[attr-defined]
+                        ck_lines = header_lines[offset : offset + ck_size]
+                        offset += len(ck_lines)
+                        if offset >= len(header_lines):
+                            # consumed the entire header, now jump forward to the first alignment
+                            offset = bamfile.tell()
                     else:
-                        bamfile.seek(offset)
                         ck_lines = []
-                    for line_number, alignment in enumerate(bamfile, len(ck_lines)):
-                        # return only Header lines if 'header_line_count' exceeds 'ck_size'
-                        # FIXME: Can be problematic if bam has million lines of header
-                        if line_number >= ck_size:
-                            break
+                    if len(ck_lines) < ck_size:
+                        bamfile.seek(offset)
+                        for line_number, alignment in enumerate(bamfile, len(ck_lines)):
+                            if line_number >= ck_size:
+                                break
 
-                        offset = bamfile.tell()
-                        bamline = alignment.to_string()
-                        # With multiple tags, Galaxy would display each as a separate column
-                        # because the 'to_string()' function uses tabs also between tags.
-                        # Below code will turn these extra tabs into spaces.
-                        n_tabs = bamline.count("\t")
-                        if n_tabs > 11:
-                            bamline, *extra_tags = bamline.rsplit("\t", maxsplit=n_tabs - 11)
-                            bamline = f"{bamline} {' '.join(extra_tags)}"
-                        ck_lines.append(bamline)
-                    else:
-                        # Nothing to enumerate; we've either offset to the end
-                        # of the bamfile, or there is no data. (possible with
-                        # header-only bams)
-                        offset = -1
+                            offset = bamfile.tell()
+                            bamline = alignment.to_string()
+                            # With multiple tags, Galaxy would display each as a separate column
+                            # because the 'to_string()' function uses tabs also between tags.
+                            # Below code will turn these extra tabs into spaces.
+                            n_tabs = bamline.count("\t")
+                            if n_tabs > 11:
+                                bamline, *extra_tags = bamline.rsplit("\t", maxsplit=n_tabs - 11)
+                                bamline = f"{bamline} {' '.join(extra_tags)}"
+                            ck_lines.append(bamline)
+                        else:
+                            # Nothing to enumerate; we've either offset to the end
+                            # of the bamfile, or there is no data. (possible with
+                            # header-only bams)
+                            offset = -1
                     ck_data = "\n".join(ck_lines)
             except Exception as e:
                 offset = -1
@@ -822,26 +834,8 @@ class BamNative(CompressedArchive, _BamOrSam):
         elif to_ext or not preview:
             return super().display_data(trans, dataset, preview, filename, to_ext, **kwd)
         else:
-            column_names = dataset.metadata.column_names
-            if not column_names:
-                column_names = []
-            column_types = dataset.metadata.column_types
-            if not column_types:
-                column_types = []
-            column_number = dataset.metadata.columns
-            if column_number is None:
-                column_number = 1
-            return (
-                trans.fill_template(
-                    "/dataset/tabular_chunked.mako",
-                    dataset=dataset,
-                    chunk=self.get_chunk(trans, dataset, 0),
-                    column_number=column_number,
-                    column_names=column_names,
-                    column_types=column_types,
-                ),
-                headers,
-            )
+            headers["x-content-chunked"] = "true"
+            return self.get_chunk(trans, dataset, 0), headers
 
     def validate(self, dataset: DatasetProtocol, **kwd) -> DatatypeValidation:
         if not BamNative.is_bam(dataset.get_file_name()):
@@ -1154,7 +1148,7 @@ class CRAM(Binary):
     def set_peek(self, dataset: DatasetProtocol, **kwd) -> None:
         if not dataset.dataset.purged:
             dataset.peek = "CRAM binary alignment file"
-            dataset.blurb = "binary data"
+            dataset.blurb = nice_size(dataset.get_size())
         else:
             dataset.peek = "file does not exist"
             dataset.blurb = "file purged from disk"
@@ -2928,7 +2922,7 @@ class BlibSQlite(SQlite):
             conn = sqlite.connect(dataset.get_file_name())
             c = conn.cursor()
             tables_query = "SELECT majorVersion,minorVersion FROM LibInfo"
-            (majorVersion, minorVersion) = c.execute(tables_query).fetchall()[0]
+            majorVersion, minorVersion = c.execute(tables_query).fetchall()[0]
             dataset.metadata.blib_version = f"{majorVersion}.{minorVersion}"
         except Exception as e:
             log.warning("%s, set_meta Exception: %s", self, e)
@@ -3229,6 +3223,57 @@ class Xlsx(Binary):
     file_ext = "xlsx"
     compressed = True
     display_behavior = "download"  # Office documents trigger downloads
+
+    MAX_WORKBOOK_XML_BYTES = 4 * 1024 * 1024
+    MAX_SHEET_NAMES = 1024
+    MAX_SHEET_NAME_LEN = 255
+
+    MetadataElement(
+        name="sheet_names",
+        default=[],
+        desc="Names of the sheets in the XLSX file",
+        param=ListParameter,
+        readonly=True,
+        visible=True,
+        optional=True,
+    )
+
+    def set_meta(self, dataset, **kwd):
+        super().set_meta(dataset, **kwd)
+        dataset.metadata.sheet_names = self.get_xlsx_sheet_names(dataset.get_file_name())
+
+    def get_xlsx_sheet_names(self, file_path):
+        """Extract sheet names from the workbook part of an XLSX file.
+
+        Reads only ``xl/workbook.xml`` from the zip container, with bounds on
+        the part size, number of sheets, and individual name length so that a
+        crafted file cannot blow up memory or the metadata store.
+        """
+        sheet_names: list[str] = []
+        try:
+            with zipfile.ZipFile(file_path, "r") as zf:
+                info = zf.getinfo("xl/workbook.xml")
+                if info.file_size > self.MAX_WORKBOOK_XML_BYTES:
+                    log.warning(
+                        "xlsx workbook.xml too large (%d bytes); skipping sheet_names for %s",
+                        info.file_size,
+                        file_path,
+                    )
+                    return []
+                with zf.open(info) as f:
+                    root = ET.parse(f).getroot()
+            ns = {"ns": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+            sheets = root.find("ns:sheets", ns)
+            if sheets is not None:
+                for sheet in sheets.findall("ns:sheet", ns):
+                    name = sheet.attrib.get("name")
+                    if name:
+                        sheet_names.append(name[: self.MAX_SHEET_NAME_LEN])
+                    if len(sheet_names) >= self.MAX_SHEET_NAMES:
+                        break
+        except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError) as e:
+            log.warning("Unable to read XLSX sheets from %s: %s", file_path, e)
+        return sheet_names
 
     def sniff_prefix(self, file_prefix: FilePrefix) -> bool:
         # Xlsx is compressed in zip format and must not be uncompressed in Galaxy.
@@ -4520,7 +4565,7 @@ class Npz(CompressedArchive):
     def sniff(self, filename: str) -> bool:
         try:
             with np.load(filename) as npz:
-                if isinstance(npz, np.lib.npyio.NpzFile) and any(f.filename.endswith(".npy") for f in npz.zip.filelist):
+                if isinstance(npz, np.lib.npyio.NpzFile) and any(f.filename.endswith(".npy") for f in npz.zip.filelist):  # type: ignore[union-attr, unused-ignore]
                     return True
         except Exception:
             return False
@@ -4875,6 +4920,174 @@ class Hic(Binary):
         with open(dataset.get_file_name(), "rb") as handle:
             header_bytes = handle.read(8)
         dataset.metadata.version = struct.unpack("<i", header_bytes[4:8])[0]
+
+
+class SpatialData(CompressedZarrZipArchive):
+    """
+    Class for SpatialData file: https://spatialdata.scverse.org/
+
+    SpatialData: an open and universal framework for processing spatial omics data.
+    SpatialData aims at implementing a performant in-memory representation in Python
+    and an on-disk representation based on the Zarr and Parquet data formats
+    and following, when applicable, the OME-NGFF specification
+
+    The format stores multi-modal spatial omics datasets including:
+    - Images (2D/3D multi-scale)
+    - Labels (segmentation masks)
+    - Shapes (polygons, circles)
+    - Points (transcript locations, point clouds)
+    - Tables (annotations)
+    """
+
+    file_ext = "spatialdata.zip"
+
+    def _extract_spatialdata_info(self, filename: str) -> dict[str, Any]:
+        """Extract information about SpatialData elements from the zarr archive."""
+        info: dict[str, Any] = {
+            "images": set(),
+            "labels": set(),
+            "shapes": set(),
+            "points": set(),
+            "tables": set(),
+            "table_shapes": {},
+        }
+
+        try:
+            with zipfile.ZipFile(filename) as zf:
+                # Find root zarr directory and detect version (at any nesting level)
+                root_zarr = is_v3 = None
+                for file in zf.namelist():
+                    # Look for zarr.json or .zattrs in any directory
+                    if file.endswith("/zarr.json"):
+                        # Format: <path>/zarr.json (v3)
+                        root_zarr, is_v3 = file.rsplit("/", 1)[0], True
+                        break
+                    elif file.endswith("/.zattrs"):
+                        # Format: <path>/.zattrs (v2)
+                        root_zarr, is_v3 = file.rsplit("/", 1)[0], False
+                        break
+                if not root_zarr:
+                    return info
+
+                # Extract elements: <root>.zarr/<type>/<name>/...
+                prefix = root_zarr + "/"
+                for file in zf.namelist():
+                    if file.startswith(prefix):
+                        parts = file[len(prefix) :].split("/")
+                        if len(parts) >= 2 and parts[1] and not parts[1].startswith(".") and parts[1] != "zarr.json":
+                            if parts[0] in info and parts[0] != "table_shapes":
+                                info[parts[0]].add(parts[1])
+
+                # Extract table shapes (AnnData dimensions)
+                def get_shape(path):
+                    if path in zf.namelist():
+                        with zf.open(path) as f:
+                            return json.load(f).get("shape", [None])[0]
+
+                for table in info["tables"]:
+                    try:
+                        base = f"{root_zarr}/tables/{table}"
+                        ext = "zarr.json" if is_v3 else ".zarray"
+                        n_obs = get_shape(f"{base}/obs/_index/{ext}")
+                        # V3: if no obs/_index, check obs metadata for index column
+                        if is_v3 and n_obs is None:
+                            obs_meta = f"{base}/obs/zarr.json"
+                            if obs_meta in zf.namelist():
+                                with zf.open(obs_meta) as f:
+                                    idx_col = json.load(f).get("attributes", {}).get("_index")
+                                    if idx_col:
+                                        n_obs = get_shape(f"{base}/obs/{idx_col}/zarr.json")
+                        n_vars = get_shape(f"{base}/var/_index/{ext}")
+                        if n_obs and n_vars:
+                            info["table_shapes"][table] = (n_obs, n_vars)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return info
+
+    def set_peek(self, dataset: DatasetProtocol, **kwd) -> None:
+        if not dataset.dataset.purged:
+            info = self._extract_spatialdata_info(dataset.get_file_name())
+            lines = ["SpatialData object"]
+            if dataset.metadata.zarr_format:
+                lines[0] += f" (Zarr Format v{dataset.metadata.zarr_format})"
+
+            # Filter non-empty element types
+            element_types = [
+                ("images", "Images"),
+                ("labels", "Labels"),
+                ("shapes", "Shapes"),
+                ("points", "Points"),
+                ("tables", "Tables"),
+            ]
+            non_empty = [(key, label) for key, label in element_types if info[key]]
+
+            for idx, (key, label) in enumerate(non_empty):
+                is_last = idx == len(non_empty) - 1
+                elements = sorted(info[key])
+                lines.append(f"{'└──' if is_last else '├──'} {label} ({len(elements)})")
+
+                prefix = "      " if is_last else "│     "
+                for i, name in enumerate(elements):
+                    display = f"'{name}'"
+                    if key == "tables" and name in info["table_shapes"]:
+                        display += f": AnnData {info['table_shapes'][name]}"
+                    lines.append(f"{prefix}{'└──' if i == len(elements) - 1 else '├──'} {display}")
+
+            dataset.peek = "\n".join(lines)
+            dataset.blurb = f"SpatialData file ({nice_size(dataset.get_size())})"
+        else:
+            dataset.peek = "file does not exist"
+            dataset.blurb = "file purged from disk"
+
+    def sniff(self, filename: str) -> bool:
+        """
+        Check if file is a SpatialData zarr archive (has spatialdata_attrs in root metadata).
+
+        >>> from galaxy.datatypes.sniff import get_test_fname
+        >>> fname = get_test_fname('subsampled_visium.spatialdata.zip')
+        >>> SpatialData().sniff(fname)
+        True
+        >>> fname = get_test_fname('subsampled_visium_v3.spatialdata.zip')
+        >>> SpatialData().sniff(fname)
+        True
+        >>> fname = get_test_fname('Images.zarr.zip')
+        >>> SpatialData().sniff(fname)
+        False
+        >>> fname = get_test_fname('subsampled_visium_no_extension.spatialdata.zip')
+        >>> SpatialData().sniff(fname)
+        True
+        >>> fname = get_test_fname('subsampled_visium_v3_no_extension.spatialdata.zip')
+        >>> SpatialData().sniff(fname)
+        True
+        >>> fname = get_test_fname('subsampled_visium_v3_no_extension_3lvl_nested.spatialdata.zip')
+        >>> SpatialData().sniff(fname)
+        True
+        """
+        try:
+            with zipfile.ZipFile(filename) as zf:
+                if self._find_zarr_metadata_file(zf) is None:
+                    return False
+
+                # Check root metadata files (.zattrs or zarr.json) for spatialdata_attrs
+                for file in zf.namelist():
+                    if file.endswith(("/.zattrs", "/zarr.json")):
+                        try:
+                            with zf.open(file) as f:
+                                meta = json.load(f)
+                                # Standard format or v3 consolidated
+                                if "spatialdata_attrs" in meta.get("attributes", meta):
+                                    return True
+                                if "metadata" in meta:
+                                    for pm in meta["metadata"].values():
+                                        if isinstance(pm, dict) and "spatialdata_attrs" in pm.get("attributes", {}):
+                                            return True
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        return False
 
 
 @build_sniff_from_prefix

@@ -18,8 +18,10 @@ from queue import (
 )
 from typing import (
     Any,
+    Generic,
     Optional,
     TYPE_CHECKING,
+    TypeVar,
     Union,
 )
 
@@ -27,7 +29,6 @@ import jwt
 from sqlalchemy import select
 from sqlalchemy.orm import object_session
 
-import galaxy.jobs
 from galaxy import model
 from galaxy.authnz.util import provider_name_to_backend
 from galaxy.exceptions import ConfigurationError
@@ -36,6 +37,7 @@ from galaxy.job_execution.output_collect import (
     read_exit_code_from,
 )
 from galaxy.jobs.command_factory import build_command
+from galaxy.jobs.job_destination import JobDestination
 from galaxy.jobs.runners.util import runner_states
 from galaxy.jobs.runners.util.env import env_to_statement
 from galaxy.jobs.runners.util.job_script import (
@@ -49,6 +51,7 @@ from galaxy.tool_util.deps.dependencies import (
     ToolInfo,
 )
 from galaxy.tool_util.output_checker import DETECTED_JOB_STATE
+from galaxy.tools.parameters.basic import ParameterValueError
 from galaxy.util import (
     asbool,
     DATABASE_MAX_STRING_SIZE,
@@ -66,7 +69,6 @@ from .state_handler_factory import build_state_handlers
 if TYPE_CHECKING:
     from galaxy.app import GalaxyManagerApplication
     from galaxy.jobs import (
-        JobDestination,
         JobWrapper,
         MinimalJobWrapper,
     )
@@ -145,12 +147,12 @@ class BaseJobRunner:
                         alive = True
                     yield thread
 
-    def run_next(self):
+    def run_next(self) -> None:
         """Run the next item in the work queue (a job waiting to run)"""
         while self._should_stop is False:
             with self.app.model.session():  # Create a Session instance and ensure it's closed.
                 try:
-                    (method, arg) = self.work_queue.get(timeout=1)
+                    method, arg = self.work_queue.get(timeout=1)
                 except Empty:
                     continue
                 if method is STOP_SIGNAL:
@@ -182,7 +184,7 @@ class BaseJobRunner:
                 except Exception:
                     log.exception(f"({job_id}) Unhandled exception calling {name}")
                     if not isinstance(arg, JobState):
-                        job_state = JobState(job_wrapper=arg, job_destination={})
+                        job_state = JobState(job_wrapper=arg, job_destination=JobDestination())
                     else:
                         job_state = arg
                     if method != self.fail_job:
@@ -202,7 +204,7 @@ class BaseJobRunner:
                 self.app.model.session().add(job)
 
     # Causes a runner's `queue_job` method to be called from a worker thread
-    def put(self, job_wrapper: "MinimalJobWrapper"):
+    def put(self, job_wrapper: "MinimalJobWrapper") -> None:
         """Add a job to the queue (by job identifier), indicate that the job is ready to run."""
         put_timer = ExecutionTimer()
         try:
@@ -260,7 +262,7 @@ class BaseJobRunner:
                 )
 
     # Most runners should override the legacy URL handler methods and destination param method
-    def url_to_destination(self, url: str):
+    def url_to_destination(self, url: str) -> JobDestination:
         """
         Convert a legacy URL to a JobDestination.
 
@@ -268,7 +270,7 @@ class BaseJobRunner:
         This base class method converts from a URL to a very basic
         JobDestination without destination params.
         """
-        return galaxy.jobs.JobDestination(runner=url.split(":")[0])
+        return JobDestination(runner=url.split(":")[0])
 
     def parse_destination_params(self, params: dict[str, Any]):
         """Parse the JobDestination ``params`` dict and return the runner's native representation of those params."""
@@ -310,6 +312,10 @@ class BaseJobRunner:
                 modify_command_for_container=modify_command_for_container,
                 stream_stdout_stderr=stream_stdout_stderr,
             )
+        except ParameterValueError as e:
+            log.info("(%s) parameter validation error preparing job: %s", job_id, unicodify(e))
+            job_wrapper.fail(unicodify(e), exception=False)
+            return False
         except Exception as e:
             log.exception("(%s) Failure preparing job", job_id)
             job_wrapper.fail(unicodify(e), exception=True)
@@ -328,7 +334,7 @@ class BaseJobRunner:
     def stop_job(self, job_wrapper):
         raise NotImplementedError()
 
-    def recover(self, job, job_wrapper):
+    def recover(self, job: model.Job, job_wrapper: "MinimalJobWrapper") -> None:
         raise NotImplementedError()
 
     def build_command_line(
@@ -422,6 +428,7 @@ class BaseJobRunner:
 
     def _walk_dataset_outputs(self, job: model.Job):
         for dataset_assoc in job.output_datasets + job.output_library_datasets:
+            assert dataset_assoc.dataset.dataset is not None
             for dataset in (
                 dataset_assoc.dataset.dataset.history_associations + dataset_assoc.dataset.dataset.library_associations
             ):
@@ -508,7 +515,7 @@ class BaseJobRunner:
         env_setup_commands = kwds.get("env_setup_commands", [])
         env_setup_commands.append(job_wrapper.get_env_setup_clause() or "")
         destination = job_wrapper.job_destination
-        envs = destination.get("env", [])
+        envs = destination.env
         envs.extend(job_wrapper.environment_variables)
         for env in envs:
             env_setup_commands.append(env_to_statement(env))
@@ -643,9 +650,15 @@ class BaseJobRunner:
         except Exception:
             log.exception("Caught exception in runner state handler")
 
-    def fail_job(self, job_state: "JobState", exception=False, message="Job failed", full_status=None):
+    def fail_job(
+        self,
+        job_state: "JobState",
+        exception: bool = False,
+        message: str = "Job failed",
+        full_status: Union[dict[str, Any], None] = None,
+    ) -> None:
         job = job_state.job_wrapper.get_job()
-        if getattr(job_state, "stop_job", True) and job.state != model.Job.states.NEW:
+        if job_state.stop_job and job.state != model.Job.states.NEW:
             self.stop_job(job_state.job_wrapper)
         job_state.job_wrapper.reclaim_ownership()
         self._handle_runner_state("failure", job_state)
@@ -757,13 +770,14 @@ class JobState:
 
     runner_states = runner_states
 
-    def __init__(self, job_wrapper: "JobWrapper", job_destination: "JobDestination"):
+    def __init__(self, job_wrapper: "MinimalJobWrapper", job_destination: JobDestination) -> None:
         self.runner_state_handled = False
         self.job_wrapper = job_wrapper
         self.job_destination = job_destination
         self.runner_state = None
         self.redact_email_in_job_name = True
         self._exit_code_file = None
+        self.stop_job = True
         if self.job_wrapper:
             self.redact_email_in_job_name = self.job_wrapper.app.config.redact_email_in_job_name
 
@@ -817,23 +831,26 @@ class AsynchronousJobState(JobState):
     to communicate with distributed resource manager.
     """
 
+    old_state: Union["JobStateEnum", None]
+
     def __init__(
         self,
+        job_wrapper: "MinimalJobWrapper",
+        job_destination: JobDestination,
+        *,
         files_dir=None,
-        job_wrapper=None,
         job_id: Union[str, None] = None,
         job_file=None,
         output_file=None,
         error_file=None,
         exit_code_file=None,
         job_name=None,
-        job_destination=None,
-    ):
+    ) -> None:
         super().__init__(job_wrapper, job_destination)
-        self.old_state: Union[JobStateEnum, None] = None
+        self.old_state = None
         self._running = False
         self.check_count = 0
-        self.start_time = None
+        self.start_time: Union[datetime.datetime, None] = None
 
         # job_id is the DRM's job id, not the Galaxy job id
         self.job_id = job_id
@@ -848,11 +865,11 @@ class AsynchronousJobState(JobState):
         self.set_defaults(files_dir)
 
     @property
-    def running(self):
+    def running(self) -> bool:
         return self._running
 
     @running.setter
-    def running(self, is_running):
+    def running(self, is_running: bool) -> None:
         self._running = is_running
         # This will be invalid for job recovery
         if self.start_time is None:
@@ -886,12 +903,18 @@ class AsynchronousJobState(JobState):
             pass
 
 
-class AsynchronousJobRunner(BaseJobRunner, Monitors):
+T = TypeVar("T", bound=AsynchronousJobState)
+
+
+class AsynchronousJobRunner(BaseJobRunner, Monitors, Generic[T]):
     """Parent class for any job runner that runs jobs asynchronously (e.g. via
     a distributed resource manager).  Provides general methods for having a
     thread to monitor the state of asynchronous jobs and submitting those jobs
     to the correct methods (queue, finish, cleanup) at appropriate times..
     """
+
+    monitor_queue: Queue[T]
+    watched: list[T]
 
     def __init__(self, app: "GalaxyManagerApplication", nworkers: int, **kwargs) -> None:
         super().__init__(app, nworkers, **kwargs)
@@ -900,8 +923,8 @@ class AsynchronousJobRunner(BaseJobRunner, Monitors):
         # any thread (usually by the 'queue_job' method). 'watched' must only
         # be modified by the monitor thread, which will move items from 'queue'
         # to 'watched' and then manage the watched jobs.
-        self.watched: list[AsynchronousJobState] = []
-        self.monitor_queue: Queue[AsynchronousJobState] = Queue()
+        self.watched = []
+        self.monitor_queue = Queue()
 
     def _init_monitor_thread(self):
         name = f"{self.runner_name}.monitor_thread"
@@ -942,9 +965,13 @@ class AsynchronousJobRunner(BaseJobRunner, Monitors):
             finally:
                 self.app.model.unset_request_id(scoped_id)
             # Sleep a bit before the next state check
-            time.sleep(self.app.config.job_runner_monitor_sleep)
+            time.sleep(self.monitor_sleep_time)
 
-    def monitor_job(self, job_state: AsynchronousJobState) -> None:
+    @property
+    def monitor_sleep_time(self):
+        return self.app.config.job_runner_monitor_sleep
+
+    def monitor_job(self, job_state: T) -> None:
         self.monitor_queue.put(job_state)
 
     def shutdown(self):
@@ -955,7 +982,7 @@ class AsynchronousJobRunner(BaseJobRunner, Monitors):
         self.shutdown_monitor()
         super().shutdown()
 
-    def check_watched_items(self):
+    def check_watched_items(self) -> None:
         """
         This method is responsible for iterating over self.watched and handling
         state changes and updating self.watched with a new list of watched job
@@ -971,7 +998,7 @@ class AsynchronousJobRunner(BaseJobRunner, Monitors):
         self.watched = new_watched
 
     # Subclasses should implement this unless they override check_watched_items all together.
-    def check_watched_item(self, job_state: AsynchronousJobState) -> Union[AsynchronousJobState, None]:
+    def check_watched_item(self, job_state: T) -> Union[T, None]:
         raise NotImplementedError()
 
     def _collect_job_output(self, job_id: int, external_job_id: Optional[str], job_state: JobState):
@@ -995,7 +1022,7 @@ class AsynchronousJobRunner(BaseJobRunner, Monitors):
                 which_try += 1
         return collect_output_success, stdout, stderr
 
-    def finish_job(self, job_state: AsynchronousJobState):
+    def finish_job(self, job_state: T) -> None:
         """
         Get the output/error for a finished job, pass to `job_wrapper.finish`
         and cleanup all the job's temporary files.

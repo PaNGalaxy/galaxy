@@ -1,3 +1,7 @@
+import type { FileStream, UploadableFile } from "@/utils/tusUpload";
+
+export type { FileStream, UploadableFile };
+
 export interface UploadFile {
     mode: string | null;
     name: string | null;
@@ -12,21 +16,17 @@ export function isLocalFile(file: unknown): file is File {
     return file !== null && typeof file === "object" && "name" in file && "size" in file;
 }
 
-export interface FileStream {
-    name: string;
-    size: number;
-    stream: ReadableStream<Uint8Array>;
-    lastModified: number;
-    isStream: true;
-}
-
-export interface UploadItem {
+/**
+ * UI model for an upload row in the upload modal.
+ * This is the reactive state used by Vue components.
+ */
+export interface UploadRowModel {
     dbKey: string;
     deferred?: boolean;
     enabled: boolean;
     extension: string;
     fileContent: string;
-    fileData: object | null;
+    fileData: UploadableFile | null;
     fileMode: string;
     fileName: string;
     filePath: string;
@@ -41,9 +41,10 @@ export interface UploadItem {
     targetHistoryId?: string;
     toPosixLines: boolean;
     id?: string;
+    autoDecompress: boolean;
 }
 
-export const defaultModel: UploadItem = {
+export const defaultModel: UploadRowModel = {
     dbKey: "?",
     deferred: false,
     enabled: true,
@@ -62,4 +63,5 @@ export const defaultModel: UploadItem = {
     spaceToTab: false,
     status: "init",
     toPosixLines: true,
+    autoDecompress: true,
 };

@@ -1,21 +1,22 @@
 <script setup>
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faEdit } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BAlert } from "bootstrap-vue";
-import LoadingSpan from "components/LoadingSpan";
-import RuleCollectionBuilder from "components/RuleCollectionBuilder";
-import RulesDisplay from "components/RulesDisplay/RulesDisplay";
 import { computed, ref } from "vue";
 
 import { fetchCollectionDetails } from "@/api/datasetCollections";
 import { errorMessageAsString } from "@/utils/simple-error";
 
 import GButton from "@/components/BaseComponents/GButton.vue";
-
-library.add(faEdit);
+import LoadingSpan from "@/components/LoadingSpan.vue";
+import RuleCollectionBuilder from "@/components/RuleCollectionBuilder.vue";
+import RulesDisplay from "@/components/RulesDisplay/RulesDisplay.vue";
 
 const props = defineProps({
+    id: {
+        type: String,
+        default: undefined,
+    },
     value: {
         type: Object,
     },
@@ -42,8 +43,11 @@ async function onEdit() {
         try {
             loading.value = true;
             loadError.value = undefined;
-            const collectionDetails = await fetchCollectionDetails({ hdca_id: props.target.id });
-            elements.value = collectionDetails;
+            const result = await fetchCollectionDetails({ hdca_id: props.target.id });
+            if (result.error) {
+                throw result.error;
+            }
+            elements.value = result.data;
             modal.value.show();
         } catch (e) {
             loadError.value = errorMessageAsString(e);
@@ -72,8 +76,8 @@ function onCancel() {
 <template>
     <div class="form-rules-edit">
         <RulesDisplay :input-rules="displayRules" />
-        <GButton title="Edit Rules" @click="onEdit">
-            <FontAwesomeIcon icon="fa-edit" />
+        <GButton :id="props.id" title="Edit Rules" @click="onEdit">
+            <FontAwesomeIcon :icon="faEdit" />
             <span>Edit</span>
         </GButton>
         <LoadingSpan v-if="loading" message="Loading collection details"> </LoadingSpan>

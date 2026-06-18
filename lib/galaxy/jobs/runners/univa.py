@@ -47,7 +47,7 @@ from galaxy.util import (
 )
 
 if TYPE_CHECKING:
-    from galaxy.jobs.runners import AsynchronousJobState
+    from galaxy.jobs.runners.drmaa import DRMAAJobState
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class UnivaJobRunner(DRMAAJobRunner):
     # restrict job name length as in the DRMAAJobRunner
     # restrict_job_name_length = 15
 
-    def check_watched_item_drmaa(self, ajs: "AsynchronousJobState", new_watched: list["AsynchronousJobState"]) -> str:
+    def check_watched_item_drmaa(self, ajs: "DRMAAJobState", new_watched: list["DRMAAJobState"]) -> str:
         """
         get state with job_status/qstat
 
@@ -79,7 +79,7 @@ class UnivaJobRunner(DRMAAJobRunner):
             return self.drmaa.JobState.DONE
         return state
 
-    def _complete_terminal_job(self, ajs: "AsynchronousJobState", drmaa_state: str, **kwargs):
+    def _complete_terminal_job(self, ajs: "DRMAAJobState", drmaa_state: str, **kwargs) -> Union[bool, None]:
         extinfo: dict = {}
         assert ajs.job_id is not None
         # get state with job_info/qstat + wait/qacct
@@ -277,7 +277,7 @@ class UnivaJobRunner(DRMAAJobRunner):
         # qdel       100     137          user@mail
 
         extinfo["time_wasted"] = _parse_time(qacct["wallclock"])
-        extinfo["memory_wasted"] = size_to_bytes(qacct["maxvmem"])
+        extinfo["memory_wasted"] = size_to_bytes(qacct["maxvmem"], binary=True)
         extinfo["slots"] = int(qacct["slots"])
 
         # deleted_by
@@ -608,7 +608,7 @@ def _parse_native_specs(job_id, native_spec):
     # parse memory
     m = re.search(r"mem=([\d.]+[KGMT]?)[\s,]*", native_spec)
     if m is not None:
-        mem = size_to_bytes(m.group(1))
+        mem = size_to_bytes(m.group(1), binary=True)
         # mem = _parse_mem(m.group(1))
         if mem is None:
             log.error(f"DRMAAUniva: job {job_id} has unparsable memory native spec {native_spec}")

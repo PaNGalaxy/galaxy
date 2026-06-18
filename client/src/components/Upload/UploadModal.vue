@@ -9,9 +9,7 @@ import { useUserHistories } from "@/composables/userHistories";
 import { useUserStore } from "@/stores/userStore";
 import { wait } from "@/utils/utils";
 
-
-import UploadContainerORNL from "./UploadContainerORNL.vue";
-//import UploadContainer from "./UploadContainer.vue";
+import UploadContainer from "./UploadContainer.vue";
 import ExternalLink from "../ExternalLink.vue";
 import HelpText from "../Help/HelpText.vue";
 
@@ -94,7 +92,7 @@ defineExpose({
         hide-footer>
         <template v-slot:modal-header>
             <div class="d-flex justify-content-between w-100">
-                <h2 class="title h-sm" tabindex="0">
+                <h2 v-localize class="title h-sm" tabindex="0">
                     {{ options.title }}
                     <span v-if="currentHistory">
                         to <b>{{ currentHistory.name }}</b>
@@ -129,7 +127,7 @@ defineExpose({
                 </BCarousel>
             </div>
         </template>
-        <UploadContainerORNL
+        <UploadContainer
             v-if="currentHistoryId"
             ref="content"
             :current-user-id="currentUser?.id"

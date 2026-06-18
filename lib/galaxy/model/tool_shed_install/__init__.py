@@ -1,10 +1,10 @@
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
 from typing import (
     Any,
-    Callable,
     Optional,
 )
 
@@ -30,12 +30,14 @@ from galaxy.model.custom_types import (
     MutableJSONType,
     TrimmedString,
 )
-from galaxy.model.orm.now import now
 from galaxy.tool_util.toolbox.base import (
     AbstractToolBox,
     DynamicToolConfDict,
 )
-from galaxy.util import asbool
+from galaxy.util import (
+    asbool,
+    now,
+)
 from galaxy.util.bunch import Bunch
 from galaxy.util.dictifiable import Dictifiable
 from galaxy.util.tool_shed import common_util

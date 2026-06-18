@@ -3,27 +3,36 @@ import { faEye, faEyeSlash } from "@fortawesome/free-regular-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BBadge } from "bootstrap-vue";
 import { storeToRefs } from "pinia";
-import { computed, type ComputedRef, type Ref, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 import { useGlobalUploadModal } from "@/composables/globalUploadModal";
 import { useToolRouting } from "@/composables/route";
-import type { Tool, ToolSection as ToolSectionType } from "@/stores/toolStore";
+import { useFavoriteSearchResults, useToolPanelFavorites } from "@/composables/toolPanelFavorites";
+import type { Tool, ToolPanelItem, ToolSection as ToolSectionType, ToolSectionLabel } from "@/stores/toolStore";
 import { useToolStore } from "@/stores/toolStore";
 import localize from "@/utils/localization";
 
+import { MY_PANEL_VIEW_ID, PANEL_LABEL_IDS } from "./panelViews";
 import {
+    buildToolEntries,
+    buildToolLabel,
+    buildToolSection,
     FAVORITES_KEYS,
+    filterPanelByToolIds,
     filterTools,
     getValidPanelItems,
-    getValidToolsInCurrentView,
     getValidToolsInEachSection,
+    getVisibleTools,
+    UNSECTIONED_SECTION,
 } from "./utilities";
 
 import GButton from "../BaseComponents/GButton.vue";
 import ToolSearch from "./Common/ToolSearch.vue";
 import ToolSection from "./Common/ToolSection.vue";
+import MyToolsLanding from "./MyToolsLanding.vue";
 
-const SECTION_IDS_TO_EXCLUDE = ["expression_tools"]; // if this isn't the Workflow Editor panel
+/** Section IDs that are only valid for the workflow editor toolbox, and should be excluded from the regular toolbox. */
+const WORKFLOW_ONLY_SECTION_IDS = ["expression_tools"];
 
 const { openGlobalUploadModal } = useGlobalUploadModal();
 const { routeToTool } = useToolRouting();
@@ -34,50 +43,73 @@ const emit = defineEmits<{
 }>();
 
 interface Props {
+    /** Whether this is the toolbox in the workflow editor
+     * @default false
+     */
     workflow?: boolean;
+
+    /** Whether to use a search worker for searching tools
+     * @default true
+     */
     useSearchWorker?: boolean;
+
+    /** This is used to automatically apply the "#favorites"
+     * filter when this prop is true.
+     * @default false
+     */
     showFavorites?: boolean;
+
+    /** Whether this is the `My Tools` panel
+     * @default false
+     */
+    favoritesDefault?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
     workflow: false,
     useSearchWorker: true,
     showFavorites: false,
+    favoritesDefault: false,
 });
 
 const query = ref("");
 const queryPending = ref(false);
 const showSections = ref(props.workflow);
-const results: Ref<string[]> = ref([]);
-const resultPanel: Ref<Record<string, Tool | ToolSectionType> | null> = ref(null);
-const closestTerm: Ref<string | null> = ref(null);
+const results = ref<string[]>([]);
+const resultPanel = ref<Record<string, Tool | ToolSectionType> | null>(null);
+const closestTerm = ref<string | null>(null);
 
 const toolStore = useToolStore();
 
-const { currentPanelView, currentToolSections } = storeToRefs(toolStore);
+const { currentPanelView, currentToolSections, defaultPanelView, toolSections } = storeToRefs(toolStore);
 const hasResults = computed(() => results.value.length > 0);
 const queryTooShort = computed(() => query.value && query.value.length < 3);
 const queryFinished = computed(() => query.value && queryPending.value != true);
+const showMyToolsLanding = computed(() => props.favoritesDefault && !query.value);
 
 // Watchers for `query` (when to apply/remove favorites, reset filter etc.)
 watch(
     () => query.value,
     () => {
         queryPending.value = true;
-        if (FAVORITES_KEYS.includes(query.value)) {
-            emit("update:show-favorites", true);
-        } else {
-            emit("update:show-favorites", false);
+        if (!props.favoritesDefault) {
+            if (FAVORITES_KEYS.includes(query.value)) {
+                emit("update:show-favorites", true);
+            } else {
+                emit("update:show-favorites", false);
+            }
         }
     },
 );
 watch(
     () => props.showFavorites,
     (newValue) => {
-        if (newValue) {
-            query.value = "#favorites";
-        } else {
-            query.value = "";
+        if (!props.favoritesDefault) {
+            if (newValue) {
+                query.value = "#favorites";
+            } else {
+                query.value = "";
+            }
         }
     },
 );
@@ -88,34 +120,170 @@ watch(
     },
 );
 
-/** `toolsById` from `toolStore`, except it only has valid tools for `props.workflow` value */
+/**
+ * `toolsById` from `toolStore`
+ *
+ * Although, in the case of `props.workflow` (workflow editor toolbox),
+ * it only has tools that are valid for the workflow editor.
+ */
 const localToolsById = computed(() => {
     if (toolStore.toolsById && Object.keys(toolStore.toolsById).length > 0) {
-        return getValidToolsInCurrentView(
-            toolStore.toolsById,
-            props.workflow,
-            !props.workflow ? SECTION_IDS_TO_EXCLUDE : [],
-        );
+        return getVisibleTools(toolStore.toolsById, props.workflow, !props.workflow ? WORKFLOW_ONLY_SECTION_IDS : []);
     }
     return {};
 });
 
-/** `currentPanel` from `toolStore`, except it only has valid tools and sections for `props.workflow` value */
-const localSectionsById = computed(() => {
-    const validToolIdsInCurrentView = Object.keys(localToolsById.value);
+const localToolIds = computed(() => new Set(Object.keys(localToolsById.value)));
 
+/**
+ * `currentToolSections` from `toolStore`
+ *
+ * Although, in the case of `props.workflow` (workflow editor toolbox),
+ * it only has sections that are valid for the workflow editor.
+ */
+const localSectionsById = computed<Record<string, ToolPanelItem>>(() => {
     // Looking within each `ToolSection`, and filtering on child elements
-    const sectionEntries = getValidToolsInEachSection(validToolIdsInCurrentView, currentToolSections.value);
+    const sectionEntries = getValidToolsInEachSection(localToolIds.value, currentToolSections.value);
 
     // Looking at each item in the panel now (not within each child)
-    return getValidPanelItems(
+    return getValidPanelItems(sectionEntries, localToolIds.value, !props.workflow ? WORKFLOW_ONLY_SECTION_IDS : []);
+});
+
+/**
+ * Same as `localSectionsById` except for the default panel view.
+ *
+ * This is used mainly to show a sectioned results view in the `My Tools` panel when there is a search query, since the
+ * `My Tools` panel doesn't have sections of it's own; so we use the default view's sections as the section for each result.
+ *
+ * @returns
+ * - `toolSections[defaultPanelView]` from `toolStore` - if the `defaultPanelView` is set
+ * - `null` if the `defaultPanelView` is not set or if it doesn't have sections in `toolSections`
+ */
+const defaultSectionsById = computed<Record<string, ToolPanelItem> | null>(() => {
+    const defaultPanelSections =
+        toolSections.value["default"] ||
+        (defaultPanelView.value && defaultPanelView.value !== MY_PANEL_VIEW_ID
+            ? toolSections.value[defaultPanelView.value]
+            : null);
+    if (!defaultPanelSections) {
+        return null;
+    }
+
+    // Looking within each `default` view `ToolSection`, and filtering on child elements
+    const sectionEntries = getValidToolsInEachSection(localToolIds.value, defaultPanelSections);
+    const validSections = getValidPanelItems(
         sectionEntries,
-        validToolIdsInCurrentView,
-        !props.workflow ? SECTION_IDS_TO_EXCLUDE : [],
-    ) as Record<string, Tool | ToolSectionType>;
+        localToolIds.value,
+        !props.workflow ? WORKFLOW_ONLY_SECTION_IDS : [],
+    );
+    return Object.keys(validSections).length > 0 ? validSections : null;
+});
+
+// Use composable for favorites and recent tools — we only need the bits that
+// drive the search-results split (favorites get their own section in mixed
+// results). The full My-Tools landing state lives inside `MyToolsLanding.vue`.
+const { favoritesCollapsed, favoriteToolIdSet, recentToolIdsToShowSet } = useToolPanelFavorites(localToolsById);
+
+// Use composable for search results filtering
+const { favoriteResults, nonFavoriteResults, hasMixedResults } = useFavoriteSearchResults(results, favoriteToolIdSet);
+
+const toolsCount = computed(() => toolsList.value.length);
+
+const resultsSet = computed(() => new Set(results.value));
+const nonFavoriteResultsSet = computed(() => new Set(nonFavoriteResults.value));
+
+/**
+ * A panel with just one section that has all tools in it. Only used in the case that
+ * `defaultSectionsById` is `null` (`default` panel view doesn't exist or doesn't have sections yet)
+ */
+const allToolsPanel = computed(() => {
+    return {
+        [PANEL_LABEL_IDS.ALL_TOOLS_SECTION]: {
+            model_class: "ToolSection",
+            id: PANEL_LABEL_IDS.ALL_TOOLS_SECTION,
+            name: localize("All tools"),
+            tools: Object.keys(localToolsById.value),
+        },
+    } as Record<string, Tool | ToolSectionType>;
+});
+
+/** The `currentPanel` which will be used by the tool search to search tools */
+const searchPanelSections = computed(() => {
+    if (props.favoritesDefault) {
+        return defaultSectionsById.value || allToolsPanel.value;
+    }
+    return localSectionsById.value;
 });
 
 const toolsList = computed(() => Object.values(localToolsById.value));
+
+/**
+ * For search results, this creates a panel which - if results are not mixed between favorite
+ * and non-favorite tools - contains just the tools that are in the search results; if
+ * results are mixed, it creates two sections: one for favorite results and one for non-favorite results.
+ */
+const flatResultsPanel = computed<Record<string, Tool | ToolSectionLabel> | null>(() => {
+    if (!hasResults.value) {
+        return null;
+    }
+
+    if (!hasMixedResults.value) {
+        return filterTools(localToolsById.value, results.value);
+    }
+
+    const entries: Array<[string, Tool | ToolSectionLabel]> = [];
+    entries.push([
+        PANEL_LABEL_IDS.FAVORITES_RESULTS_LABEL,
+        buildToolLabel(PANEL_LABEL_IDS.FAVORITES_RESULTS_LABEL, localize("Favorites")),
+    ]);
+    if (!favoritesCollapsed.value) {
+        entries.push(...buildToolEntries(favoriteResults.value, localToolsById.value));
+    }
+    entries.push([
+        PANEL_LABEL_IDS.SEARCH_RESULTS_LABEL,
+        buildToolLabel(PANEL_LABEL_IDS.SEARCH_RESULTS_LABEL, localize("Search results")),
+    ]);
+    entries.push(...buildToolEntries(nonFavoriteResults.value, localToolsById.value));
+    return Object.fromEntries(entries);
+});
+
+/**
+ * For tool search results, this returns a results panel.
+ */
+const sectionedResultsPanel = computed<Record<string, ToolPanelItem> | null>(() => {
+    if (!hasResults.value) {
+        return null;
+    }
+
+    /** The base panel to filter results from.
+     *
+     * If `props.favoritesDefault` is true, we use the `default` panel view's sections
+     * from `toolStore` as the base panel to filter results from.
+     * Otherwise, we use the `resultPanel` returned from the search.
+     */
+    const basePanel =
+        props.favoritesDefault && defaultSectionsById.value ? defaultSectionsById.value : resultPanel.value;
+    if (!basePanel) {
+        return null;
+    }
+
+    if (!hasMixedResults.value) {
+        return props.favoritesDefault && defaultSectionsById.value
+            ? filterPanelByToolIds(basePanel, resultsSet.value)
+            : basePanel;
+    }
+
+    const otherResultsPanel = filterPanelByToolIds(basePanel, nonFavoriteResultsSet.value);
+    const favoritesSection = buildToolSection(
+        PANEL_LABEL_IDS.FAVORITES_RESULTS_SECTION,
+        localize("Favorites"),
+        favoriteResults.value,
+    );
+    return {
+        [PANEL_LABEL_IDS.FAVORITES_RESULTS_SECTION]: favoritesSection,
+        ...otherResultsPanel,
+    };
+});
 
 /**
  * If not searching or no results, we show all tools in sections (default)
@@ -123,16 +291,23 @@ const toolsList = computed(() => Object.values(localToolsById.value));
  * If we have results for search, we show tools in sections or just tools,
  * based on whether `showSections` is true or false
  */
-const localPanel: ComputedRef<Record<string, Tool | ToolSectionType> | null> = computed(() => {
+const localPanel = computed<Record<string, ToolPanelItem> | null>(() => {
+    // The "My Tools" landing page is rendered by <MyToolsLanding> directly
+    // (mounted on `showMyToolsLanding`); this computed only feeds the default
+    // / workflow panels and the search-results pane.
+
+    // There is a search query and results, show the search results panel (sectioned or flat based on `showSections`)
     if (hasResults.value) {
         if (showSections.value) {
-            return resultPanel.value;
+            return sectionedResultsPanel.value || flatResultsPanel.value;
         } else {
-            return filterTools(localToolsById.value, results.value) as Record<string, Tool | ToolSectionType>;
+            return flatResultsPanel.value;
         }
-    } else {
-        return localSectionsById.value;
     }
+    if (props.favoritesDefault) {
+        return {};
+    }
+    return localSectionsById.value;
 });
 
 const buttonIcon = computed(() => (showSections.value ? faEyeSlash : faEye));
@@ -191,6 +366,29 @@ function onSearchQuery(q: string) {
 function onToggle() {
     showSections.value = !showSections.value;
 }
+
+/**
+ * The favorites-results header (split section in mixed search results) honours
+ * the same collapsed state as the My Tools landing's Favorites label, so the
+ * user's preference carries between landing and search-result views.
+ */
+const collapsedLabels = computed(() => {
+    if (props.favoritesDefault) {
+        return {
+            [PANEL_LABEL_IDS.FAVORITES_RESULTS_LABEL]: favoritesCollapsed.value,
+        };
+    }
+    return null;
+});
+
+function onLabelToggle(labelId: string) {
+    if (!props.favoritesDefault) {
+        return;
+    }
+    if (labelId === PANEL_LABEL_IDS.FAVORITES_LABEL || labelId === PANEL_LABEL_IDS.FAVORITES_RESULTS_LABEL) {
+        favoritesCollapsed.value = !favoritesCollapsed.value;
+    }
+}
 </script>
 
 <template>
@@ -200,7 +398,7 @@ function onToggle() {
                 :current-panel-view="currentPanelView"
                 :placeholder="localize('search tools')"
                 :tools-list="toolsList"
-                :current-panel="localSectionsById"
+                :current-panel="searchPanelSections"
                 :query="query"
                 :query-pending="queryPending"
                 :use-worker="useSearchWorker"
@@ -232,16 +430,33 @@ function onToggle() {
         </div>
         <div class="unified-panel-body">
             <div class="toolMenuContainer">
-                <div v-if="localPanel" class="toolMenu">
-                    <div v-for="(panel, key) in localPanel" :key="key">
-                        <ToolSection
-                            v-if="panel"
-                            :category="panel || {}"
-                            :query-filter="hasResults ? query : undefined"
-                            :has-filter-button="hasResults && currentPanelView === 'default'"
-                            @onClick="onToolClick"
-                            @onFilter="onSectionFilter" />
-                    </div>
+                <MyToolsLanding
+                    v-if="showMyToolsLanding"
+                    :local-tools-by-id="localToolsById"
+                    :default-sections-by-id="defaultSectionsById"
+                    :local-sections-by-id="localSectionsById"
+                    :tools-count="toolsCount"
+                    @onClick="onToolClick"
+                    @onFilter="onSectionFilter"
+                    @onLabelToggle="onLabelToggle" />
+                <div v-else-if="localPanel" class="toolMenu">
+                    <ToolSection
+                        v-for="(panelItem, key) in localPanel"
+                        :key="key"
+                        :category="panelItem"
+                        :query-filter="hasResults ? query : undefined"
+                        :has-filter-button="
+                            hasResults &&
+                            currentPanelView === 'default' &&
+                            panelItem.id !== PANEL_LABEL_IDS.FAVORITES_RESULTS_SECTION &&
+                            panelItem.id !== UNSECTIONED_SECTION.id
+                        "
+                        :search-active="hasResults"
+                        :show-favorite-button="recentToolIdsToShowSet.has(panelItem.id)"
+                        :collapsed-labels="collapsedLabels"
+                        @onClick="onToolClick"
+                        @onFilter="onSectionFilter"
+                        @onLabelToggle="onLabelToggle" />
                 </div>
             </div>
         </div>
@@ -251,5 +466,8 @@ function onToggle() {
 <style scoped>
 .toolTitle {
     overflow-wrap: anywhere;
+}
+.tool-panel-empty {
+    padding: 0.5rem;
 }
 </style>

@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import { faSyncAlt } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { storeToRefs } from "pinia";
 import { computed, onMounted, ref, watch } from "vue";
 
 import { type AsyncTaskResultSummary, GalaxyApi } from "@/api";
-import { fetchCurrentUserQuotaUsages, type QuotaUsage } from "@/api/users";
 import { useConfig } from "@/composables/config";
 import { useTaskMonitor } from "@/composables/taskMonitor";
+import { useQuotaUsageStore } from "@/stores/quotaUsageStore";
 import { useUserStore } from "@/stores/userStore";
 import { errorMessageAsString } from "@/utils/simple-error";
 import { bytesToString } from "@/utils/utils";
@@ -15,9 +17,10 @@ import QuotaUsageSummary from "@/components/User/DiskUsage/Quota/QuotaUsageSumma
 const { config, isConfigLoaded } = useConfig(true);
 const userStore = useUserStore();
 const { currentUser } = storeToRefs(userStore);
+const quotaUsageStore = useQuotaUsageStore();
 const { isRunning: isRecalculateTaskRunning, waitForTask } = useTaskMonitor();
 
-const quotaUsages = ref<QuotaUsage[]>();
+const quotaUsages = computed(() => quotaUsageStore?.quotaUsages);
 const errorMessage = ref<string>();
 const isRecalculating = ref<boolean>(false);
 
@@ -37,9 +40,8 @@ watch(
     (newValue, oldValue) => {
         // Make sure we reload the user and the quota usages when the recalculation is done
         if (oldValue && !newValue) {
-            const includeHistories = false;
-            userStore.loadUser(includeHistories);
-            loadQuotaUsages();
+            userStore.refreshUser();
+            quotaUsageStore.applyRecalculationCompletedRefresh();
         }
     },
 );
@@ -74,17 +76,12 @@ async function onRefresh() {
     }
 }
 
-async function loadQuotaUsages() {
+onMounted(async () => {
     try {
-        const currentUserQuotaUsages = await fetchCurrentUserQuotaUsages();
-        quotaUsages.value = currentUserQuotaUsages;
+        await quotaUsageStore.loadQuotaUsages();
     } catch (error) {
         errorMessage.value = errorMessageAsString(error);
     }
-}
-
-onMounted(async () => {
-    await loadQuotaUsages();
 });
 </script>
 <template>
@@ -102,20 +99,19 @@ onMounted(async () => {
             </h2>
         </b-container>
         <b-container class="text-center mb-5 w-75">
-            <button
+            <b-alert v-if="isRefreshing" class="refreshing-alert" variant="info" show>
+                <b-spinner small class="mr-2" />
+                <span v-localize>Recalculating disk usage... this may take some time, please check back later.</span>
+            </b-alert>
+            <b-button
+                v-else
                 id="refresh-disk-usage"
                 title="Recalculate disk usage"
-                :disabled="isRefreshing"
-                variant="outline-secondary"
-                size="sm"
-                pill
+                variant="primary"
                 @click="onRefresh">
-                <b-spinner v-if="isRefreshing" small />
-                <span v-else>Refresh</span>
-            </button>
-            <b-alert v-if="isRefreshing" class="refreshing-alert mt-2" variant="info" show dismissible fade>
-                Recalculating disk usage... this may take some time, please check back later.
-            </b-alert>
+                <FontAwesomeIcon :icon="faSyncAlt" class="mr-1" />
+                <span v-localize>Refresh</span>
+            </b-button>
         </b-container>
     </div>
 </template>

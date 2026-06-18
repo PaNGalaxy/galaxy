@@ -12,6 +12,7 @@ from typing import (
 
 from galaxy.tool_util.parser.factory import get_tool_source
 from galaxy.tool_util.parser.output_objects import from_tool_source
+from galaxy.tool_util.parser.yaml import YamlToolSource
 from galaxy.tool_util.unittest_utils import functional_test_tool_path
 from galaxy.tool_util_models.tool_outputs import (
     ToolOutput,
@@ -53,6 +54,7 @@ TOOL_XML_1 = """
         <resource type="cuda_device_count_min">1</resource>
         <resource type="cuda_device_count_max">2</resource>
         <resource type="shm_size">67108864</resource>
+        <resource type="timelimit">60</resource>
         <credentials name="Apollo" version="gmod.org/apollo" label="Apollo credential set" description="Please provide credentials for Apollo">
             <variable name="server" inject_as_env="apollo_url" optional="true" label="Your Apollo server" description="URL of your Apollo server" />
             <secret name="username" inject_as_env="apollo_user" optional="true" label="Your Apollo username" description="Username for Apollo" />
@@ -164,6 +166,8 @@ requirements:
     cuda_device_count_max: 2
   - type: resource
     shm_size: 67108864
+  - type: resource
+    timelimit: 60
 containers:
   - type: docker
     identifier: "awesome/bowtie"
@@ -209,12 +213,11 @@ help:
     This is HELP TEXT2!!!
 tests:
    - inputs:
-       foo: 5
+       input1: 7
      outputs:
        out1: moo.txt
    - inputs:
-       foo:
-         value: 5
+       input1: 8
      outputs:
        out1:
          lines_diff: 4
@@ -385,6 +388,7 @@ class TestXmlLoader(BaseLoaderTestCase):
         assert resource_requirements[4].resource_type == "cuda_device_count_min"
         assert resource_requirements[5].resource_type == "cuda_device_count_max"
         assert resource_requirements[6].resource_type == "shm_size"
+        assert resource_requirements[7].resource_type == "timelimit"
         assert not resource_requirements[0].runtime_required
         assert credentials[0].name == "Apollo"
         assert credentials[0].version == "gmod.org/apollo"
@@ -452,26 +456,22 @@ class TestXmlLoader(BaseLoaderTestCase):
         assert xrefs == [{"value": "bwa", "type": "bio.tools"}]
 
     def test_exit_code(self):
-        tool_source = self._get_tool_source(
-            source_contents="""<tool id="bwa" name="bwa">
+        tool_source = self._get_tool_source(source_contents="""<tool id="bwa" name="bwa">
             <command detect_errors="exit_code">
                 ls
             </command>
         </tool>
-        """
-        )
+        """)
         exit, regexes = tool_source.parse_stdio()
         assert len(exit) == 2, exit
         assert len(regexes) == 0, regexes
 
-        tool_source = self._get_tool_source(
-            source_contents="""<tool id="bwa" name="bwa">
+        tool_source = self._get_tool_source(source_contents="""<tool id="bwa" name="bwa">
             <command detect_errors="aggressive">
                 ls
             </command>
         </tool>
-        """
-        )
+        """)
         exit, regexes = tool_source.parse_stdio()
         assert len(exit) == 2, exit
         # error:, exception: various memory exception...
@@ -576,7 +576,7 @@ class TestYamlLoader(BaseLoaderTestCase):
             "resolve_dependencies": False,
             "shell": "/bin/sh",
         }
-        assert len(resource_requirements) == 7
+        assert len(resource_requirements) == 8
         assert resource_requirements[0].to_dict() == {"resource_type": "cores_min", "value_or_expression": 1}
         assert resource_requirements[1].to_dict() == {"resource_type": "cuda_version_min", "value_or_expression": 10.2}
         assert resource_requirements[2].to_dict() == {
@@ -595,6 +595,10 @@ class TestYamlLoader(BaseLoaderTestCase):
         assert resource_requirements[6].to_dict() == {
             "resource_type": "shm_size",
             "value_or_expression": 67108864,
+        }
+        assert resource_requirements[7].to_dict() == {
+            "resource_type": "timelimit",
+            "value_or_expression": 60,
         }
         assert len(credentials) == 1
         assert len(credentials[0].secrets) == 2
@@ -636,8 +640,8 @@ class TestYamlLoader(BaseLoaderTestCase):
         inputs = test_dict["inputs"]
         assert len(inputs) == 1
         input1 = inputs[0]
-        assert input1["name"] == "foo"
-        assert input1["value"] == 5
+        assert input1["name"] == "input1"
+        assert input1["value"] == 7
 
         outputs = test_dict["outputs"]
         assert len(outputs) == 1
@@ -738,8 +742,7 @@ class TestApplyRulesToolLoader(BaseLoaderTestCase):
         assert not output_model.hidden
         assert output_model.label == "${input.name} (re-organized)"
         output_collection_model = assert_output_model_of_type(output_model, ToolOutputCollection)
-        structure = output_collection_model.structure
-        assert structure.collection_type_from_rules == "rules"
+        assert output_collection_model.collection_type_from_rules == "rules"
 
 
 class TestBuildListToolLoader(BaseLoaderTestCase):
@@ -928,6 +931,71 @@ class TestCollectionOutputYaml(FunctionalTestToolTestCase):
         assert len(output_collections) == 1
 
 
+def test_yaml_parser_accepts_collection_type_source_alias():
+    # XML tools use ``type_source``; the pydantic UDT model uses
+    # ``collection_type_source``. Parser must accept either.
+    doc = {
+        "class": "GalaxyTool",
+        "id": "alias-tool",
+        "name": "Alias tool",
+        "version": "0.1",
+        "shell_command": "touch outs/a.txt",
+        "outputs": [
+            {
+                "name": "outs",
+                "type": "collection",
+                "collection_type_source": "input1",
+                "discover_datasets": [
+                    {
+                        "discover_via": "pattern",
+                        "pattern": "__name_and_ext__",
+                        "directory": "outs",
+                    }
+                ],
+            }
+        ],
+    }
+    tool_source = YamlToolSource(doc)
+    _outputs, output_collections = tool_source.parse_outputs(None)
+    assert output_collections["outs"].structure.collection_type_source == "input1"
+
+
+def test_yaml_parser_lifts_legacy_structure_wrapper():
+    # Older DynamicTool.value rows nest collection fields under ``structure:``.
+    # The YAML parser path bypasses pydantic (see ``Toolbox.dynamic_tool_to_tool``),
+    # so it normalizes the wrapper itself.
+    legacy_doc = {
+        "class": "GalaxyTool",
+        "id": "legacy-collection-tool",
+        "name": "Legacy collection tool",
+        "version": "0.1",
+        "shell_command": "mkdir -p outs && touch outs/a.txt",
+        "outputs": [
+            {
+                "name": "outs",
+                "type": "collection",
+                "structure": {
+                    "collection_type": "list",
+                    "discover_datasets": [
+                        {
+                            "discover_via": "pattern",
+                            "pattern": "__name_and_ext__",
+                            "directory": "outs",
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    tool_source = YamlToolSource(legacy_doc)
+    outputs, output_collections = tool_source.parse_outputs(None)
+    assert "outs" in output_collections
+    output = output_collections["outs"]
+    assert output.structure.collection_type == "list"
+    assert output.structure.dataset_collector_descriptions
+    assert output.structure.dataset_collector_descriptions[0].discover_via == "pattern"
+
+
 class TestEnvironmentVariables(FunctionalTestToolTestCase):
     test_path = "environment_variables.xml"
 
@@ -945,8 +1013,8 @@ class TestExpectations(FunctionalTestToolTestCase):
         tests = tests_dict["tests"]
         assert len(tests) == 10
         test_0 = tests[0]
-        assert len(test_0["stderr"]) == 1
-        assert len(test_0["stdout"]) == 2
+        assert len(test_0["stderr"]) == 2
+        assert len(test_0["stdout"]) == 1
 
 
 class TestExpectationsCommandVersion(FunctionalTestToolTestCase):
@@ -992,7 +1060,7 @@ def test_old_invalid_citation_dont_cause_failure_to_load():
 
 
 def test_invalid_citation_not_allowed_in_modern_tools():
-    with as_file(resource_path(__name__, "invalid_citation_24.2.xml")) as tool_path:
+    with as_file(resource_path(__name__, "invalid_citation_26.1.xml")) as tool_path:
         tool_source = get_tool_source(tool_path)
     exc = None
     try:
@@ -1000,6 +1068,17 @@ def test_invalid_citation_not_allowed_in_modern_tools():
     except Exception as e:
         exc = e
     assert exc is not None
+
+
+def test_legacy_doi_prefix_citation_is_normalized():
+    # Legacy 'doi:'-prefixed citations load and are normalized to the bare DOI
+    # so downstream resolution (https://doi.org/<doi>) works (see issue #22795).
+    with as_file(resource_path(__name__, "doi_prefixed_citation.xml")) as tool_path:
+        tool_source = get_tool_source(tool_path)
+    citations = tool_source.parse_citations()
+    assert len(citations) == 1
+    assert citations[0].type == "doi"
+    assert citations[0].content == "10.1186/1471-2105-11-485"
 
 
 class TestToolProvidedMetadata2(FunctionalTestToolTestCase):

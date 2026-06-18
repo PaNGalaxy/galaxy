@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faExclamationCircle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { ref, watch } from "vue";
 
 import type { NotificationCategory, NotificationChannel, UserNotificationPreferences } from "@/api/notifications";
 import { snakeCaseToTitleCase } from "@/utils/strings";
-
-library.add(faExclamationCircle);
 
 interface NotificationsChannelSettingsProps {
     preferences: UserNotificationPreferences;
@@ -40,7 +37,7 @@ watch(
 
         <FontAwesomeIcon
             v-if="channel === 'push'"
-            v-b-tooltip.hover="'Push notifications need to be enabled'"
+            v-g-tooltip.hover="'Push notifications need to be enabled'"
             class="mx-2"
             :icon="faExclamationCircle" />
     </div>

@@ -6,21 +6,21 @@ import shutil
 import string
 import tempfile
 from collections.abc import (
+    Callable,
     Generator,
     Iterable,
 )
 from inspect import isclass
 from typing import (
     Any,
-    Callable,
     IO,
+    Literal,
     Optional,
     TYPE_CHECKING,
     Union,
 )
 
 from markupsafe import escape
-from typing_extensions import Literal
 
 from galaxy import util
 from galaxy.datatypes.metadata import (
@@ -402,6 +402,7 @@ class Data(metaclass=DataMeta):
         self, trans, data: DatasetHasHidProtocol, headers: Headers, do_action: str = "zip"
     ) -> tuple[Union[ZipstreamWrapper, str], Headers]:
         # save a composite object into a compressed archive for downloading
+        assert data.name
         outfname = data.name[0:150]
         outfname = "".join(c in FILENAME_VALID_CHARS and c or "_" for c in outfname)
         archive = ZipstreamWrapper(
@@ -512,18 +513,13 @@ class Data(metaclass=DataMeta):
             return open(data.get_file_name(user=trans.user), "rb"), headers
 
     def _serve_binary_file_contents_as_text(self, trans, data, headers, file_size, max_peek_size):
-        headers["content-type"] = "text/html"
+        # Use text/plain so the browser preserves whitespace and line endings
+        # and does not attempt to interpret stray markup as HTML.
+        headers["content-type"] = "text/plain; charset=utf-8"
+        if file_size > max_peek_size:
+            headers["x-content-truncated"] = str(max_peek_size)
         with open(data.get_file_name(user=trans.user), "rb") as fh:
-            return (
-                trans.fill_template_mako(
-                    "/dataset/binary_file.mako",
-                    data=data,
-                    file_contents=fh.read(max_peek_size),
-                    file_size=util.nice_size(file_size),
-                    truncated=file_size > max_peek_size,
-                ),
-                headers,
-            )
+            return unicodify(fh.read(max_peek_size)), headers
 
     def _serve_file_contents(self, trans, data, headers, preview, file_size, max_peek_size):
         from galaxy.datatypes import images
@@ -533,16 +529,11 @@ class Data(metaclass=DataMeta):
             return self._yield_user_file_content(trans, data, data.get_file_name(user=trans.user), headers), headers
 
         with compression_utils.get_fileobj(data.get_file_name(user=trans.user), "rb") as fh:
-            # preview large text file
-            headers["content-type"] = "text/html"
-            return (
-                trans.fill_template_mako(
-                    "/dataset/large_file.mako",
-                    truncated_data=fh.read(max_peek_size),
-                    data=data,
-                ),
-                headers,
-            )
+            # preview large text file - serve as text/plain so the browser
+            # preserves whitespace/newlines and does not interpret content as HTML.
+            headers["content-type"] = "text/plain; charset=utf-8"
+            headers["x-content-truncated"] = str(max_peek_size)
+            return unicodify(fh.read(max_peek_size)), headers
 
     def display_data(
         self,
@@ -624,10 +615,8 @@ class Data(metaclass=DataMeta):
             trans.log_event(f"Display dataset id: {str(dataset.id)}")
 
             max_peek_size = _get_max_peek_size(dataset)
-
-            if (
-                _is_binary_file(dataset) and preview and hasattr(trans, "fill_template_mako")
-            ):  # preview file which format is unknown (to Galaxy), we still try to display this as text
+            if _is_binary_file(dataset) and preview:
+                # preview file which format is unknown (to Galaxy), we still try to display this as text
                 return self._serve_binary_file_contents_as_text(trans, dataset, headers, file_size, max_peek_size)
             else:  # text/html, or image, or display was called without preview flag
                 return self._serve_file_contents(trans, dataset, headers, preview, file_size, max_peek_size)
@@ -857,6 +846,7 @@ class Data(metaclass=DataMeta):
         deps: Optional[dict] = None,
         target_context: Optional[dict] = None,
         history=None,
+        use_cached_job: bool = False,
     ):
         """This function adds a job to the queue to convert a dataset to another type. Returns a message about success/failure."""
         converter = trans.app.datatypes_registry.get_converter_by_target_type(original_dataset.ext, target_type)
@@ -872,8 +862,16 @@ class Data(metaclass=DataMeta):
         # Make the target datatype available to the converter
         params["__target_datatype__"] = target_type
         # Run converter, job is dispatched through Queue
+        # Always use cached job if it exists
+        completed_jobs = converter.completed_jobs(trans, all_params=[params], use_cached_job=use_cached_job)
+        completed_job = completed_jobs[0] if completed_jobs else None
         job, converted_datasets, *_ = converter.execute(
-            trans, incoming=params, set_output_hid=visible, history=history, flush_job=False
+            trans,
+            incoming=params,
+            set_output_hid=visible,
+            history=history,
+            flush_job=False,
+            completed_job=completed_job,
         )
         # We should only have a single converted output, but let's be defensive here
         n_converted_datasets = len(converted_datasets)

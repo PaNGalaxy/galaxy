@@ -45,16 +45,26 @@ from .display_applications.application import DisplayApplication
 if TYPE_CHECKING:
     from galaxy.datatypes.data import Data
     from galaxy.tool_util.toolbox.base import AbstractToolBox
+    from galaxy.tools import SetMetadataTool
 
 
 class ConfigurationError(Exception):
     pass
 
 
+# Ensure the module logger has at least one handler to avoid "no handlers could
+# be found" warnings when the registry is used outside of a configured Galaxy
+# app. This is done at import time (once) rather than per-instance to avoid
+# progressive accumulation of NullHandlers on long-lived test processes that
+# instantiate ``Registry`` repeatedly (see test/integration driver).
+_module_log = logging.getLogger(__name__)
+if not any(isinstance(h, logging.NullHandler) for h in _module_log.handlers):
+    _module_log.addHandler(logging.NullHandler())
+
+
 class Registry:
     def __init__(self, config=None):
-        self.log = logging.getLogger(__name__)
-        self.log.addHandler(logging.NullHandler())
+        self.log = _module_log
 
         edam_ontology_path = config.get("edam_toolbox_ontology_path", None) if config is not None else None
 
@@ -749,7 +759,7 @@ class Registry:
                 failed.append(display_application_id)
         return (reloaded, failed)
 
-    def load_external_metadata_tool(self, toolbox):
+    def load_external_metadata_tool(self, toolbox: "AbstractToolBox") -> None:
         """Adds a tool which is used to set external metadata"""
         # We need to be able to add a job to the queue to set metadata. The queue will currently only accept jobs with an associated
         # tool.  We'll load a special tool to be used for Auto-Detecting metadata; this is less than ideal, but effective
@@ -757,7 +767,7 @@ class Registry:
         set_meta_tool = toolbox.load_hidden_lib_tool(
             os.path.abspath(os.path.join(os.path.dirname(__file__), "set_metadata_tool.xml"))
         )
-        self.set_external_metadata_tool = set_meta_tool
+        self.set_external_metadata_tool = cast("SetMetadataTool", set_meta_tool)
         self.log.debug("Loaded external metadata tool: %s", self.set_external_metadata_tool.id)
 
     def set_default_values(self):
@@ -991,8 +1001,7 @@ class Registry:
 
     def to_xml_file(self, path):
         if not self._registry_xml_string:
-            registry_string_template = Template(
-                """<?xml version="1.0"?>
+            registry_string_template = Template("""<?xml version="1.0"?>
             <datatypes>
               <registration converters_path="$converters_path" display_path="$display_path">
                 $datatype_elems
@@ -1001,8 +1010,7 @@ class Registry:
                 $sniffer_elems
               </sniffers>
             </datatypes>
-            """
-            )
+            """)
             converters_path = self.converters_path_attr or ""
             display_path = self.display_path_attr or ""
             datatype_elems = "".join(galaxy.util.xml_to_string(elem) for elem in self.datatype_elems)

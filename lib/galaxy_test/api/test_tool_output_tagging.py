@@ -1,5 +1,3 @@
-from typing import List
-
 from galaxy_test.base.api_asserts import assert_status_code_is
 from galaxy_test.base.populators import (
     DatasetCollectionPopulator,
@@ -14,7 +12,7 @@ class TestToolOutputTaggingApi(ApiTestCase):
         self.dataset_populator = DatasetPopulator(self.galaxy_interactor)
         self.dataset_collection_populator = DatasetCollectionPopulator(self.galaxy_interactor)
 
-    def _assert_tags(self, history_id: str, hda_id: str, expected: List[str]):
+    def _assert_tags(self, history_id: str, hda_id: str, expected: list[str]):
         details = self.dataset_populator.get_history_dataset_details(history_id, dataset_id=hda_id)
         assert sorted(details["tags"]) == sorted(expected)
 
@@ -27,7 +25,6 @@ class TestToolOutputTaggingApi(ApiTestCase):
             "history_id": history_id,
             "inputs": {
                 "input1": {"values": [{"src": "hda", "id": hda["id"]}]},
-                "__tags": ["t1", "t2"],
             },
             "input_format": "21.01",
             "__tags": ["t1", "t2"],
@@ -54,7 +51,6 @@ class TestToolOutputTaggingApi(ApiTestCase):
                     "batch": True,
                     "values": [{"src": "hdca", "id": hdca["id"]}],
                 },
-                "__tags": ["m1", "m2"],
             },
             "input_format": "21.01",
             "__tags": ["m1", "m2"],

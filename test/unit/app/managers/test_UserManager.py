@@ -4,7 +4,6 @@ User Manager testing.
 Executable directly using: python -m test.unit.managers.test_UserManager
 """
 
-from datetime import datetime
 from unittest.mock import patch
 
 from sqlalchemy import (
@@ -22,6 +21,7 @@ from galaxy.managers import (
     users,
 )
 from galaxy.security.passwords import check_password
+from galaxy.util import now
 from .base import BaseTestCase
 
 # =============================================================================
@@ -31,7 +31,6 @@ user2_data = dict(email="user2@user2.user2", username="user2", password=default_
 user3_data = dict(email="user3@user3.user3", username="user3", password=default_password)
 user4_data = dict(email="user4@user4.user4", username="user4", password=default_password)
 uppercase_email_user = dict(email="USER5@USER5.USER5", username="USER5", password=default_password)
-lowercase_email_user = dict(email="user5@user5.user5", username="user5", password=default_password)
 
 
 # =============================================================================
@@ -74,12 +73,23 @@ class TestUserManager(BaseTestCase):
         self.log("emails must be unique")
         with self.assertRaises(exceptions.Conflict):
             self.user_manager.create(
-                **dict(email="user2@user2.user2", username="user2a", password=default_password),
+                email=user2_data["email"],
+                username="user2a",
+                password=default_password,
+            )
+        self.log("emails must be case-insensitive unique")
+        with self.assertRaises(exceptions.Conflict):
+            self.user_manager.create(
+                email=user2_data["email"].capitalize(),
+                username="user2a",
+                password=default_password,
             )
         self.log("usernames must be unique")
         with self.assertRaises(exceptions.Conflict):
             self.user_manager.create(
-                **dict(email="user2a@user2.user2", username="user2", password=default_password),
+                email="user2a@user2.user2",
+                username=user2_data["username"],
+                password=default_password,
             )
 
     def test_trimming(self):
@@ -168,7 +178,7 @@ class TestUserManager(BaseTestCase):
         )
         assert check_password(default_password, user2.password)
         assert not check_password(changed_password, user2.password)
-        prt.expiration_time = datetime.utcnow()
+        prt.expiration_time = now()
         user, message = self.user_manager.change_password(
             self.trans, token=prt.token, password=default_password, confirm=default_password
         )
@@ -250,27 +260,10 @@ class TestUserManager(BaseTestCase):
         assert uppercase_user.username == uppercase_email_user["username"]
         assert self.user_manager.get_user_by_identity(uppercase_user.email) == uppercase_user
         assert self.user_manager.get_user_by_identity(uppercase_user.username) == uppercase_user
-        # Create another user with the same email just differently capitalized.
-        # This is not normally allowed now, since registration goes through user_manager.register(),
-        # which checks for that, but was possible in earlier releases of Galaxy
-        lowercase_user = self.user_manager.create(**lowercase_email_user)
-        assert lowercase_user.email == lowercase_email_user["email"]
-        assert lowercase_user.username == lowercase_email_user["username"]
-        assert self.user_manager.get_user_by_identity(lowercase_user.email) == lowercase_user
-        assert self.user_manager.get_user_by_identity(lowercase_user.username) == lowercase_user
-        # assert uppercase user can still be retrieved
-        assert self.user_manager.get_user_by_identity(uppercase_user.email) == uppercase_user
-        assert self.user_manager.get_user_by_identity(uppercase_user.username) == uppercase_user
         # username matches need to be exact
-        assert self.user_manager.get_user_by_identity(uppercase_user.username.capitalize()) is None
-        # email matches can ignore capitalization
-        ignore_email_capitalization_user = self.user_manager.create(
-            email="user123@nopassword.com", username="someusername123"
-        )
-        assert (
-            self.user_manager.get_user_by_identity(ignore_email_capitalization_user.email.capitalize())
-            == ignore_email_capitalization_user
-        )
+        assert self.user_manager.get_user_by_identity(uppercase_email_user["username"].capitalize()) is None
+        # Email lookups should be case-insensitive
+        assert self.user_manager.get_user_by_identity(uppercase_email_user["email"].capitalize()) == uppercase_user
 
 
 # =============================================================================
@@ -404,7 +397,9 @@ class TestUserDeserializer(BaseTestCase):
         self.log("username should be updatable")
         new_name = "double-plus-good"
         self.deserializer.deserialize(user, {"username": new_name}, trans=self.trans)
-        assert self.user_manager.by_id(user.id).username == new_name
+        new_user = self.user_manager.by_id(user.id)
+        assert new_user is not None
+        assert new_user.username == new_name
 
 
 # =============================================================================

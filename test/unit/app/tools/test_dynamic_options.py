@@ -14,8 +14,7 @@ def get_from_url_option():
     )
 
     return DynamicOptions(
-        XML(
-            """
+        XML("""
 <options from_url="https://usegalaxy.org/api/genomes/dm6" request_method="POST">
     <request_headers type="json">
         {"x-api-key": "${__user__.extra_preferences.resource_api_key if $__user__ else "anon"}"}
@@ -31,8 +30,7 @@ def get_from_url_option():
         }
     }]]></postprocess_expression>
 </options>
-"""
-        ),
+"""),
         tool_param,
     )
 
@@ -62,3 +60,22 @@ def test_dynamic_option_cache():
         },
     )
     assert from_url_option.get_options(trans, {}) == [ParameterOption("chr2L", "23513712", False)]
+
+
+def test_get_options_handles_missing_name_column():
+    """Must fall back to value column if display name is missing."""
+    tool_param = Bunch(tool=Bunch(app=Bunch()))
+
+    opts = DynamicOptions(XML("<options/>"), tool_param)
+    opts.columns = {"value": 0}
+
+    opts.file_fields = [["hg38"], ["mm10"]]
+
+    trans = WorkRequestContext(app=MockApp())
+    options = opts.get_options(trans, {})
+
+    # No KeyError, and name falls back to value when no name column exists.
+    assert options == [
+        ParameterOption("hg38", "hg38", False),
+        ParameterOption("mm10", "mm10", False),
+    ]

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { library } from "@fortawesome/fontawesome-svg-core";
 import { faCaretSquareDown, faCaretSquareUp } from "@fortawesome/free-regular-svg-icons";
-import { faArrowsAltH, faExclamation, faTimes } from "@fortawesome/free-solid-svg-icons";
+import { faArrowsAltH, faTimes } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { sanitize } from "dompurify";
+import purify from "dompurify";
 import type { ComputedRef } from "vue";
 import { computed, ref, useAttrs } from "vue";
 
+import type { IconLike } from "@/components/icons/galaxyIcons";
 import { linkify } from "@/utils/utils";
 
 import { type ExtendedCollectionType, isDataUri } from "./Elements/FormData/types";
@@ -53,12 +53,12 @@ interface FormElementProps {
     attributes?: FormParameterAttributes;
     collapsedEnableText?: string;
     collapsedDisableText?: string;
-    collapsedEnableIcon?: string;
-    collapsedDisableIcon?: string;
+    collapsedEnableIcon?: IconLike;
+    collapsedDisableIcon?: IconLike;
     connectedEnableText?: string;
     connectedDisableText?: string;
-    connectedEnableIcon?: string;
-    connectedDisableIcon?: string;
+    connectedEnableIcon?: IconLike;
+    connectedDisableIcon?: IconLike;
     workflowBuildingMode?: boolean;
     /** If true, this element is part of a workflow run form. */
     workflowRun?: boolean;
@@ -70,12 +70,12 @@ const props = withDefaults(defineProps<FormElementProps>(), {
     disabled: false,
     collapsedEnableText: "Enable",
     collapsedDisableText: "Disable",
-    collapsedEnableIcon: "far fa-caret-square-down",
-    collapsedDisableIcon: "far fa-caret-square-up",
+    collapsedEnableIcon: () => faCaretSquareDown,
+    collapsedDisableIcon: () => faCaretSquareUp,
     connectedEnableText: "Remove connection from module.",
     connectedDisableText: "Add connection to module.",
-    connectedEnableIcon: "fa fa-times",
-    connectedDisableIcon: "fa fa-arrows-alt-h",
+    connectedEnableIcon: () => faTimes,
+    connectedDisableIcon: () => faArrowsAltH,
     helpFormat: "html",
     workflowBuildingMode: false,
     workflowRun: false,
@@ -84,9 +84,9 @@ const props = withDefaults(defineProps<FormElementProps>(), {
 const emit = defineEmits<{
     (e: "input", value: FormParameterValue, id: string): void;
     (e: "change", shouldRefresh: boolean): void;
+    (e: "load-more", payload: { name: string; src: string; offset: number; limit: number; search?: string }): void;
+    (e: "search-change", payload: { name: string; src: string; query: string; limit: number }): void;
 }>();
-
-library.add(faExclamation, faTimes, faArrowsAltH, faCaretSquareDown, faCaretSquareUp);
 
 /** TODO: remove attrs computed.
  useAttrs is *not* reactive, and does not play nice with type safety.
@@ -184,7 +184,7 @@ const helpText = computed(() => {
 });
 const nonMdHelp = computed(() =>
     Boolean(helpText.value) && props.helpFormat != "markdown" && (!props.workflowRun || helpText.value !== props.title)
-        ? sanitize(helpText.value!)
+        ? purify.sanitize(helpText.value!)
         : "",
 );
 const showNonMdHelp = computed(() => Boolean(nonMdHelp.value) && (!props.workflowRun || props.type !== "boolean"));
@@ -251,7 +251,7 @@ const formAlert = ref<string>();
 const alerts = computed(() => {
     return [formAlert.value, props.error, props.warning]
         .filter((v) => v !== undefined && v !== null)
-        .map((v) => linkify(sanitize(v!, { USE_PROFILES: { html: true } })));
+        .map((v) => linkify(purify.sanitize(v!, { USE_PROFILES: { html: true } })));
 });
 
 /** Adds a temporary 2 sec focus to the element. */
@@ -332,7 +332,7 @@ const extendedCollectionType = computed<ExtendedCollectionType>(() => {
 
                 <span
                     v-if="isRequired && isRequiredType && props.title"
-                    v-b-tooltip.hover
+                    v-g-tooltip.hover
                     class="ui-form-title-star"
                     title="required"
                     :class="{ warning: isEmpty }">
@@ -349,8 +349,7 @@ const extendedCollectionType = computed<ExtendedCollectionType>(() => {
                 :type="props.type"
                 :has-alert="hasAlert"
                 :is-empty="isEmpty"
-                :is-optional="isOptional"
-                :extensions="attrs.extensions">
+                :is-optional="isOptional">
                 <template v-slot:badges>
                     <slot name="workflow-run-form-title-badges" />
                 </template>
@@ -441,6 +440,9 @@ const extendedCollectionType = computed<ExtendedCollectionType>(() => {
                     :multiple="attrs.multiple"
                     :optional="attrs.optional"
                     :options="attrs.options"
+                    :pinned="attrs.pinned"
+                    :options-meta="attrs.options_meta"
+                    :name="props.id"
                     :tag="attrs.tag"
                     :user-defined-title="userDefinedTitle"
                     :type="formDataField"
@@ -448,7 +450,9 @@ const extendedCollectionType = computed<ExtendedCollectionType>(() => {
                     :extended-collection-type="extendedCollectionType"
                     :workflow-run="props.workflowRun"
                     @alert="onAlert"
-                    @focus="addTempFocus" />
+                    @focus="addTempFocus"
+                    @load-more="$emit('load-more', $event)"
+                    @search-change="$emit('search-change', $event)" />
                 <FormDrilldown
                     v-else-if="props.type === 'drill_down'"
                     :id="props.id"
@@ -458,7 +462,11 @@ const extendedCollectionType = computed<ExtendedCollectionType>(() => {
                 <FormColor v-else-if="props.type === 'color'" :id="props.id" v-model="currentValue" />
                 <FormDirectory v-else-if="props.type === 'directory_uri'" v-model="currentValue" />
                 <FormUpload v-else-if="props.type === 'upload'" v-model="currentValue" />
-                <FormRulesEdit v-else-if="props.type == 'rules'" v-model="currentValue" :target="attrs.target" />
+                <FormRulesEdit
+                    v-else-if="props.type == 'rules'"
+                    :id="props.id"
+                    v-model="currentValue"
+                    :target="attrs.target" />
                 <FormTags
                     v-else-if="props.type === 'tags'"
                     v-model="currentValue"
@@ -478,7 +486,7 @@ const extendedCollectionType = computed<ExtendedCollectionType>(() => {
 
 <style lang="scss" scoped>
 @import "./_form-elements.scss";
-@import "base.scss";
+@import "@/style/scss/base.scss";
 
 // Workflow Run Form
 .workflow-run-element {

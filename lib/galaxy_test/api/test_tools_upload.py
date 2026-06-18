@@ -12,10 +12,6 @@ from galaxy.tool_util.verify.test_data import TestDataResolver
 from galaxy.util import UNKNOWN
 from galaxy.util.compression_utils import decompress_bytes_to_directory
 from galaxy.util.hash_util import md5_hash_file
-from galaxy.util.unittest_utils import (
-    skip_if_github_down,
-    skip_if_site_down,
-)
 from galaxy_test.base.constants import (
     ONE_TO_SIX_ON_WINDOWS,
     ONE_TO_SIX_WITH_SPACES,
@@ -23,6 +19,7 @@ from galaxy_test.base.constants import (
     ONE_TO_SIX_WITH_TABS,
     ONE_TO_SIX_WITH_TABS_NO_TRAILING_NEWLINE,
 )
+from galaxy_test.base.decorators import requires_new_history
 from galaxy_test.base.populators import (
     DatasetPopulator,
     skip_without_datatype,
@@ -151,7 +148,7 @@ class TestToolsUpload(ApiTestCase):
         assert details["state"] == "ok"
         assert details["file_ext"] == "fastqsanger.gz", details
 
-    @pytest.mark.require_new_history
+    @requires_new_history
     def test_fetch_compressed_auto_decompress_target(self, history_id):
         # TODO: this should definitely be fixed to allow auto decompression via that API.
         fastqgz_path = TestDataResolver().get_filename("1.fastqsanger.gz")
@@ -193,7 +190,7 @@ class TestToolsUpload(ApiTestCase):
             details = self._upload_and_get_details(fh, file_type="auto", assert_ok=False, auto_decompress=False)
         assert details["file_ext"] == "binary", details
 
-    @pytest.mark.require_new_history
+    @requires_new_history
     def test_fetch_compressed_with_auto(self, history_id):
         # UNSTABLE_FLAG: This might default to a bed.gz datatype in the future.
         # TODO: this should definitely be fixed to allow auto decompression via that API.
@@ -307,13 +304,13 @@ class TestToolsUpload(ApiTestCase):
         details = self.dataset_populator.get_history_dataset_details(history_id=history_id, dataset=dataset)
         assert details["genome_build"] == "hg19"
 
-    @skip_if_github_down
     def test_stage_fetch_decompress_true(self, history_id: str) -> None:
+        base64_url = self.dataset_populator.base64_url_for_test_file("1.fasta.gz")
         job = {
             "input1": {
                 "class": "File",
                 "format": "fasta",
-                "location": "https://github.com/galaxyproject/galaxy/blob/dev/test-data/1.fasta.gz?raw=true",
+                "location": base64_url,
                 "decompress": True,
             }
         }
@@ -324,13 +321,13 @@ class TestToolsUpload(ApiTestCase):
         content = self.dataset_populator.get_history_dataset_content(history_id=history_id, dataset=dataset)
         assert content.startswith(">hg17")
 
-    @skip_if_github_down
     def test_stage_fetch_decompress_false(self, history_id: str) -> None:
+        base64_url = self.dataset_populator.base64_url_for_test_file("1.fasta.gz")
         job = {
             "input1": {
                 "class": "File",
                 "format": "fasta",
-                "location": "https://github.com/galaxyproject/galaxy/blob/dev/test-data/1.fasta.gz?raw=true",
+                "location": base64_url,
                 "decompress": False,
             }
         }
@@ -341,18 +338,23 @@ class TestToolsUpload(ApiTestCase):
         content = self.dataset_populator.get_history_dataset_content(history_id=history_id, dataset=dataset)
         assert not content.startswith(">hg17")
 
-    @skip_if_github_down
-    def test_upload_multiple_mixed_success(self, history_id):
+    def test_upload_multiple_mixed_success(self, history_id, mock_http_server):
+        url_ok = mock_http_server.get_url(
+            remote_url="https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bed",
+            file_path="test-data/1.bed",
+        )
+        url_error = mock_http_server.get_url(
+            remote_url="https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/12.bed",
+            status=404,
+            body="Not Found",
+        )
         destination = {"type": "hdas"}
         targets = [
             {
                 "destination": destination,
                 "items": [
-                    {"src": "url", "url": "https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bed"},
-                    {
-                        "src": "url",
-                        "url": "https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/12.bed",
-                    },
+                    {"src": "url", "url": url_ok},
+                    {"src": "url", "url": url_error},
                 ],
             }
         ]
@@ -371,18 +373,24 @@ class TestToolsUpload(ApiTestCase):
         assert output0["state"] == "ok"
         assert output1["state"] == "error"
 
-    @skip_if_github_down
-    def test_fetch_bam_file_from_url_with_extension_set(self, history_id):
+    def test_fetch_bam_file_from_url_with_extension_set(self, history_id, mock_http_server):
+        url = mock_http_server.get_url(
+            remote_url="https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bam",
+            file_path="test-data/1.bam",
+        )
         item = {
             "src": "url",
-            "url": "https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bam",
+            "url": url,
             "ext": "bam",
         }
         output = self.dataset_populator.fetch_hda(history_id, item)
         self.dataset_populator.get_history_dataset_details(history_id, dataset=output, assert_ok=True)
 
-    @skip_if_github_down
-    def test_fetch_html_from_url(self, history_id):
+    def test_fetch_html_from_url(self, history_id, mock_http_server):
+        url = mock_http_server.get_url(
+            remote_url="https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/html_file.txt",
+            file_path="test-data/html_file.txt",
+        )
         destination = {"type": "hdas"}
         targets = [
             {
@@ -390,7 +398,7 @@ class TestToolsUpload(ApiTestCase):
                 "items": [
                     {
                         "src": "url",
-                        "url": "https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/html_file.txt",
+                        "url": url,
                     },
                 ],
             }
@@ -409,12 +417,18 @@ class TestToolsUpload(ApiTestCase):
         assert dataset["state"] == "error"
         assert dataset["name"] == "html_file.txt"
 
-    def test_abort_fetch_job(self, history_id):
+    def test_abort_fetch_job(self, history_id, mock_http_server):
         # This should probably be an integration test that also verifies
         # that the celery chord is properly canceled.
+        url = mock_http_server.get_url(
+            remote_url="https://httpstat.us/200?sleep=10000",
+            status=200,
+            body="OK",
+            sleep_ms=10000,
+        )
         item = {
             "src": "url",
-            "url": "https://httpstat.us/200?sleep=10000",
+            "url": url,
             "ext": "txt",
         }
         destination = {"type": "hdas"}
@@ -973,9 +987,13 @@ class TestToolsUpload(ApiTestCase):
         with pytest.raises(AssertionError):
             self._upload("https://foo.invalid", assert_ok=False)
 
-    @skip_if_site_down("https://usegalaxy.org")
-    def test_upload_from_404_url(self):
-        history_id, new_dataset = self._upload("https://usegalaxy.org/bla123", assert_ok=False)
+    def test_upload_from_404_url(self, mock_http_server):
+        url = mock_http_server.get_url(
+            remote_url="https://usegalaxy.org/bla123",
+            status=404,
+            body="Not Found",
+        )
+        history_id, new_dataset = self._upload(url, assert_ok=False)
         dataset_details = self.dataset_populator.get_history_dataset_details(
             history_id, dataset_id=new_dataset["id"], assert_ok=False
         )
@@ -983,15 +1001,31 @@ class TestToolsUpload(ApiTestCase):
             dataset_details["state"] == "error"
         ), f"expected dataset state to be 'error', but got '{dataset_details['state']}'"
 
-    @skip_if_site_down("https://usegalaxy.org")
-    def test_upload_from_valid_url(self):
-        history_id, new_dataset = self._upload("https://usegalaxy.org/api/version")
+    def test_upload_from_valid_url(self, mock_http_server):
+        url = mock_http_server.get_url(
+            remote_url="https://usegalaxy.org/api/version",
+            status=200,
+            body='{"version_major": "mock"}',
+            content_type="application/json",
+        )
+        history_id, new_dataset = self._upload(url)
         self.dataset_populator.get_history_dataset_details(history_id, dataset_id=new_dataset["id"], assert_ok=True)
 
-    @skip_if_site_down("https://usegalaxy.org")
-    def test_upload_from_valid_url_spaces(self):
-        history_id, new_dataset = self._upload("  https://usegalaxy.org/api/version  ")
+    def test_upload_from_valid_url_spaces(self, mock_http_server):
+        url = mock_http_server.get_url(
+            remote_url="https://usegalaxy.org/api/version",
+            status=200,
+            body='{"version_major": "mock"}',
+            content_type="application/json",
+        )
+        history_id, new_dataset = self._upload(f"  {url}  ")
         self.dataset_populator.get_history_dataset_details(history_id, dataset_id=new_dataset["id"], assert_ok=True)
+
+    def test_fetch_data_type_mismatch_warning(self):
+        details = self._upload_and_get_details("ATGC", api="fetch", ext="fasta")
+        assert details["state"] == "ok"
+        assert details["file_ext"] == "fasta"
+        assert "does not appear to be of that type" in details.get("misc_info", ""), details
 
     def test_upload_and_validate_invalid(self):
         path = TestDataResolver().get_filename("1.fastqsanger")

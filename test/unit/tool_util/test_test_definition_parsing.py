@@ -65,6 +65,18 @@ RECORD_TWO_FILES_EXPECTATIONS = [
     (["inputs", "f1", "fields", 0, "name"], "parent"),
     (["inputs", "f1", "fields", 1, "type"], "File"),
 ]
+COLLECTION_TEST_PAIRED_EXPECTATIONS = [
+    (["inputs", "f1", "model_class"], "TestCollectionDef"),
+    (["inputs", "f1", "collection_type"], "paired"),
+    (["required_files", 0, 0], "simple_line.txt"),
+    (["required_files", 1, 0], "simple_line_alternative.txt"),
+]
+COLLECTION_TEST_PAIRED_Y_EXPECTATIONS = [
+    (["inputs", "f1", "model_class"], "TestCollectionDef"),
+    (["inputs", "f1", "collection_type"], "paired"),
+    (["required_files", 0, 0], "simple_line.txt"),
+    (["required_files", 1, 0], "simple_line_alternative.txt"),
+]
 
 
 class TestTestParsing(TestCase):
@@ -131,6 +143,18 @@ class TestTestParsing(TestCase):
         test_0 = test_dicts[0].to_dict()
         self._verify_each(test_0, RECORD_TWO_FILES_EXPECTATIONS)
 
+    def test_collection_inputs(self):
+        self._init_tool_for_path(functional_test_tool_path("collection_paired_test.xml"))
+        test_dicts = self._parse_tests()
+        test_0 = test_dicts[0].to_dict()
+        self._verify_each(test_0, COLLECTION_TEST_PAIRED_EXPECTATIONS)
+
+    def test_collection_inputs_from_yaml(self):
+        self._init_tool_for_path(functional_test_tool_path("collection_paired_test_y.yml"))
+        test_dicts = self._parse_tests()
+        test_0 = test_dicts[0].to_dict()
+        self._verify_each(test_0, COLLECTION_TEST_PAIRED_Y_EXPECTATIONS)
+
     def test_bigwigtowig_converter(self):
         # defines
         if in_packages():
@@ -143,6 +167,15 @@ class TestTestParsing(TestCase):
         self._init_tool_for_path(tool_path)
         test_dicts = self._parse_tests()
         self._verify_each(test_dicts[1].to_dict(), BIGWIG_TO_WIG_EXPECTATIONS)
+
+    def test_harmonize_bare_ftype_output_check(self):
+        if in_packages():
+            skip("tool not available when running from packages")
+        tool_path = os.path.join(galaxy_directory(), "lib", "galaxy", "tools", "harmonize_two_collections_list.xml")
+        self._init_tool_for_path(tool_path)
+        test_dicts = [td.to_dict() for td in self._parse_tests()]
+        for td in test_dicts:
+            assert not td.get("exception"), f"Test failed to parse: {td.get('exception')}"
 
     def _verify_each(self, target_dict: dict, expectations: List[Any]):
         exception = target_dict.get("exception")

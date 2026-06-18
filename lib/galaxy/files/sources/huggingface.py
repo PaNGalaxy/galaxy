@@ -26,8 +26,8 @@ try:
         HfFileSystem,
     )
 except ImportError:
-    HfApi = None
-    HfFileSystem = None
+    HfApi = None  # type: ignore[misc, assignment, unused-ignore]
+    HfFileSystem = None  # type: ignore[misc, assignment, unused-ignore]
 
 from galaxy.exceptions import MessageException
 from galaxy.files.sources._fsspec import (
@@ -94,7 +94,7 @@ class HuggingFaceFilesSource(
             **cache_options,
         )
 
-    def _to_filesystem_path(self, path: str) -> str:
+    def _to_filesystem_path(self, path: str, config: HuggingFaceFileSourceConfiguration) -> str:
         """Transform entry path to Hugging Face filesystem path."""
         if path == "/":
             # Hugging Face does not implement access to the repositories root
@@ -155,7 +155,7 @@ class HuggingFaceFilesSource(
             endpoint=config.endpoint,
         )
         try:
-            repos_iter = api.list_models(search=query, sort=DEFAULT_SORT_BY, direction=-1, limit=MAX_REPO_LIMIT)
+            repos_iter = api.list_models(search=query, sort=DEFAULT_SORT_BY, limit=MAX_REPO_LIMIT)
 
             # Convert repositories to directory entries
             entries_list: list[AnyRemoteEntry] = []
