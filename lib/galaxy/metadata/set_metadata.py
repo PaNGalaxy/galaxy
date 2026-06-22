@@ -15,7 +15,6 @@ import glob
 import json
 import logging
 import os
-import sys
 import traceback
 from functools import partial
 from pathlib import Path
@@ -280,7 +279,7 @@ def set_metadata_portable(
 
         job_id_tag = metadata_params["job_id_tag"]
 
-        exit_code_file = default_exit_code_file(".", job_id_tag)
+        exit_code_file = default_exit_code_file(tool_job_working_directory, job_id_tag)
         tool_exit_code = read_exit_code_from(exit_code_file, job_id_tag)
 
         check_output_detected_state, tool_stdout, tool_stderr, job_messages = check_output(
@@ -393,7 +392,7 @@ def set_metadata_portable(
                 if filename and object_id:
                     unnamed_id_to_path[object_id] = os.path.join(job_context.job_working_directory, filename)
 
-    set_meta_ok = True
+    set_meta_error = ""
     for output_name, output_dict in outputs.items():
         dataset_instance_id = output_dict["id"]
         klass = getattr(galaxy.model, output_dict.get("model_class", "HistoryDatasetAssociation"))
@@ -438,7 +437,7 @@ def set_metadata_portable(
                         # purged output ?
                         dataset.purged = True
                         dataset.dataset.purged = True
-                        set_meta_ok = False
+                        set_meta_error += f"file does not exist: {dataset_filename_override}\n"
                     else:
                         raise Exception(f"Output file '{external_filename}' not found")
 
@@ -538,7 +537,7 @@ def set_metadata_portable(
         except Exception:
             with open(filename_results_code, "w+") as tf:
                 json.dump((False, traceback.format_exc()), tf)  # setting metadata has failed somehow
-            set_meta_ok = False
+            set_meta_error += traceback.format_exc()
         finally:
             for action in object_store_update_actions:
                 action()
@@ -557,8 +556,8 @@ def set_metadata_portable(
             # the jobs attrs file.
             export_store.export_job(job, include_job_data=False)
     write_job_metadata(tool_job_working_directory, job_metadata, set_meta, tool_provided_metadata)
-    if not set_meta_ok:
-        sys.exit(1)
+    if set_meta_error:
+        raise Exception(set_meta_error.strip())
 
 
 def validate_and_load_datatypes_config(datatypes_config):
@@ -569,10 +568,8 @@ def validate_and_load_datatypes_config(datatypes_config):
         datatypes_config = "configs/registry.xml"
 
     if not os.path.exists(datatypes_config):
-        print(
-            f"Metadata setting failed because registry.xml [{datatypes_config}] could not be found. You may retry setting metadata."
-        )
-        sys.exit(1)
+        raise Exception(f"Metadata setting failed because registry.xml [{datatypes_config}] could not be found. You may retry setting metadata.")
+
     datatypes_registry = galaxy.datatypes.registry.Registry()
     datatypes_registry.load_datatypes(
         root_dir=galaxy_root,
