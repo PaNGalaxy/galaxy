@@ -39,6 +39,11 @@ from . import (
 
 router = Router(tags=["authenticate"])
 
+GLOBUS_EXCHANGE_REFRESH_TOKEN_KEYS = {
+    "globus_iri": "preferences/globus_iri/refresh_token",
+    "globus_transfer": "preferences/globus_transfer/refresh_token",
+}
+
 
 class AuthenticationController(BaseGalaxyAPIController):
     authentication_service = depends(AuthenticationService)
@@ -74,7 +79,18 @@ class FastAPIAuthenticate:
 
 @router.cbv
 class FastAPITokenExchange:
-    def get_globus_token(self, trans: ProvidesAppContext, user) -> tuple[str, float]:
+    def _get_globus_refresh_token(self, user_vault: UserVaultWrapper, exchange_to: str) -> str:
+        refresh_token_key = GLOBUS_EXCHANGE_REFRESH_TOKEN_KEYS.get(exchange_to)
+        if not refresh_token_key:
+            raise RuntimeError(f"Unsupported Globus exchange target: {exchange_to}")
+
+        refresh_token = user_vault.read_secret(refresh_token_key)
+        if refresh_token:
+            return refresh_token
+
+        raise RuntimeError(f"Missing Globus refresh token for exchange target: {exchange_to}")
+
+    def get_globus_token(self, trans: ProvidesAppContext, user, exchange_to: str) -> tuple[str, float]:
         import globus_sdk
         from globus_sdk.exc import GlobusAPIError
 
@@ -83,16 +99,13 @@ class FastAPITokenExchange:
             raise RuntimeError("Missing Globus client_id in user preferences.")
 
         user_vault = UserVaultWrapper(trans.app.vault, user)
-        refresh_token = user_vault.read_secret("preferences/globus/refresh_token")
-        if not refresh_token:
-            raise RuntimeError("Missing Globus refresh token in user preferences.")
+        refresh_token = self._get_globus_refresh_token(user_vault, exchange_to)
 
         client = globus_sdk.NativeAppAuthClient(client_id)
         try:
             token_response = client.oauth2_refresh_token(refresh_token)
         except GlobusAPIError as exc:
             raise RuntimeError(f"Globus token refresh failed with HTTP {exc.http_status}.") from exc
-
 
         access_token = token_response.get("access_token", None)
         if not access_token:
@@ -137,13 +150,11 @@ class FastAPITokenExchange:
         if user is None:
             return self._error_response(f"No Galaxy user found for email: {email}")
 
-        if payload.exchange_to == "globus_iri":
+        if payload.exchange_to in ["globus_iri", "globus_transfer"]:
             try:
-                response, expires_at = self.get_globus_token(trans, user)
+                response, expires_at = self.get_globus_token(trans, user, payload.exchange_to)
             except Exception as exc:
                 return self._error_response(str(exc))
-        elif payload.exchange_to == "globus_transfer":
-            return self._error_response(f"NDIP token exchange to: {payload.exchange_to} is not implemented.")
         else:
             return self._error_response(f"NDIP token exchange to: {payload.exchange_to} is not implemented.")
 
