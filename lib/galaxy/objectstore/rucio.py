@@ -2,8 +2,8 @@ import hashlib
 import logging
 import os
 import shutil
-from typing import Optional
 import uuid
+from typing import Optional
 
 try:
     import rucio.common
@@ -192,13 +192,13 @@ username = {self.config['username']}
 
     def get_rucio_upload_client(self, auth_token=None):
         client = self.get_rucio_client()
-        uc = UploadClient(_client=client,logger=log)
+        uc = UploadClient(_client=client, logger=log)
         uc.auth_token = auth_token
         return uc
 
     def get_rucio_download_client(self, auth_token=None):
         client = self.get_rucio_client()
-        dc = DownloadClient(client=client,logger=log)
+        dc = DownloadClient(client=client, logger=log)
         dc.auth_token = auth_token
         return dc
 
@@ -241,7 +241,8 @@ username = {self.config['username']}
     def download(self, key, dest_path, auth_token):
         key = _encode_key(key)
         random_id = uuid.uuid4().hex
-        base_dir = os.path.join(os.path.dirname(dest_path), random_id)
+        base_dir = self.extra_dirs.get("temp_download", os.path.dirname(dest_path))
+        base_dir = os.path.join(base_dir, random_id)
         os.makedirs(base_dir, exist_ok=True)
 
         dids = [{"scope": self.scope, "name": key}]
@@ -558,7 +559,7 @@ class RucioObjectStore(CachingConcreteObjectStore):
         return
 
     def _update_from_file(
-        self, obj, file_name=None, create: bool = False, preserve_symlinks: bool = False, **kwargs
+            self, obj, file_name=None, create: bool = False, preserve_symlinks: bool = False, **kwargs
     ) -> None:
         rel_path = self._construct_path(obj, **kwargs)
         log.debug("rucio _update_from_file: %s", rel_path)
