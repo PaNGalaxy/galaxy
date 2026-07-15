@@ -53,6 +53,7 @@ const runningDataset = { ...mockDataset, state: "running" };
 const pausedDataset = { ...mockDataset, state: "paused" };
 // Dataset with preferred visualization
 const h5Dataset = { ...mockDataset, file_ext: "h5" };
+const previewBlobUrl = "blob:http://localhost/test-preview";
 
 function setupPinia(datasetStore) {
     const pinia = createTestingPinia({
@@ -193,6 +194,13 @@ describe("DatasetView", () => {
         }
         global.IntersectionObserver = IO;
         global.MutationObserver = IO;
+        global.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            headers: new Headers(),
+            blob: vi.fn().mockResolvedValue(new Blob(["preview data"], { type: "text/plain" })),
+        });
+        global.URL.createObjectURL = vi.fn().mockReturnValue(previewBlobUrl);
+        global.URL.revokeObjectURL = vi.fn();
         server.use(
             http.get("/api/datasets/:dataset_id", ({ response }) => {
                 return response(200).json(mockDataset);
@@ -323,17 +331,22 @@ describe("DatasetView", () => {
             expect(wrapper.find("iframe").exists()).toBe(false);
         });
 
-        it.skip("falls back to default preview for unsupported datatypes", async () => {
+        it("falls back to default preview for unsupported datatypes", async () => {
             const wrapper = await mountDatasetView("preview");
             await flushPromises(); // Wait for preferred visualization check
 
             // No preferred visualization should be set
-            expect(wrapper.vm.preferredVisualization).toBeNull();
+            expect(wrapper.vm.preferredVisualization).toBeUndefined();
 
             // Check that we're using the default iframe
             expect(wrapper.findComponent({ name: "VisualizationFrame" }).exists()).toBe(false);
             expect(wrapper.find("iframe").exists()).toBe(true);
-            expect(wrapper.find("iframe").attributes("src")).toBe(`/datasets/${DATASET_ID}/display/?preview=true`);
+            expect(global.fetch).toHaveBeenCalledWith(
+                `http://localhost/datasets/${DATASET_ID}/display/?preview=True`,
+                expect.objectContaining({ method: "GET" })
+            );
+            expect(global.URL.createObjectURL).toHaveBeenCalled();
+            expect(wrapper.find("iframe").attributes("src")).toBe(previewBlobUrl);
         });
     });
 
