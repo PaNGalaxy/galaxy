@@ -2,6 +2,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { getLocalVue } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
+import { HttpResponse, http as mswHttp } from "msw";
 import { setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import VueRouter from "vue-router";
@@ -178,8 +179,6 @@ async function mountLoadingDatasetView() {
             },
         },
     });
-
-    await flushPromises();
     return wrapper;
 }
 
@@ -193,12 +192,25 @@ describe("DatasetView", () => {
         }
         global.IntersectionObserver = IO;
         global.MutationObserver = IO;
+        // Mock URL.createObjectURL() because DatasetDisplay turns the fetched preview blob into an iframe src.
+        global.URL.createObjectURL = vi.fn(() => "blob:http://localhost/test-preview");
+        global.URL.revokeObjectURL = vi.fn();
         server.use(
             http.get("/api/datasets/:dataset_id", ({ response }) => {
                 return response(200).json(mockDataset);
             }),
             http.get("/api/configuration", ({ response }) => response(200).json({})),
             http.get("/api/plugins", ({ response }) => response(200).json([])),
+            // The real DatasetDisplay fetches the preview from the non-OpenAPI display endpoint on mount.
+            mswHttp.get("http://localhost/datasets/:dataset_id/display/", ({ request }) => {
+                expect(request.url).toContain("preview=True");
+                return HttpResponse.text("preview data", {
+                    status: 200,
+                    headers: {
+                        "content-type": "text/plain",
+                    },
+                });
+            }),
         );
     });
 
@@ -213,8 +225,8 @@ describe("DatasetView", () => {
         it("shows loading message when dataset is loading", async () => {
             const wrapper = await mountLoadingDatasetView();
             expect(wrapper.find(".loading-message").exists()).toBe(true);
-            expect(wrapper.find(".loading-message").text()).toBe("Loading...");
-            expect(wrapper.find(".dataset-view").exists()).toBe(true);
+            expect(wrapper.find(".loading-message").text()).toBe("Loading dataset details...");
+            expect(wrapper.find(".dataset-view").exists()).toBe(false);
         });
 
         it("renders dataset information", async () => {
@@ -323,17 +335,17 @@ describe("DatasetView", () => {
             expect(wrapper.find("iframe").exists()).toBe(false);
         });
 
-        it.skip("falls back to default preview for unsupported datatypes", async () => {
+        it("falls back to default preview for unsupported datatypes", async () => {
             const wrapper = await mountDatasetView("preview");
             await flushPromises(); // Wait for preferred visualization check
 
             // No preferred visualization should be set
-            expect(wrapper.vm.preferredVisualization).toBeNull();
+            expect(wrapper.vm.preferredVisualization).toBeUndefined();
 
             // Check that we're using the default iframe
             expect(wrapper.findComponent({ name: "VisualizationFrame" }).exists()).toBe(false);
             expect(wrapper.find("iframe").exists()).toBe(true);
-            expect(wrapper.find("iframe").attributes("src")).toBe(`/datasets/${DATASET_ID}/display/?preview=true`);
+            expect(wrapper.find("iframe").attributes("src")).toBe("blob:http://localhost/test-preview");
         });
     });
 
