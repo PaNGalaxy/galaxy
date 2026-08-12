@@ -311,20 +311,20 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
         return JobDestination(runner="pulsar", params=url_to_destination_params(url))
 
     def check_watched_item(self, job_state: AsynchronousJobState) -> Union[AsynchronousJobState, None]:
+        job_wrapper = job_state.job_wrapper
+        persisted_state = job_wrapper.get_state()
+        if persisted_state in model.Job.terminal_states + [model.Job.states.DELETING, model.Job.states.STOPPING]:
+            log.debug(
+                "(%s) Watched job in terminal or stopping state, will stop monitoring: %s",
+                job_state.job_id,
+                persisted_state,
+            )
+            return None
         if self.use_mq:
             # Might still need to check pod IPs.
-            job_wrapper = job_state.job_wrapper
             guest_ports = job_wrapper.guest_ports
             if len(guest_ports) > 0:
-                persisted_state = job_wrapper.get_state()
-                if persisted_state in model.Job.terminal_states + [model.Job.states.DELETING]:
-                    log.debug(
-                        "(%s) Watched job in terminal state, will stop monitoring: %s",
-                        job_state.job_id,
-                        persisted_state,
-                    )
-                    return None
-                elif persisted_state == model.Job.states.RUNNING:
+                if persisted_state == model.Job.states.RUNNING:
                     client = self.get_client_from_state(job_state)
                     job_ip = client.job_ip()
                     if job_ip:
@@ -400,17 +400,6 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             else:
                 message = LOST_REMOTE_ERROR
             if not job_state.job_wrapper.get_job().finished:
-                full_status = full_status or {}
-                for stream in ("stdout", "stderr"):
-                    if full_status.get(stream) is None:
-                        stream_path = os.path.join(
-                            job_state.job_wrapper.working_directory, "metadata", f"tool_{stream}"
-                        )
-                        try:
-                            with open(stream_path, "rb") as stream_file:
-                                full_status[stream] = unicodify(stream_file.read(), strip_null=True)
-                        except FileNotFoundError:
-                            pass
                 self.fail_job(job_state, message=message, full_status=full_status)
             return None
         if pulsar_status == "running" and not job_state.running:
@@ -753,6 +742,25 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
         # Turn MutableDict into standard dict for pulsar consumption
         job_destination_params = dict(job_destination_params.items())
         return self.client_manager.get_client(job_destination_params, **get_client_kwds)
+
+    def fail_job(
+        self,
+        job_state: JobState,
+        exception: bool = False,
+        message: str = "Job failed",
+        full_status: Union[dict[str, Any], None] = None,
+    ) -> None:
+        full_status = full_status or {}
+        for stream in ("stdout", "stderr"):
+            if full_status.get(stream) is None:
+                # Pulsar uploads live tool output to Galaxy's canonical outputs/ location.
+                stream_path = os.path.join(job_state.job_wrapper.working_directory, "outputs", f"tool_{stream}")
+                try:
+                    with open(stream_path, "rb") as stream_file:
+                        full_status[stream] = unicodify(stream_file.read(), strip_null=True)
+                except FileNotFoundError:
+                    pass
+        super().fail_job(job_state, exception=exception, message=message, full_status=full_status)
 
     def finish_job(self, job_state: JobState) -> None:
         assert isinstance(
