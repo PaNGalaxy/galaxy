@@ -349,6 +349,11 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             log.error("Communication error with Pulsar server on state check, will retry: %s", exc)
             return job_state
         except Exception:
+            log.exception(
+                "Unexpected error checking Pulsar job status for Galaxy job %s, remote job %s",
+                job_state.job_wrapper.job_id,
+                job_state.job_id,
+            )
             # An orphaned job was put into the queue at app startup, so remote server went down
             # either way we are done I guess.
             self.mark_as_finished(job_state)
@@ -368,6 +373,19 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
         flag_modified(job, "job_messages")
         job_wrapper.sa_session.add(job)
         self.sa_session.commit()
+
+    @staticmethod
+    def _local_tool_streams(job_wrapper):
+        streams = {}
+        outputs_directory = os.path.join(job_wrapper.working_directory, "outputs")
+        for stream in ("stdout", "stderr"):
+            path = os.path.join(outputs_directory, f"tool_{stream}")
+            try:
+                with open(path, "rb") as stream_file:
+                    streams[stream] = unicodify(stream_file.read(), strip_null=True)
+            except FileNotFoundError:
+                pass
+        return streams
 
     def _update_job_state_for_status(
             self,
@@ -395,6 +413,8 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             else:
                 message = LOST_REMOTE_ERROR
             if not job_state.job_wrapper.get_job().finished:
+                if full_status is None:
+                    full_status = self._local_tool_streams(job_state.job_wrapper)
                 self.fail_job(job_state, message=message, full_status=full_status)
             return None
         if pulsar_status == "running" and not job_state.running:
@@ -747,8 +767,8 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             client = self.get_client_from_state(job_state)
             run_results = client.full_status()
             remote_metadata_directory = run_results.get("metadata_directory", None)
-            tool_stdout = unicodify(run_results.get("stdout", ""), strip_null=True)
-            tool_stderr = unicodify(run_results.get("stderr", ""), strip_null=True)
+            tool_stdout = unicodify(run_results.get("stdout"), strip_null=True)
+            tool_stderr = unicodify(run_results.get("stderr"), strip_null=True)
             for file in ("tool_stdout", "tool_stderr"):
                 if tool_stdout and tool_stderr:
                     pass

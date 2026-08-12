@@ -1492,6 +1492,9 @@ class MinimalJobWrapper(HasResourceParameters):
                             log.warning("fail(): Missing output file in working directory: %s", unicodify(e))
             except Exception as e:
                 log.exception(str(e))
+            outputs_persisted_by_remote_metadata = self.external_output_metadata.extended and util.asbool(
+                self.get_destination_configuration("remote_metadata", False)
+            )
             for dataset_assoc in job.output_datasets + job.output_library_datasets:
                 dataset = dataset_assoc.dataset
                 self.sa_session.refresh(dataset)
@@ -1502,7 +1505,13 @@ class MinimalJobWrapper(HasResourceParameters):
                 if dataset.ext == "auto":
                     dataset.extension = "data"
                 try:
-                    self.__update_output(job, dataset)
+                    if dataset.dataset.purged or not outputs_persisted_by_remote_metadata:
+                        self.__update_output(job, dataset)
+                    else:
+                        log.debug(
+                            "(%s) fail(): Skipping local output update because extended remote metadata owns persistence",
+                            self.get_id_tag(),
+                        )
                 except Exception:
                     # Failure to update the output of a failed job should not prevent completion of the failure method
                     log.exception(
@@ -2142,11 +2151,23 @@ class MinimalJobWrapper(HasResourceParameters):
                         return fail(f"Job {job.id}'s output dataset(s) could not be read")
 
         job_context = ExpressionContext(dict(stdout=tool_stdout, stderr=tool_stderr))
-        if extended_metadata:
+        extended_metadata_directory = os.path.join(self.working_directory, "metadata", "outputs_populated")
+        missing_extended_metadata_for_failed_job = (
+            extended_metadata
+            and final_job_state == job.states.ERROR
+            and not os.path.isdir(extended_metadata_directory)
+        )
+        if missing_extended_metadata_for_failed_job:
+            log.warning(
+                "(%s) Skipping extended metadata import because the failed job did not produce %s",
+                job.id,
+                extended_metadata_directory,
+            )
+        elif extended_metadata:
             try:
                 import_options = store.ImportOptions(allow_dataset_object_edit=True, allow_edit=True)
                 import_model_store = store.get_import_model_store_for_directory(
-                    os.path.join(self.working_directory, "metadata", "outputs_populated"),
+                    extended_metadata_directory,
                     app=self.app,
                     import_options=import_options,
                     user=job.user,
