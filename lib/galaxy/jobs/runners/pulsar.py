@@ -374,19 +374,6 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
         job_wrapper.sa_session.add(job)
         self.sa_session.commit()
 
-    @staticmethod
-    def _local_tool_streams(job_wrapper):
-        streams = {}
-        outputs_directory = os.path.join(job_wrapper.working_directory, "outputs")
-        for stream in ("stdout", "stderr"):
-            path = os.path.join(outputs_directory, f"tool_{stream}")
-            try:
-                with open(path, "rb") as stream_file:
-                    streams[stream] = unicodify(stream_file.read(), strip_null=True)
-            except FileNotFoundError:
-                pass
-        return streams
-
     def _update_job_state_for_status(
             self,
             job_state: AsynchronousJobState,
@@ -413,8 +400,17 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             else:
                 message = LOST_REMOTE_ERROR
             if not job_state.job_wrapper.get_job().finished:
-                if full_status is None:
-                    full_status = self._local_tool_streams(job_state.job_wrapper)
+                full_status = full_status or {}
+                for stream in ("stdout", "stderr"):
+                    if full_status.get(stream) is None:
+                        stream_path = os.path.join(
+                            job_state.job_wrapper.working_directory, "metadata", f"tool_{stream}"
+                        )
+                        try:
+                            with open(stream_path, "rb") as stream_file:
+                                full_status[stream] = unicodify(stream_file.read(), strip_null=True)
+                        except FileNotFoundError:
+                            pass
                 self.fail_job(job_state, message=message, full_status=full_status)
             return None
         if pulsar_status == "running" and not job_state.running:
