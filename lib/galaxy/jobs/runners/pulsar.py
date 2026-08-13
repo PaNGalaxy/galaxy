@@ -311,20 +311,20 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
         return JobDestination(runner="pulsar", params=url_to_destination_params(url))
 
     def check_watched_item(self, job_state: AsynchronousJobState) -> Union[AsynchronousJobState, None]:
+        job_wrapper = job_state.job_wrapper
+        persisted_state = job_wrapper.get_state()
+        if persisted_state in model.Job.terminal_states + [model.Job.states.DELETING, model.Job.states.STOPPING]:
+            log.debug(
+                "(%s) Watched job in terminal or stopping state, will stop monitoring: %s",
+                job_state.job_id,
+                persisted_state,
+            )
+            return None
         if self.use_mq:
             # Might still need to check pod IPs.
-            job_wrapper = job_state.job_wrapper
             guest_ports = job_wrapper.guest_ports
             if len(guest_ports) > 0:
-                persisted_state = job_wrapper.get_state()
-                if persisted_state in model.Job.terminal_states + [model.Job.states.DELETING]:
-                    log.debug(
-                        "(%s) Watched job in terminal state, will stop monitoring: %s",
-                        job_state.job_id,
-                        persisted_state,
-                    )
-                    return None
-                elif persisted_state == model.Job.states.RUNNING:
+                if persisted_state == model.Job.states.RUNNING:
                     client = self.get_client_from_state(job_state)
                     job_ip = client.job_ip()
                     if job_ip:
@@ -349,6 +349,11 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             log.error("Communication error with Pulsar server on state check, will retry: %s", exc)
             return job_state
         except Exception:
+            log.exception(
+                "Unexpected error checking Pulsar job status for Galaxy job %s, remote job %s",
+                job_state.job_wrapper.job_id,
+                job_state.job_id,
+            )
             # An orphaned job was put into the queue at app startup, so remote server went down
             # either way we are done I guess.
             self.mark_as_finished(job_state)
@@ -738,6 +743,25 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
         job_destination_params = dict(job_destination_params.items())
         return self.client_manager.get_client(job_destination_params, **get_client_kwds)
 
+    def fail_job(
+        self,
+        job_state: JobState,
+        exception: bool = False,
+        message: str = "Job failed",
+        full_status: Union[dict[str, Any], None] = None,
+    ) -> None:
+        full_status = full_status or {}
+        for stream in ("stdout", "stderr"):
+            if full_status.get(stream) is None:
+                # Pulsar uploads live tool output to Galaxy's canonical outputs/ location.
+                stream_path = os.path.join(job_state.job_wrapper.working_directory, "outputs", f"tool_{stream}")
+                try:
+                    with open(stream_path, "rb") as stream_file:
+                        full_status[stream] = unicodify(stream_file.read(), strip_null=True)
+                except FileNotFoundError:
+                    pass
+        super().fail_job(job_state, exception=exception, message=message, full_status=full_status)
+
     def finish_job(self, job_state: JobState) -> None:
         assert isinstance(
             job_state, AsynchronousJobState
@@ -747,8 +771,8 @@ class PulsarJobRunner(AsynchronousJobRunner[AsynchronousJobState]):
             client = self.get_client_from_state(job_state)
             run_results = client.full_status()
             remote_metadata_directory = run_results.get("metadata_directory", None)
-            tool_stdout = unicodify(run_results.get("stdout", ""), strip_null=True)
-            tool_stderr = unicodify(run_results.get("stderr", ""), strip_null=True)
+            tool_stdout = unicodify(run_results.get("stdout"), strip_null=True)
+            tool_stderr = unicodify(run_results.get("stderr"), strip_null=True)
             for file in ("tool_stdout", "tool_stderr"):
                 if tool_stdout and tool_stderr:
                     pass

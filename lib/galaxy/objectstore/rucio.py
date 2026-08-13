@@ -543,7 +543,9 @@ class RucioObjectStore(CachingConcreteObjectStore):
             else:
                 if self._pull_into_cache(rel_path, auth_token=auth_token):
                     return cache_path
-        raise ObjectNotFound(f"objectstore.get_filename, no cache_path: {obj}, kwargs: {kwargs}")
+        raise ObjectNotFound(
+            f"rucio objectstore.get_filename, object not found: {obj}, rel_path: {rel_path}, cache_path: {cache_path}"
+        )
 
     def _register_file(self, rel_path, file_name):
         if file_name is None:
