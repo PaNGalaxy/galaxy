@@ -1199,14 +1199,15 @@ class JobHandlerStopQueue(BaseJobHandlerQueue):
                 # terminated before it got here
                 log.debug("Job %s already finished, not deleting or stopping", job.id)
                 continue
-            if job.state == job.states.DELETING:
-                self.__delete(job, error_msg)
-            elif job.state == job.states.STOPPING:
-                self.__stop(job)
+            requested_state = job.state
             if job.job_runner_name is not None:
                 # tell the dispatcher to stop the job
                 job_wrapper = JobWrapper(job, self, use_persisted_destination=True)
                 self.dispatcher.stop(job, job_wrapper)
+            if requested_state == job.states.DELETING:
+                self.__delete(job, error_msg)
+            elif requested_state == job.states.STOPPING:
+                self.__stop(job)
 
 
 class DefaultJobDispatcher:
