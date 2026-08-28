@@ -302,11 +302,17 @@ class PSAAuthnz(IdentityProvider):
            return False
 
         lock_id = hash(user_authnz_token.provider) & 0x7FFFFFFF
-        if not try_lock(trans.sa_session, lock_id):
-            log.debug("Another process is refreshing, skipping")
+        max_tries = 50
+        attempts = 0
+        while attempts < max_tries and not try_lock(trans.sa_session, lock_id):
+            attempts += 1
+            log.debug(f"Attempt {attempts}: another process is refreshing, waiting...")
+
+            time.sleep(0.1)
+        if attempts == max_tries:
+            log.debug(f"Failed to acquire refresh lock after {max_tries} attempts")
             return False
-        else:
-            log.debug("Acquired refresh lock")
+        log.debug("Acquired refresh lock")
         try:
             on_the_fly_config(trans.sa_session)
             if self.config["provider"] == "azure":
