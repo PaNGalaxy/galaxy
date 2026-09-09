@@ -357,7 +357,11 @@ class GalaxyWebTransaction(base.DefaultWebTransaction, context.ProvidesHistoryCo
             assert session_cookie
             self._ensure_valid_session(session_cookie)
 
-        if hasattr(self.app, "authnz_manager") and self.app.authnz_manager:
+        if (
+            hasattr(self.app, "authnz_manager")
+            and self.app.authnz_manager
+            and not self.request.path_info.startswith("/authnz/")
+        ):
             # Check for expiring tokens and refresh them. If configured (at the individual provider
             # level), require a reauthentication on failed refresh.
             reauth_provider = self.app.authnz_manager.refresh_expiring_oidc_tokens(self)
