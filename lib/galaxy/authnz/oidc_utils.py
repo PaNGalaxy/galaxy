@@ -20,6 +20,19 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def set_id_token_expiration(data: dict) -> None:
+    id_token = data.get("id_token")
+    if id_token:
+        decoded_token = jwt.decode(id_token, options={"verify_signature": False})
+        issued_at = decoded_token.get("iat")
+        expires_at = decoded_token.get("exp")
+        if issued_at is not None and expires_at is not None:
+            issued_at = int(issued_at)
+            data["id_token_iat"] = issued_at
+            id_token_expires_in = int(expires_at) - issued_at
+            data["id_token_expires_in"] = id_token_expires_in
+
+
 def is_oidc_backend(backend: "BaseAuth") -> TypeIs[OpenIdConnectAuth]:
     """
     Check if a PSA backend is OIDC-based.

@@ -6,7 +6,6 @@ from urllib.parse import quote
 
 import jwt
 from jwt import InvalidTokenError
-from msal import ConfidentialClientApplication
 from social_core.actions import (
     do_auth,
     do_complete,
@@ -59,9 +58,13 @@ log = logging.getLogger(__name__)
 
 
 def locate_token_expiration(extra_data):
-    expires = extra_data.get("expires", None) or extra_data.get("expires_in", None)
-    if expires:
-        return expires
+    expires_in = (
+        extra_data.get("id_token_expires_in", None)
+        or extra_data.get("expires_in", None)
+        or extra_data.get("expires", None)
+    )
+    if expires_in:
+        return expires_in
 
     refresh_token = extra_data.get("refresh_token")
     if refresh_token and isinstance(refresh_token, dict):
@@ -82,7 +85,7 @@ BACKENDS = {
     "einfracz": "social_core.backends.einfracz.EInfraCZOpenIdConnect",
     "nfdi": "social_core.backends.nfdi.InfraproxyOpenIdConnect",
     "okta": "social_core.backends.okta_openidconnect.OktaOpenIdConnect",
-    "azure": "social_core.backends.azuread_tenant.AzureADV2TenantOAuth2",
+    "azure": "galaxy.authnz.azure.GalaxyAzureADV2TenantOAuth2",
     "egi_checkin": "social_core.backends.egi_checkin.EGICheckinOpenIdConnect",
     "oidc": "galaxy.authnz.oidc.GalaxyOpenIdConnect",
     "tapis": "galaxy.authnz.tapis.TapisOAuth2",
@@ -264,24 +267,6 @@ class PSAAuthnz(IdentityProvider):
     def _login_user(self, backend, user, social_user):
         self.config["user"] = user
 
-    def refresh_azure(self, user_authnz_token):
-        logging.getLogger("msal").setLevel(logging.WARN)
-        old_extra_data = user_authnz_token.extra_data
-        app = ConfidentialClientApplication(
-            self.config["KEY"],
-            self.config["SECRET"],
-            authority="https://login.microsoftonline.com/" + self.config["TENANT_ID"],
-        )
-        extra_data = app.acquire_token_by_refresh_token(
-            old_extra_data["refresh_token"], scopes=["https://graph.microsoft.com/.default"]
-        )
-        decoded_token = jwt.decode(extra_data["id_token"], options={"verify_signature": False})
-        if "auth_time" not in extra_data:
-            extra_data["auth_time"] = decoded_token["iat"]
-        expires = decoded_token["exp"]
-        extra_data["expires"] = int(expires - time.time())
-        user_authnz_token.set_extra_data(extra_data)
-
     def refresh(self, trans, user_authnz_token):
         if (
             not user_authnz_token
@@ -290,13 +275,12 @@ class PSAAuthnz(IdentityProvider):
         ):
             return False
         # refresh tokens if they reached their half lifetime
-        expires = self._try_to_locate_refresh_token_expiration(user_authnz_token.extra_data)
-        if not expires:
-            log.debug("No `expires` or `expires_in` key found in token extra data, cannot refresh")
+        issued_at, expires_in = self._try_to_locate_token_expiration(user_authnz_token.extra_data)
+        if issued_at is None or expires_in is None:
             return False
 
         if not (
-            int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2
+            int(issued_at) + int(expires_in) / 2
             <= int(time.time())
         ):
            return False
@@ -309,11 +293,8 @@ class PSAAuthnz(IdentityProvider):
             log.debug("Acquired refresh lock")
         try:
             on_the_fly_config(trans.sa_session)
-            if self.config["provider"] == "azure":
-                self.refresh_azure(user_authnz_token)
-            else:
-                strategy = Strategy(trans.request, trans.session, Storage, self.config)
-                user_authnz_token.refresh_token(strategy)
+            strategy = Strategy(trans.request, trans.session, Storage, self.config)
+            user_authnz_token.refresh_token(strategy)
             log.debug(
                 f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"
             )
@@ -323,8 +304,20 @@ class PSAAuthnz(IdentityProvider):
         return True
 
 
-    def _try_to_locate_refresh_token_expiration(self, extra_data):
-        return locate_token_expiration(extra_data)
+    def _try_to_locate_token_expiration(self, extra_data):
+        expires_in = locate_token_expiration(extra_data)
+        if not expires_in:
+            log.debug("No `expires` or `expires_in` key found in token extra data, cannot refresh")
+            return None, None
+
+        issued_at = extra_data.get("id_token_iat")
+        if issued_at is None:
+            issued_at = extra_data.get("auth_time")
+        if issued_at is None:
+            log.debug("No token issuance time found in token extra data, cannot refresh")
+            return None, None
+
+        return issued_at, expires_in
 
     def authenticate(self, trans, idphint=None) -> "HttpResponseProtocol":
         on_the_fly_config(trans.sa_session)
