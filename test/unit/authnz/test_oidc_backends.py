@@ -164,7 +164,7 @@ class TestPingfedExtraData:
         assert extra_data["refresh_token"] == "refresh-token"
         assert extra_data["expires_in"] == 3600
 
-    def test_extra_data_calculates_expires_from_id_token(self):
+    def test_extra_data_calculates_id_token_expiration(self):
         strategy = MockStrategy()
         backend = PingfedOpenIdConnect(strategy, redirect_uri="http://localhost/callback")
         id_token = jwt.encode(
@@ -182,7 +182,9 @@ class TestPingfedExtraData:
         extra_data = backend.extra_data(None, "user-sub", response, {}, {})
 
         assert extra_data["refresh_token"] == "refresh-token"
-        assert extra_data["expires_in"] == 3600
+        assert extra_data["id_token_iat"] == 1710000000
+        assert extra_data["id_token_expires_in"] == 3600
+        assert extra_data["expires_in"] is None
 
 
 class TestKeycloakIDPHint:
