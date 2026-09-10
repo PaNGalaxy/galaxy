@@ -397,29 +397,29 @@ class AuthnzManager:
             return success, message, backend.callback(state_token, authz_code, trans, login_redirect_url)
         except exceptions.AuthenticationFailed:
             raise
-        except AuthCanceled:
+        except AuthCanceled as err:
             msg = f"Authentication with `{provider}` was canceled or the authorization code has expired. Please try logging in again."
-            log.warning(msg)
+            log.warning(f"{msg}: {str(err)}")
             return False, msg, (None, None)
-        except AuthAlreadyAssociated:
+        except AuthAlreadyAssociated as err:
             msg = (
                 f"The account from `{provider}` is already linked to a different Galaxy user. "
                 "Please log in to the Galaxy account that is already linked to this identity, "
                 "or use a different identity provider account."
             )
-            log.warning(msg)
+            log.warning(f"{msg}: {str(err)}")
             return False, msg, (None, None)
-        except AuthTokenError:
+        except AuthTokenError as err:
             msg = (
                 f"Authentication session with `{provider}` has expired or is invalid. "
                 "This can happen when using multiple browser tabs during login. "
                 "Please close other login tabs and try again."
             )
-            log.warning(msg)
+            log.warning(f"{msg}: {str(err)}")
             return False, msg, (None, None)
-        except Exception:
+        except Exception as err:
             msg = f"An error occurred when handling callback from `{provider}` identity provider.  Please contact an administrator for assistance."
-            log.exception(msg)
+            log.warning(f"{msg}: {str(err)}")
             return False, msg, (None, None)
 
     def create_user(self, provider: str, token: str, trans: ProvidesAppContext, login_redirect_url: str):
