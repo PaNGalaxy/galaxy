@@ -17,6 +17,7 @@ class KeycloakOpenIdConnect(GalaxyOpenIdConnect):
     """
 
     name = "keycloak"
+    EXTRA_DATA = GalaxyOpenIdConnect.EXTRA_DATA + ["expires_in"]
 
     def auth_params(self, state=None):
         """
