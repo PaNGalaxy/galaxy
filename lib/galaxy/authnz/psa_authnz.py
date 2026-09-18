@@ -293,7 +293,9 @@ class PSAAuthnz(IdentityProvider):
             log.debug("Acquired refresh lock")
         try:
             on_the_fly_config(trans.sa_session)
-            strategy = Strategy(trans.request, trans.session, Storage, self.config)
+            # Unlike authenticate/callback, refresh_token() never reads request or session data,
+            # and trans here may be a bare WorkRequestContext (e.g. job-handler contexts) without either.
+            strategy = Strategy(None, {}, Storage, self.config)
             user_authnz_token.refresh_token(strategy)
             log.debug(
                 f"Refreshed user token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider"

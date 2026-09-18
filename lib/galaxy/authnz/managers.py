@@ -327,7 +327,7 @@ class AuthnzManager:
             return {"refreshed": False, "reauthentication_required": True}
         except Exception as e:
             log.warning(f"An error occurred when refreshing user token: {e}")
-            return {"refreshed": False, "reauthentication_required": False}
+            return {"refreshed": False, "reauthentication_required": auth.provider == "keycloak"}
 
     def refresh_expiring_oidc_tokens(
         self, trans: GalaxyWebTransaction, user: Optional[model.User] = None
