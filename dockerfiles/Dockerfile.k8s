@@ -1,0 +1,17 @@
+ARG BASE_TAG=k8
+FROM savannah.ornl.gov/ndip/galaxy/base:${BASE_TAG}
+
+WORKDIR /galaxy
+COPY --chown=galaxy:galaxy . /galaxy
+
+RUN sed -i 's/^pulsar-galaxy-lib==.*/pulsar-galaxy-lib==0.15.14.dev4+ornl/' /galaxy/requirements.txt
+
+# rucio-clients (40.2.0) is installed in the base image; add the ORNL rucio-protocols plugin here.
+RUN . /galaxy/.venv/bin/activate \
+ && pip install \
+      --extra-index-url https://code.ornl.gov/api/v4/projects/11321/packages/pypi/simple \
+      --extra-index-url https://code.ornl.gov/api/v4/projects/13491/packages/pypi/simple \
+      rucio-protocols==0.5.4 \
+      pulsar-galaxy-lib==0.15.14.dev4+ornl
+
+CMD ["./run.sh"]
