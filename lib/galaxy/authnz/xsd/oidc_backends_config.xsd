@@ -16,6 +16,14 @@
                             </xs:documentation>
                         </xs:annotation>
                         <xs:all>
+                            <xs:element name="ldap_authorization" minOccurs="0">
+                                <xs:complexType>
+                                    <xs:all>
+                                        <xs:element name="authenticator" type="xs:string"/>
+                                        <xs:element name="denial_message" type="xs:string" minOccurs="0"/>
+                                    </xs:all>
+                                </xs:complexType>
+                            </xs:element>
                             <xs:element name="client_id" minOccurs="1" type="xs:string">
                                 <xs:annotation>
                                     <xs:documentation>

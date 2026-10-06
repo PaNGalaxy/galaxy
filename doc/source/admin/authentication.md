@@ -24,6 +24,31 @@ Leveraging OpenID Connect (OIDC) protocol, we enable login to Galaxy without exp
 
 The configuration is explained with provider-specific details at [User Authentication Configuration](https://galaxyproject.org/authnz/config/oidc/). How to authenticate from the user perspective we describe [here](https://galaxyproject.org/authnz/use/oidc/).
 
+### Restrict social login using LDAP groups
+
+Configure a named LDAP authenticator in `auth_conf.xml` and reference its name in
+the OIDC provider's `ldap_authorization/authenticator`; see both sample files.
+OIDC verifies the identity, then LDAP checks group membership with password
+verification skipped. Both must succeed. `search-memberof-filter` is a Python regex
+matched against the user's `memberOf` values; for example,
+`(?i)^cn=(galaxy-users|galaxy-admins),` allows either group.
+Omit `search-memberof-filter` to accept any matching LDAP entry without checking
+its groups; an explicitly empty filter is rejected. A user lookup then checks
+only existence, while a group lookup still requires at least one returned group.
+Use `<filter>False</filter>` to exclude
+this authenticator from ordinary password login; OIDC invokes it directly.
+
+For POSIX groups with the `ldap` provider, set `search-group-attribute` to `cn` and
+search for `(&(objectClass=posixGroup)(memberUid={username}))`. The regex then matches
+the returned group names, e.g. `^(galaxy-users|galaxy-admins)$`. See `auth_conf.xml.sample`.
+Omitting this option preserves the original user/`memberOf` lookup.
+
+The check runs on every social login and again before deferred account creation.
+With a group filter configured, non-members are denied. LDAP failures deny login;
+existing sessions are not rechecked.
+Re-run Galaxy's dependency installation for the configured LDAP library and restart
+Galaxy after configuration changes.
+
 ## Authentication Framework
 
 Galaxy is distributed with a plugin-driven authentication framework for which the default database authentication is
