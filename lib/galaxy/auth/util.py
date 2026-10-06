@@ -25,7 +25,7 @@ AUTH_CONF_XML = """<?xml version="1.0"?>
 </auth>
 """
 
-Authenticator = namedtuple("Authenticator", ["plugin", "filter_template", "options"])
+Authenticator = namedtuple("Authenticator", ["plugin", "filter_template", "options", "name"], defaults=[None])
 
 
 def get_authenticators(auth_config_file, auth_config_file_set):
@@ -68,6 +68,7 @@ def get_authenticators(auth_config_file, auth_config_file_set):
             plugin=plugin,
             filter_template=filter_template,
             options=options,
+            name=auth_elem.get("name"),
         )
         authenticators.append(authenticator)
     return authenticators
