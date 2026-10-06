@@ -141,36 +141,8 @@ tag-docker:
     - docker pull $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
     - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
     - docker push $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
-  when: manual
-  except:
-      - docker-base
-  tags:
-    - rse-multi-builder
-
-# Parallel k8s image (dockerfiles/Dockerfile.k8s*): runs as uid 1000 and bundles ORNL
-# pulsar-galaxy-lib and rucio-protocols. Manual, and never touches the tags above.
-# Rebuild the base only when its dependencies change; docker-k8 builds on base:k8.
-build-base-docker-k8:
-  stage: build-base
-  script:
-    - cp .dockerignore.full .dockerignore
-    - docker build -f dockerfiles/Dockerfile.k8s.full -t galaxy-base-k8 .
-    - docker tag galaxy-base-k8 $CONTAINER_GALAXY_BASE_URL:k8
-    - docker push $CONTAINER_GALAXY_BASE_URL:k8
-  when: manual
-  except:
-      - docker-base
-  tags:
-    - rse-multi-builder
-
-docker-k8:
-  stage: deploy
-  script:
-    - cp .dockerignore.src .dockerignore
-    - docker build -f dockerfiles/Dockerfile.k8s -t galaxy-k8 .
-    - docker tag galaxy-k8 $CONTAINER_GALAXY_COMMIT_URL:build-k8-$CI_COMMIT_SHORT_SHA
-    - docker tag galaxy-k8 $CONTAINER_GALAXY_URL:k8
-    - docker push $CONTAINER_GALAXY_COMMIT_URL:build-k8-$CI_COMMIT_SHORT_SHA
+    # floating tag calvera still pulls; drop once its deploys pin $GALAXY_VERSION_DOCKER
+    - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:k8
     - docker push $CONTAINER_GALAXY_URL:k8
   when: manual
   except:
