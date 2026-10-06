@@ -192,6 +192,8 @@ class AuthnzManager:
         }
         if config_xml.find("label") is not None:
             rtv["label"] = config_xml.find("label").text
+        if config_xml.find("ldap_authorization") is not None:
+            rtv["ldap_authorization"] = {child.tag: child.text for child in config_xml.find("ldap_authorization")}
         if config_xml.find("require_create_confirmation") is not None:
             rtv["require_create_confirmation"] = asbool(config_xml.find("require_create_confirmation").text)
         if config_xml.find("require_session_refresh") is not None:
@@ -395,8 +397,8 @@ class AuthnzManager:
             if success is False:
                 return False, message, (None, None)
             return success, message, backend.callback(state_token, authz_code, trans, login_redirect_url)
-        except exceptions.AuthenticationFailed:
-            raise
+        except exceptions.AuthenticationFailed as err:
+            return False, str(err), (None, None)
         except AuthCanceled as err:
             msg = f"Authentication with `{provider}` was canceled or the authorization code has expired. Please try logging in again."
             log.warning(f"{msg}: {str(err)}")
@@ -430,9 +432,8 @@ class AuthnzManager:
             if success is False:
                 return False, message, (None, None)
             return success, message, backend.create_user(token, trans, login_redirect_url)
-        except exceptions.AuthenticationFailed:
-            log.exception("Error creating user")
-            raise
+        except exceptions.AuthenticationFailed as err:
+            return False, str(err), (None, None)
         except Exception:
             msg = f"An error occurred when creating a user with `{provider}` identity provider.  Please contact an administrator for assistance."
             log.exception(msg)
