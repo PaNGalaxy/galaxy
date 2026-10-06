@@ -12,6 +12,7 @@ has external dependencies like openldap client libs. ldap3 is a pure Python LDAP
 """
 
 import logging
+import re
 from urllib.parse import urlparse
 
 from galaxy.exceptions import ConfigurationError
@@ -182,21 +183,31 @@ class LDAP(AuthProvider):
 
                 # setup search
                 attributes = {_.strip().format(**params) for _ in options["search-fields"].split(",")}
+                group_attribute = options.get("search-group-attribute")
                 if "search-memberof-filter" in options:
-                    attributes.add("memberOf")
+                    attributes.add(group_attribute or "memberOf")
                 suser = conn.search_ext_s(
                     _get_subs(options, "search-base", params),
                     ldap.SCOPE_SUBTREE,
                     _get_subs(options, "search-filter", params),
                     attributes,
                     timeout=60,
-                    sizelimit=1,
+                    sizelimit=0 if group_attribute else 1,
                 )
 
                 # parse results
                 if suser is None or len(suser) == 0:
                     log.warning("LDAP authenticate: search returned no results")
                     return (failure_mode, None)
+                if group_attribute:
+                    params["memberOf"] = [
+                        unicodify(group)
+                        for group_dn, group_attrs in suser
+                        if group_dn
+                        for group in group_attrs.get(group_attribute, [])
+                    ]
+                    conn.unbind_s()
+                    return failure_mode, params
                 dn, attrs = suser[0]
                 log.debug("LDAP authenticate: dn is %s", dn)
                 log.debug("LDAP authenticate: search attributes are %s", attrs)
@@ -244,8 +255,8 @@ class LDAP(AuthProvider):
 
         # check whether the user is a member of a specified group/domain/...
         if "search-memberof-filter" in options:
-            search_filter = _get_subs(options, "search-memberof-filter", params)
-            if not any(search_filter in ad_node_name for ad_node_name in params["memberOf"]):
+            group_pattern = re.compile(options["search-memberof-filter"])
+            if not any(group_pattern.search(group) for group in params["memberOf"]):
                 return failure_mode, "", ""
 
         attributes = {}

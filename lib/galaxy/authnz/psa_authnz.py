@@ -41,6 +41,7 @@ from galaxy.util import (
 )
 from galaxy.util.lock import try_lock, unlock
 from . import IdentityProvider
+from .ldap_authorization import authorize as authorize_ldap
 from .oidc_utils import (
     decode_access_token as decode_access_token_oidc,
     is_decodable_jwt,
@@ -130,6 +131,7 @@ AUTH_PIPELINE = (
     # as an ID token or a refresh token.
     "galaxy.authnz.psa_authnz.contains_required_data",
     "galaxy.authnz.psa_authnz.verify",
+    "galaxy.authnz.ldap_authorization.authorize",
     # Checks if the current social-account is already associated in the site.
     "social_core.pipeline.social_auth.social_user",
     # Make up a username for this person, appends a random string at the end if
@@ -234,6 +236,18 @@ class PSAAuthnz(IdentityProvider):
 
         # Galaxy-specific pipeline settings (affect all backends)
         self.config["REQUIRE_CREATE_CONFIRMATION"] = oidc_backend_config.get("require_create_confirmation", False)
+        self.config["LDAP_AUTHORIZATION"] = oidc_backend_config.get("ldap_authorization")
+        if self.config["LDAP_AUTHORIZATION"] is not None:
+            pipeline = list(self.config["SOCIAL_AUTH_PIPELINE"])
+            authorization_step = "galaxy.authnz.ldap_authorization.authorize"
+            pipeline = [step for step in pipeline if step != authorization_step]
+            details_step = "social_core.pipeline.social_auth.social_details"
+            if details_step not in pipeline:
+                raise galaxy_exceptions.ConfigurationError(
+                    "LDAP authorization requires social_details in the authentication pipeline"
+                )
+            pipeline.insert(pipeline.index(details_step) + 1, authorization_step)
+            self.config["SOCIAL_AUTH_PIPELINE"] = tuple(pipeline)
 
         # Optional generic settings
         if oidc_backend_config.get("prompt") is not None:
@@ -538,6 +552,12 @@ class PSAAuthnz(IdentityProvider):
 
         # Decode without verification (already verified during initial auth)
         userinfo = jwt.decode(id_token, options={"verify_signature": False})
+
+        if self.config.get("LDAP_AUTHORIZATION") is not None:
+            self.config["GALAXY_TRANS"] = trans
+            strategy = Strategy(None, {}, Storage, self.config)
+            backend = self._load_backend(strategy, self.config["redirect_uri"])
+            authorize_ldap(strategy, backend.get_user_details(userinfo))
 
         email = userinfo.get("email")
         assert email is not None

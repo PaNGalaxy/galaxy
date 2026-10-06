@@ -27,6 +27,15 @@ _______________
 - icon:             Image to be displayed on the login button.
 
 - require_create_confirmation:            A boolean value that decides whether a NewUserConfirmation page shows up.
+- ldap_authorization:                    Require a named LDAP authenticator after social login; see auth_conf.xml.sample.
+
+LDAP example: add this inside the PingFed provider, with username_key set to
+the claim containing the LDAP uid (e.g. preferred_username):
+
+    <ldap_authorization>
+        <authenticator>ldap-groups</authenticator>
+        <denial_message>Your account is not authorized for Galaxy. Contact support to request access.</denial_message>
+    </ldap_authorization>
 
 - require_session_refresh:                A boolean value that decides whether failed token refresh requires the
                                           user to reauthenticate with this provider.

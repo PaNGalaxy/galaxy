@@ -1,5 +1,36 @@
 <?xml version="1.0"?>
 <auth>
+<!-- LDAP group authorization after OIDC login. Reference this name from the
+     provider's ldap_authorization/authenticator in oidc_backends_config.xml.
+     filter=False excludes this entry from ordinary password login; the OIDC
+     bridge invokes it directly with password verification disabled.
+
+    <authenticator name="ldap-groups">
+        <type>ldap</type>
+        <filter>False</filter>
+        <options>
+            <server>ldaps://ldap.example.org</server>
+            <search-base>dc=example,dc=org</search-base>
+            <search-filter>(uid={username})</search-filter>
+            <search-fields>uid</search-fields>
+            <search-memberof-filter>(?i)^cn=(galaxy-users|galaxy-admins),</search-memberof-filter>
+            <login-use-username>True</login-use-username>
+            <auto-register-username>{uid}</auto-register-username>
+            <auto-register-email>{email}</auto-register-email>
+        </options>
+    </authenticator>
+-->
+<!-- For POSIX groups with the ldap provider, replace the search options in the
+     OIDC-only authenticator above with these. All returned cn values are checked;
+     the regex matches group names, not DNs. Omit search-group-attribute to retain
+     the original single-user/memberOf lookup.
+
+    <search-filter>(&amp;(objectClass=posixGroup)(memberUid={username}))</search-filter>
+    <search-fields>cn</search-fields>
+    <search-group-attribute>cn</search-group-attribute>
+    <search-memberof-filter>(?i)^(galaxy-users|galaxy-admins)$</search-memberof-filter>
+    <auto-register-username>{username}</auto-register-username>
+-->
 <!--<authenticator>
         <type>ldap</type>
 -->
@@ -85,11 +116,15 @@
             <!-- If login-use-username is True -->
 <!--        <search-filter>(&amp;(objectClass=user)(sAMAccountName={username}))</search-filter>
 -->
-            <!-- Only allow authentication when the user is a member of the given (CN, DN, ...)
-                 The given string will be searched for in each of the memberOf entries returned by
-                 the LDAP search (case sensitive). Partial hits are allowed so be as precise as
-                 possible -->
-<!--        <search-memberof-filter>galaxyGroup</search-memberof-filter>
+            <!-- Match memberOf entries using a Python regular expression.
+                 LDAP returns DNs such as cn=galaxy-users,ou=Groups,dc=example,dc=org.
+                 (?i) ignores case; ^cn= matches the leading Common Name;
+                 (galaxy-users|galaxy-admins), matches either complete group name.
+                 For substring matching, use galaxy-users|galaxy-admins instead.
+                 For OIDC existence-only authorization, omit this option entirely;
+                 an explicitly empty option is rejected by the OIDC bridge.
+                 The pattern is used directly, without replacement fields. -->
+<!--        <search-memberof-filter>(?i)^cn=(galaxy-users|galaxy-admins),</search-memberof-filter>
 -->
 <!--        <search-user>jsmith@dc1.example.com</search-user>
             <search-password>mysecret</search-password>
