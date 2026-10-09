@@ -1,6 +1,6 @@
 stages:
-  - build
   - build-base
+  - build
   - deploy
   - test
 
@@ -29,19 +29,26 @@ service-build:
   stage: build
   script:
     - cp .dockerignore.src .dockerignore
-    - >    
+    # this branch's own base if build-base-docker pushed one, else the shared base:latest
+    - |
+      BASE_TAG=latest
+      if docker manifest inspect $CONTAINER_GALAXY_BASE_URL:$CI_COMMIT_REF_SLUG > /dev/null 2>&1; then
+        BASE_TAG=$CI_COMMIT_REF_SLUG
+      fi
+      echo "Building on base:$BASE_TAG"
+    - >
       docker build
-      -f dockerfiles/Dockerfile 
+      --build-arg BASE_TAG=$BASE_TAG
+      -f dockerfiles/Dockerfile
       -t galaxy .
     - docker tag galaxy $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
     - docker push $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
   tags:
     - rse-multi-builder
-  except:
-      - docker-base
 
 client-tests:
   stage: test
+  needs: [service-build]
   script:
     - >    
       docker run
@@ -50,8 +57,6 @@ client-tests:
       bash -c "make client-test"
   tags:
     - rse-multi-builder
-  except:
-      - docker-base
 
 #api-tests:
 #  stage: test
@@ -68,12 +73,11 @@ client-tests:
 #    - docker rm -f postgres
 #  tags:
 #    - rse-multi-builder
-#  except:
-#      - docker-base
 
 
 unit-tests:
   stage: test
+  needs: [service-build]
   variables:
     # Tool Shed fixture SQLite database is not always available/extractable in CI.
     GALAXY_UNIT_TEST_SKIP_EXPRESSION: "not test_build_index and not postgres_app"
@@ -85,29 +89,43 @@ unit-tests:
       bash -c "GALAXY_SKIP_EXTERNAL_DEPENDENCY_MANAGEMENT=1 ./run_tests.sh -unit 'lib test/unit' -- -k '$GALAXY_UNIT_TEST_SKIP_EXPRESSION'"
   tags:
     - rse-multi-builder
-  except:
-      - docker-base
 
 build-base-docker:
   stage: build-base
-  only:
-    - docker-base
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^(dev|main)$/
+      changes:
+        - dockerfiles/Dockerfile.full
+        - requirements.txt
+        - lib/galaxy/dependencies/pinned-requirements.txt
+        - client/package.json
+        - client/pnpm-lock.yaml
+    - if: $CI_COMMIT_BRANCH
+      when: manual
+      allow_failure: true
   script:
     - cp .dockerignore.full .dockerignore
     - >    
       docker build
       -f dockerfiles/Dockerfile.full
       -t galaxy-base .
-    - docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
-    - docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:latest
-    - docker push $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
-    - docker push $CONTAINER_GALAXY_BASE_URL:latest
+    - |
+      if [[ "$CI_COMMIT_BRANCH" =~ ^(dev|main)$ ]]; then
+        docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
+        docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:latest
+        docker push $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
+        docker push $CONTAINER_GALAXY_BASE_URL:latest
+      else
+        docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:$CI_COMMIT_REF_SLUG
+        docker push $CONTAINER_GALAXY_BASE_URL:$CI_COMMIT_REF_SLUG
+      fi
   tags:
     - rse-multi-builder
 
 
 package:
   stage: deploy
+  needs: [service-build]
   script:
     - >
       docker run
@@ -130,19 +148,19 @@ package:
       TWINE_PASSWORD="${CI_JOB_TOKEN}" TWINE_USERNAME=gitlab-ci-token python3 -m twine upload --repository-url "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi" ./*/dist/*
       '
   when: manual
-  except:
-      - docker-base
   tags:
     - rse-multi-builder
 
 tag-docker:
   stage: deploy
+  needs: [service-build]
   script:
     - docker pull $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
     - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
     - docker push $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
+    # floating tag calvera still pulls; drop once its deploys pin $GALAXY_VERSION_DOCKER
+    - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:k8
+    - docker push $CONTAINER_GALAXY_URL:k8
   when: manual
-  except:
-      - docker-base
   tags:
     - rse-multi-builder
