@@ -29,9 +29,17 @@ service-build:
   stage: build
   script:
     - cp .dockerignore.src .dockerignore
-    - >    
+    # this branch's own base if build-base-docker pushed one, else the shared base:latest
+    - |
+      BASE_TAG=latest
+      if docker manifest inspect $CONTAINER_GALAXY_BASE_URL:$CI_COMMIT_REF_SLUG > /dev/null 2>&1; then
+        BASE_TAG=$CI_COMMIT_REF_SLUG
+      fi
+      echo "Building on base:$BASE_TAG"
+    - >
       docker build
-      -f dockerfiles/Dockerfile 
+      --build-arg BASE_TAG=$BASE_TAG
+      -f dockerfiles/Dockerfile
       -t galaxy .
     - docker tag galaxy $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
     - docker push $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
@@ -84,17 +92,15 @@ unit-tests:
 
 build-base-docker:
   stage: build-base
-  # dev/main/k8s-support only: base:latest is shared. Automatic when the base's inputs change, else manual.
-  # TODO: drop k8s-support once it's merged.
   rules:
-    - if: $CI_COMMIT_BRANCH =~ /^(dev|main|k8s-support)$/
+    - if: $CI_COMMIT_BRANCH =~ /^(dev|main)$/
       changes:
         - dockerfiles/Dockerfile.full
         - requirements.txt
         - lib/galaxy/dependencies/pinned-requirements.txt
         - client/package.json
         - client/pnpm-lock.yaml
-    - if: $CI_COMMIT_BRANCH =~ /^(dev|main|k8s-support)$/
+    - if: $CI_COMMIT_BRANCH
       when: manual
       allow_failure: true
   script:
@@ -103,10 +109,16 @@ build-base-docker:
       docker build
       -f dockerfiles/Dockerfile.full
       -t galaxy-base .
-    - docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
-    - docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:latest
-    - docker push $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
-    - docker push $CONTAINER_GALAXY_BASE_URL:latest
+    - |
+      if [[ "$CI_COMMIT_BRANCH" =~ ^(dev|main)$ ]]; then
+        docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
+        docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:latest
+        docker push $CONTAINER_GALAXY_BASE_URL:$GALAXY_VERSION_DOCKER
+        docker push $CONTAINER_GALAXY_BASE_URL:latest
+      else
+        docker tag galaxy-base $CONTAINER_GALAXY_BASE_URL:$CI_COMMIT_REF_SLUG
+        docker push $CONTAINER_GALAXY_BASE_URL:$CI_COMMIT_REF_SLUG
+      fi
   tags:
     - rse-multi-builder
 
