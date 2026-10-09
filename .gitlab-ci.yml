@@ -1,6 +1,6 @@
 stages:
-  - build
   - build-base
+  - build
   - deploy
   - test
 
@@ -27,6 +27,9 @@ after_script:
 
 service-build:
   stage: build
+  needs:
+    - job: build-base-docker
+      optional: true
   script:
     - cp .dockerignore.src .dockerignore
     - >    
@@ -37,8 +40,6 @@ service-build:
     - docker push $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
   tags:
     - rse-multi-builder
-  except:
-      - docker-base
 
 client-tests:
   stage: test
@@ -50,8 +51,6 @@ client-tests:
       bash -c "make client-test"
   tags:
     - rse-multi-builder
-  except:
-      - docker-base
 
 #api-tests:
 #  stage: test
@@ -68,8 +67,6 @@ client-tests:
 #    - docker rm -f postgres
 #  tags:
 #    - rse-multi-builder
-#  except:
-#      - docker-base
 
 
 unit-tests:
@@ -85,13 +82,22 @@ unit-tests:
       bash -c "GALAXY_SKIP_EXTERNAL_DEPENDENCY_MANAGEMENT=1 ./run_tests.sh -unit 'lib test/unit' -- -k '$GALAXY_UNIT_TEST_SKIP_EXPRESSION'"
   tags:
     - rse-multi-builder
-  except:
-      - docker-base
 
 build-base-docker:
   stage: build-base
-  only:
-    - docker-base
+  # dev/main/k8s-support only: base:latest is shared. Automatic when the base's inputs change, else manual.
+  # TODO: drop k8s-support once it's merged.
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^(dev|main|k8s-support)$/
+      changes:
+        - dockerfiles/Dockerfile.full
+        - requirements.txt
+        - lib/galaxy/dependencies/pinned-requirements.txt
+        - client/package.json
+        - client/pnpm-lock.yaml
+    - if: $CI_COMMIT_BRANCH =~ /^(dev|main|k8s-support)$/
+      when: manual
+      allow_failure: true
   script:
     - cp .dockerignore.full .dockerignore
     - >    
@@ -130,8 +136,6 @@ package:
       TWINE_PASSWORD="${CI_JOB_TOKEN}" TWINE_USERNAME=gitlab-ci-token python3 -m twine upload --repository-url "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi" ./*/dist/*
       '
   when: manual
-  except:
-      - docker-base
   tags:
     - rse-multi-builder
 
@@ -145,7 +149,5 @@ tag-docker:
     - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:k8
     - docker push $CONTAINER_GALAXY_URL:k8
   when: manual
-  except:
-      - docker-base
   tags:
     - rse-multi-builder
