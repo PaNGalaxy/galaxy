@@ -562,18 +562,27 @@ def send_file(start_response, trans, body):
     # Fall back on sending the file in chunks
     else:
         trans.response.headers["accept-ranges"] = "bytes"
+        file_size = os.path.getsize(body.name)
         start = None
         end = None
         if trans.request.method == "HEAD":
-            trans.response.headers["content-length"] = os.path.getsize(body.name)
+            trans.response.headers["content-length"] = str(file_size)
             body = b""
-        if trans.request.range:
+        elif trans.request.range:
             start = int(trans.request.range.start)
-            file_size = int(trans.response.headers["content-length"])
-            end = int(file_size if end is None else trans.request.range.end)
-            trans.response.headers["content-length"] = str(end - start)
-            trans.response.headers["content-range"] = f"bytes {start}-{end - 1}/{file_size}"
-            trans.response.status = 206
+            end = file_size if trans.request.range.end is None else min(int(trans.request.range.end), file_size)
+            if start >= file_size:
+                trans.response.headers["content-range"] = f"bytes */{file_size}"
+                trans.response.headers["content-length"] = "0"
+                trans.response.status = 416
+                start = None
+                body = b""
+            else:
+                trans.response.headers["content-length"] = str(end - start)
+                trans.response.headers["content-range"] = f"bytes {start}-{end - 1}/{file_size}"
+                trans.response.status = 206
+        else:
+            trans.response.headers["content-length"] = str(file_size)
         if body:
             body = iterate_file(body, start, end)
     start_response(trans.response.wsgi_status(), trans.response.wsgi_headeritems())
