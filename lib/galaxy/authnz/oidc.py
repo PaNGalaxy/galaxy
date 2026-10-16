@@ -44,6 +44,11 @@ class GalaxyOpenIdConnect(OpenIdConnectAuth):
         # Check if PKCE is enabled via strategy config
         self.PKCE_ENABLED = self.setting("PKCE_SUPPORT", False)
 
+    def get_user_details(self, response):
+        details = super().get_user_details(response)
+        details["ldap_username"] = details.get("username") or ""
+        return details
+
     def auth_params(self, state=None):
         """
         Add Galaxy-specific parameters to the authorization request.
