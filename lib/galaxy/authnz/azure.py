@@ -12,6 +12,11 @@ from galaxy.authnz.oidc_utils import set_id_token_expiration
 class GalaxyAzureADV2TenantOAuth2(AzureADV2TenantOAuth2):
     name = "azuread-v2-tenant-oauth2"
 
+    def get_user_details(self, response):
+        details = super().get_user_details(response)
+        details["ldap_username"] = (details.get("email") or "").split("@", 1)[0]
+        return details
+
     def extra_data(self, user, uid, response, details, pipeline_kwargs):
         data = super().extra_data(user, uid, response, details, pipeline_kwargs)
         set_id_token_expiration(data)
