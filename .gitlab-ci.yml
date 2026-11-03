@@ -155,10 +155,19 @@ tag-docker:
   stage: deploy
   needs: [service-build]
   script:
+    # prod pins version tags, so never overwrite one: bump GALAXY_VERSION_DOCKER instead
+    - |
+      if out=$(docker manifest inspect $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER 2>&1); then
+        echo "$CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER already exists; bump GALAXY_VERSION_DOCKER/GALAXY_VERSION_PYTHON"
+        exit 1
+      elif ! echo "$out" | grep -qiE "no such manifest|manifest unknown|not found"; then
+        echo "can't check whether $GALAXY_VERSION_DOCKER exists: $out"
+        exit 1
+      fi
     - docker pull $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
     - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
     - docker push $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
-    # floating tag calvera still pulls; drop once its deploys pin $GALAXY_VERSION_DOCKER
+    # floating tag the test stack follows
     - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:k8
     - docker push $CONTAINER_GALAXY_URL:k8
   when: manual
