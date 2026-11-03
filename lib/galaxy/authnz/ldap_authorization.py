@@ -15,8 +15,7 @@ def authorize(strategy, details, **kwargs):
     config = strategy.config.get("LDAP_AUTHORIZATION")
     if config is None:
         return
-    if strategy.config["provider"] == "azure":
-        details = {**details, "username": (details.get("email") or "").split("@", 1)[0]}
+    details = {**details, "username": details.get("ldap_username", details.get("username"))}
     trans = strategy.config["GALAXY_TRANS"]
     try:
         allowed_authenticator_names = map(str.strip, config["authenticator"].split(","))
@@ -32,7 +31,8 @@ def authorize(strategy, details, **kwargs):
             if not options.get("search-fields"):
                 raise ValueError("LDAP authorization requires search-fields for the directory lookup")
             identity_field = "username" if string_as_bool(options.get("login-use-username", False)) else "email"
-            if not details.get(identity_field):
+            identity = details.get(identity_field)
+            if not identity:
                 raise ValueError("LDAP authorization identity is missing")
             from ldap.filter import escape_filter_chars
 
@@ -47,7 +47,7 @@ def authorize(strategy, details, **kwargs):
                 log.debug(
                     "LDAP authorization approved login for provider %r, identity %r",
                     strategy.config["provider"],
-                    details.get(identity_field),
+                    identity,
                 )
                 return
     except Exception as error:

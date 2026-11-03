@@ -12,7 +12,7 @@ aiohttp==3.13.5
 aioitertools==0.13.0
 aiosignal==1.4.0
 alembic==1.18.4
-amqp==5.3.1
+amqp==5.4.2
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anthropic==0.102.0
@@ -137,7 +137,7 @@ jsonschema==4.26.0
 jsonschema-path==0.4.6
 jsonschema-specifications==2025.9.1
 keyring==25.7.0
-kombu==5.6.2
+kombu==5.7.0
 lagom==2.7.7
 legacy-cgi==2.6.4 ; python_full_version >= '3.13'
 limits==5.8.0

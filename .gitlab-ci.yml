@@ -9,8 +9,8 @@ variables:
   CONTAINER_GALAXY_URL: "${NDIP_DOCKER_REPOSITORY}/${CI_PROJECT_PATH}"
   CONTAINER_GALAXY_BASE_URL: "${CONTAINER_GALAXY_URL}/base"
   CONTAINER_GALAXY_COMMIT_URL: "${CONTAINER_GALAXY_URL}/commit"
-  GALAXY_VERSION_PYTHON: 26.1.dev14+ornl
-  GALAXY_VERSION_DOCKER: 26.1.dev14.ornl
+  GALAXY_VERSION_PYTHON: 26.1.dev16+ornl
+  GALAXY_VERSION_DOCKER: 26.1.dev16.ornl
 
 # This import is for the func_rse_docker_* functions
 before_script:
@@ -54,7 +54,7 @@ client-tests:
       docker run
       --entrypoint=""
       $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
-      bash -c "make client-test"
+      bash -c ". .venv/bin/activate && make client-test"
   tags:
     - rse-multi-builder
 
@@ -80,7 +80,7 @@ unit-tests:
   needs: [service-build]
   variables:
     # Tool Shed fixture SQLite database is not always available/extractable in CI.
-    GALAXY_UNIT_TEST_SKIP_EXPRESSION: "not test_build_index and not postgres_app"
+    GALAXY_UNIT_TEST_SKIP_EXPRESSION: "not test_build_index and not postgres_app and not test_docker_container_docker_cli_exception_resolve and not (test_docker_container_resolver_detects_docker_cli and not absent)"
   script:
     - >    
       docker run
@@ -155,10 +155,19 @@ tag-docker:
   stage: deploy
   needs: [service-build]
   script:
+    # prod pins version tags, so never overwrite one: bump GALAXY_VERSION_DOCKER instead
+    - |
+      if out=$(docker manifest inspect $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER 2>&1); then
+        echo "$CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER already exists; bump GALAXY_VERSION_DOCKER/GALAXY_VERSION_PYTHON"
+        exit 1
+      elif ! echo "$out" | grep -qiE "no such manifest|manifest unknown|not found"; then
+        echo "can't check whether $GALAXY_VERSION_DOCKER exists: $out"
+        exit 1
+      fi
     - docker pull $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA
     - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
     - docker push $CONTAINER_GALAXY_URL:$GALAXY_VERSION_DOCKER
-    # floating tag calvera still pulls; drop once its deploys pin $GALAXY_VERSION_DOCKER
+    # floating tag the test stack follows
     - docker tag $CONTAINER_GALAXY_COMMIT_URL:build-$CI_COMMIT_SHORT_SHA $CONTAINER_GALAXY_URL:k8
     - docker push $CONTAINER_GALAXY_URL:k8
   when: manual

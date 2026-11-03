@@ -1,0 +1,115 @@
+global:
+  default_inherits: default
+
+tools:
+  default:
+    context:
+      ldap_groups:
+        - SNS_Neutron
+    rules:
+      - id: log_public_tool_access
+        if: ldap_groups == "any"
+        execute: |
+          import logging
+
+          logging.getLogger("tpv.ldap_access").debug("Tool %s allowed: ldap_groups=any", tool.id)
+      - id: authorize_tool_ldap_groups
+        if: ldap_groups != "any"
+        execute: |
+          import logging
+          import re
+
+          import jwt
+
+          from galaxy.auth.providers.ldap_ad import LDAP
+          from galaxy.authnz.psa_authnz import Storage, Strategy
+          from galaxy.jobs.mapper import JobMappingException
+          from galaxy.util import string_as_bool
+          from ldap.filter import escape_filter_chars
+
+          ldap_log = logging.getLogger("tpv.ldap_access")
+          if user is None:
+              ldap_log.debug("Tool %s denied: anonymous user", tool.id)
+              raise JobMappingException("You must sign in to run this tool.")
+
+          if not isinstance(ldap_groups, list) or not all(isinstance(group, str) and group for group in ldap_groups):
+              ldap_log.debug("Tool %s denied: invalid ldap_groups configuration", tool.id)
+              raise JobMappingException("Invalid ldap_groups configuration for this tool.")
+          allowed_groups = set(ldap_groups)
+          group_names = "|".join(re.escape(group) for group in sorted(allowed_groups))
+          group_pattern = rf"^(?:{group_names})$|^(?i:cn)=(?:{group_names}),"
+          ldap_authorizations = []
+          for association in user.social_auth:
+              try:
+                  if not association.provider or app.authnz_manager is None:
+                      continue
+                  success, message, provider = app.authnz_manager._get_authnz_backend(association.provider)
+                  if not success or provider is None:
+                      raise ValueError("OIDC provider is unavailable")
+                  config = provider.config.get("LDAP_AUTHORIZATION")
+                  if config is None:
+                      continue
+                  id_token = (association.extra_data or {}).get("id_token")
+                  if not id_token:
+                      raise ValueError("Stored OIDC identity has no ID token")
+                  claims = jwt.decode(id_token, options={"verify_signature": False})
+                  strategy = Strategy(None, {}, Storage, provider.config)
+                  backend = provider._load_backend(strategy, provider.config["redirect_uri"])
+                  details = backend.get_user_details(claims)
+                  authenticator_names = {name.strip() for name in config["authenticator"].split(",")}
+                  ldap_authorizations.extend(
+                      (authenticator, details) for authenticator in app.auth_manager.authenticators
+                      if authenticator.name in authenticator_names and isinstance(authenticator.plugin, LDAP)
+                  )
+              except Exception as error:
+                  ldap_log.warning(
+                      "Cannot resolve stored LDAP identity for provider=%r (%s)",
+                      association.provider, type(error).__name__,
+                  )
+          authorized = False
+          for authenticator, ldap_identity in ldap_authorizations:
+              try:
+                  options = dict(authenticator.options, no_password_check=True, redact_username_in_logs=True)
+                  if not options.get("search-fields"):
+                      raise ValueError("LDAP authorization requires search-fields")
+                  options["search-memberof-filter"] = group_pattern
+                  email = ldap_identity.get("email") or ""
+                  username = ldap_identity.get("ldap_username", ldap_identity.get("username")) or ""
+                  identity = username if string_as_bool(options.get("login-use-username", False)) else email
+                  if not identity:
+                      continue
+                  lookup_identity = {"email": escape_filter_chars(email), "username": escape_filter_chars(username)}
+                  result = type(authenticator.plugin)().authenticate(
+                      email=lookup_identity["email"],
+                      username=lookup_identity["username"],
+                      password=None,
+                      options=options,
+                      request=None,
+                  )
+                  if result[0] is True:
+                      ldap_log.debug(
+                          "Tool %s allowed by LDAP server %s (authenticator=%s, job=%s)",
+                          tool.id, options.get("server"), authenticator.name, getattr(job, "id", None),
+                      )
+                      authorized = True
+                      break
+              except Exception as error:
+                  ldap_log.warning(
+                      "LDAP authenticator=%r lookup failed (%s)", authenticator.name, type(error).__name__
+                  )
+          if not authorized:
+              ldap_log.debug(
+                  "Tool %s denied: no LDAP authenticator authorized access (job=%s)",
+                  tool.id, getattr(job, "id", None),
+              )
+              raise JobMappingException("You do not have permission to run this tool.")
+
+  '^your_shared_tool$':
+    context:
+      ldap_groups:
+        - SNS_Neutron
+        - sns-ndip-user
+
+  '^your_public_tool$':
+    context:
+      ldap_groups: any
