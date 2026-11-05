@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import zlib
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
@@ -18,7 +19,10 @@ from social_core.utils import (
     setting_name,
 )
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import (
+    IntegrityError,
+    InvalidRequestError,
+)
 
 from galaxy import (
     exceptions as galaxy_exceptions,
@@ -39,7 +43,10 @@ from galaxy.util import (
     ready_name_for_url,
     requests,
 )
-from galaxy.util.lock import try_lock, unlock
+from galaxy.util.lock import (
+    try_lock,
+    unlock,
+)
 from . import IdentityProvider
 from .ldap_authorization import authorize as authorize_ldap
 from .oidc_utils import (
@@ -56,6 +63,23 @@ if TYPE_CHECKING:
     from galaxy.managers.context import ProvidesAppContext
 
 log = logging.getLogger(__name__)
+
+
+# How long to wait for another process that is already refreshing the same token
+REFRESH_LOCK_TIMEOUT = 10
+
+
+def refresh_lock_id(user_authnz_token):
+    """
+    Build the lock key identifying a refresh of `user_authnz_token`.
+
+    The key is per identity rather than per provider, so that refreshing one user's
+    token does not hold up every other user of the same provider. `hash()` cannot be
+    used here: it is salted per process, so each Galaxy process would compute a
+    different key for the same token and the lock would never be contended.
+    """
+    key = f"{user_authnz_token.provider}:{user_authnz_token.id}"
+    return zlib.crc32(key.encode("utf-8")) & 0x7FFFFFFF
 
 
 def locate_token_expiration(extra_data):
@@ -288,25 +312,28 @@ class PSAAuthnz(IdentityProvider):
             or "refresh_token" not in user_authnz_token.extra_data
         ):
             return False
-        # refresh tokens if they reached their half lifetime
-        issued_at, expires_in = self._try_to_locate_token_expiration(user_authnz_token.extra_data)
-        if issued_at is None or expires_in is None:
+        if not self._needs_refresh(user_authnz_token):
             return False
 
-        if not (
-            int(issued_at) + int(expires_in) / 2
-            <= int(time.time())
-        ):
-           return False
-
-        lock_id = hash(user_authnz_token.provider) & 0x7FFFFFFF
-        if not try_lock(trans.sa_session, lock_id):
-            log.debug("Another process is refreshing, skipping")
+        lock_id = refresh_lock_id(user_authnz_token)
+        # Holding the lock means another process is already refreshing this same token,
+        # so wait for it to finish and use the token it stored rather than refreshing again.
+        if not try_lock(trans.sa_session, lock_id, timeout=REFRESH_LOCK_TIMEOUT):
+            log.warning(
+                f"Timed out waiting for another process to refresh the token for {user_authnz_token.uid} "
+                f"via `{user_authnz_token.provider}` identity provider"
+            )
             return False
-        else:
-            log.debug("Acquired refresh lock")
+        log.debug("Acquired refresh lock")
         try:
             on_the_fly_config(trans.sa_session)
+            self._reload_token(trans, user_authnz_token)
+            if not self._needs_refresh(user_authnz_token):
+                log.debug(
+                    f"Token for {user_authnz_token.uid} via `{user_authnz_token.provider}` identity provider "
+                    "was refreshed by another process"
+                )
+                return True
             # Unlike authenticate/callback, refresh_token() never reads request or session data,
             # and trans here may be a bare WorkRequestContext (e.g. job-handler contexts) without either.
             strategy = Strategy(None, {}, Storage, self.config)
@@ -319,6 +346,20 @@ class PSAAuthnz(IdentityProvider):
 
         return True
 
+    def _needs_refresh(self, user_authnz_token):
+        issued_at, expires_in = self._try_to_locate_token_expiration(user_authnz_token.extra_data)
+        if issued_at is None or expires_in is None:
+            return False
+        # refresh tokens if they reached their half lifetime
+        return int(issued_at) + int(expires_in) / 2 <= int(time.time())
+
+    def _reload_token(self, trans, user_authnz_token):
+        """Pick up the token another process may have stored while we waited for the lock."""
+        try:
+            trans.sa_session.refresh(user_authnz_token)
+        except InvalidRequestError:
+            # Not attached to this session; carry on with the token we were handed.
+            log.debug(f"Could not reload token for {user_authnz_token.uid} before refreshing it")
 
     def _try_to_locate_token_expiration(self, extra_data):
         expires_in = locate_token_expiration(extra_data)
