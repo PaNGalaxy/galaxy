@@ -1,12 +1,20 @@
 import base64
+import fcntl
+import os
 import secrets
+import subprocess
+import sys
+import threading
+import time
 import uuid
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import (
     datetime,
     timedelta,
 )
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import MagicMock
@@ -30,12 +38,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from galaxy import model
+from galaxy.authnz import psa_authnz as psa_authnz_module
 from galaxy.authnz.managers import AuthnzManager
 from galaxy.authnz.oidc_utils import decode_access_token as decode_access_token_oidc
 from galaxy.authnz.psa_authnz import (
     AUTH_PIPELINE,
     decode_access_token,
     PSAAuthnz,
+    refresh_lock_id,
     sync_user_profile,
 )
 
@@ -473,3 +483,149 @@ def test_sync_user_profile_updates_when_account_interface_disabled():
     manager.update_username.assert_called_once_with(trans, user, "newname", commit=False)
     assert session.commit.call_count == 1
     notify.assert_called_once()
+
+
+class FakeUserAuthnzToken:
+    """Minimal stand-in for `model.UserAuthnzToken` as `PSAAuthnz.refresh` uses it."""
+
+    def __init__(self, uid, id=1, provider="oidc", expires_in=3600):
+        self.uid = uid
+        self.id = id
+        self.provider = provider
+        self.extra_data = expiring_extra_data(uid, expires_in)
+        self.refresh_calls = 0
+
+    def refresh_token(self, strategy):
+        self.refresh_calls += 1
+        self.extra_data = fresh_extra_data(self.uid)
+
+
+def expiring_extra_data(uid, expires_in=3600):
+    return {
+        "refresh_token": f"refresh-token-for-{uid}",
+        "expires_in": expires_in,
+        # issued a full lifetime ago, so the token is well past its half life
+        "id_token_iat": int(time.time()) - expires_in,
+    }
+
+
+def fresh_extra_data(uid, expires_in=3600):
+    return {
+        "refresh_token": f"refresh-token-for-{uid}",
+        "expires_in": expires_in,
+        "id_token_iat": int(time.time()),
+    }
+
+
+def mock_sqlite_trans(on_reload=None):
+    sa_session = MagicMock()
+    sa_session.bind.dialect.name = "sqlite"
+    if on_reload:
+        sa_session.refresh.side_effect = on_reload
+    return SimpleNamespace(sa_session=sa_session)
+
+
+@contextmanager
+def refresh_lock_held_by_another_process(token):
+    """
+    Hold the same lock `PSAAuthnz.refresh` takes for `token`, the way a second Galaxy
+    process refreshing it would. `flock` is held per open file description, so an
+    independent handle collides just like another process does.
+    """
+    lock_id = refresh_lock_id(token)
+    with open(f"/tmp/galaxy_lock_{lock_id}.lock", "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def galaxy_lib_path():
+    """The `lib` directory this test's `galaxy` package was imported from."""
+    return str(Path(psa_authnz_module.__file__).parents[2])
+
+
+def test_refresh_lock_id_is_stable_across_processes(mock_oidc_config_file, mock_oidc_backend_config_file):
+    """`hash()` is salted per process, so the lock key cannot be derived from it."""
+    token = FakeUserAuthnzToken("user-a", id=1)
+    expected = refresh_lock_id(token)
+    other_process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from galaxy.authnz.psa_authnz import refresh_lock_id;"
+            "from types import SimpleNamespace;"
+            "print(refresh_lock_id(SimpleNamespace(provider='oidc', id=1)))",
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONHASHSEED": "1", "PYTHONPATH": galaxy_lib_path()},
+    )
+    assert other_process.returncode == 0, other_process.stderr
+    assert int(other_process.stdout) == expected
+
+
+def test_refresh_refreshes_expiring_token(mock_oidc_config_file, mock_oidc_backend_config_file):
+    psa_authnz = make_psa_authnz(mock_oidc_config_file, mock_oidc_backend_config_file)
+    token = FakeUserAuthnzToken("user-a")
+
+    refreshed = psa_authnz.refresh(mock_sqlite_trans(), token)
+
+    assert token.refresh_calls == 1
+    assert refreshed is True
+
+
+def test_refresh_not_skipped_while_another_user_is_refreshed(
+    mock_oidc_config_file, mock_oidc_backend_config_file
+):
+    """
+    The refresh lock is per identity, not per provider: a refresh running in another
+    process for one user must not hold up, or be reported as a failure for, every
+    other user of the same provider.
+    """
+    psa_authnz = make_psa_authnz(mock_oidc_config_file, mock_oidc_backend_config_file)
+    other_users_token = FakeUserAuthnzToken("user-a", id=1)
+    token = FakeUserAuthnzToken("user-b", id=2)
+
+    with refresh_lock_held_by_another_process(other_users_token):
+        refreshed = psa_authnz.refresh(mock_sqlite_trans(), token)
+
+    assert token.refresh_calls == 1, "token of an unrelated user was never refreshed"
+    assert refreshed is True
+
+
+def test_refresh_waits_for_concurrent_refresh_and_uses_its_token(
+    mock_oidc_config_file, mock_oidc_backend_config_file
+):
+    """
+    When another process is refreshing this very token, wait for it to finish and
+    use the token it stored instead of spending the refresh token a second time.
+    """
+    psa_authnz = make_psa_authnz(mock_oidc_config_file, mock_oidc_backend_config_file)
+    token = FakeUserAuthnzToken("user-a", id=1)
+    holder_released = threading.Event()
+
+    def hold_lock_then_store_refreshed_token():
+        with refresh_lock_held_by_another_process(token):
+            holder_has_lock.set()
+            time.sleep(0.2)
+            stored_extra_data.update(fresh_extra_data(token.uid))
+        holder_released.set()
+
+    stored_extra_data = dict(token.extra_data)
+    holder_has_lock = threading.Event()
+    holder = threading.Thread(target=hold_lock_then_store_refreshed_token)
+    holder.start()
+    try:
+        assert holder_has_lock.wait(timeout=5)
+        # Reloading the token reads back what the other process stored.
+        trans = mock_sqlite_trans(on_reload=lambda obj: obj.extra_data.update(stored_extra_data))
+        refreshed = psa_authnz.refresh(trans, token)
+    finally:
+        holder.join()
+
+    assert holder_released.is_set(), "refresh returned before the other process released the lock"
+    assert token.refresh_calls == 0, "refresh token was spent again for an already refreshed token"
+    assert refreshed is True
+    assert token.extra_data["id_token_iat"] == stored_extra_data["id_token_iat"]
