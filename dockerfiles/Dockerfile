@@ -12,7 +12,7 @@ RUN . /galaxy/.venv/bin/activate \
       --extra-index-url https://code.ornl.gov/api/v4/projects/11321/packages/pypi/simple \
       --extra-index-url https://code.ornl.gov/api/v4/projects/13491/packages/pypi/simple \
       rucio-protocols==0.6.1 \
-      pulsar-galaxy-lib==0.15.14.dev13+ornl \
+      pulsar-galaxy-lib==0.15.14.dev14+ornl \
       python-ldap==3.4.8
 
 CMD ["./run.sh"]
