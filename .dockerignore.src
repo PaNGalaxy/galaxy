@@ -2,7 +2,6 @@
 .venv
 **/database
 **/node_modules
-.git
 lib/galaxy/jobs/rules/destinations.py
 config/*.yml
 config/*.xml
