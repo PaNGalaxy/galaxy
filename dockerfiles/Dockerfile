@@ -4,7 +4,7 @@ FROM savannah.ornl.gov/ndip/galaxy/base:${BASE_TAG}
 WORKDIR /galaxy
 COPY --chown=galaxy:galaxy . /galaxy
 
-RUN sed -i 's/^pulsar-galaxy-lib==.*/pulsar-galaxy-lib==0.15.14.dev13+ornl/' /galaxy/requirements.txt
+RUN sed -i 's/^pulsar-galaxy-lib==.*/pulsar-galaxy-lib==0.15.14.dev14+ornl/' /galaxy/requirements.txt
 
 # rucio-clients (40.2.0) is installed in the base image; add the ORNL rucio-protocols plugin here.
 RUN . /galaxy/.venv/bin/activate \
