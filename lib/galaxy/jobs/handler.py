@@ -1200,6 +1200,14 @@ class JobHandlerStopQueue(BaseJobHandlerQueue):
                 log.debug("Job %s already finished, not deleting or stopping", job.id)
                 continue
             requested_state = job.state
+            # Reap InteractiveTool entry points here rather than leaving it to the
+            # ``InteractiveTool.exec_after_process``/``job_failed`` hooks: neither
+            # runs for a job this queue terminates, because ``__delete``/``__stop``
+            # below set the terminal state directly instead of going through
+            # ``JobWrapper.finish``/``fail``. Without this the proxy map keeps a
+            # row routing to a dead container on every runner but Kubernetes,
+            # which cleans up in ``__cleanup_k8s_guest_ports``.
+            self.__remove_interactivetool_entry_points(job)
             if job.job_runner_name is not None:
                 # tell the dispatcher to stop the job
                 job_wrapper = JobWrapper(job, self, use_persisted_destination=True)
@@ -1208,6 +1216,22 @@ class JobHandlerStopQueue(BaseJobHandlerQueue):
                 self.__delete(job, error_msg)
             elif requested_state == job.states.STOPPING:
                 self.__stop(job)
+
+    def __remove_interactivetool_entry_points(self, job: model.Job):
+        """Drop this job's entry points from the InteractiveTool proxy map, if any."""
+        if not self.app.config.interactivetools_enable:
+            return
+        entry_points = job.interactivetool_entry_points
+        if not entry_points:
+            return
+        log.debug("Removing %d InteractiveTool entry point(s) for job %s", len(entry_points), job.id)
+        try:
+            # ``flush=False``: ``__monitor_step`` already holds an open transaction
+            # on this same scoped session and commits it on exit.
+            self.app.interactivetool_manager.remove_entry_points(entry_points, flush=False)
+        except Exception:
+            # Proxy-map bookkeeping must never block a job from being stopped.
+            log.exception("Failed to remove InteractiveTool entry points for job %s", job.id)
 
 
 class DefaultJobDispatcher:
