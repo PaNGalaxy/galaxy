@@ -241,8 +241,7 @@ username = {self.config['username']}
     def download(self, key, dest_path, auth_token):
         key = _encode_key(key)
         random_id = uuid.uuid4().hex
-        base_dir = self.extra_dirs.get("temp_download", os.path.dirname(dest_path))
-        base_dir = os.path.join(base_dir, random_id)
+        base_dir = os.path.join(os.path.dirname(dest_path), random_id)
         os.makedirs(base_dir, exist_ok=True)
 
         dids = [{"scope": self.scope, "name": key}]

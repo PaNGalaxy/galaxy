@@ -290,11 +290,18 @@ class InteractiveToolManager:
             trans.sa_session.add(job)
             trans.sa_session.commit()
 
-    def remove_entry_points(self, entry_points: Iterable[InteractiveToolEntryPoint]) -> None:
+    def remove_entry_points(self, entry_points: Iterable[InteractiveToolEntryPoint], flush: bool = True) -> None:
+        """Remove a batch of entry points.
+
+        Pass ``flush=False`` when the caller already holds an open transaction on
+        the shared scoped session (the job handler's stop queue does), so that the
+        commit stays with whoever opened it.
+        """
         if entry_points:
             for entry_point in entry_points:
                 self.remove_entry_point(entry_point, flush=False)
-            self.sa_session.commit()
+            if flush:
+                self.sa_session.commit()
 
     def remove_entry_point(self, entry_point: InteractiveToolEntryPoint, flush: bool = True) -> None:
         entry_point.deleted = True
