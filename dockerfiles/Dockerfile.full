@@ -30,6 +30,7 @@ USER galaxy
 # installed below: ase (CIF/XYZ metadata), pkce (OIDC login) and watchdog (watch_tools).
 RUN NODE_OPTIONS=--max-old-space-size=8192 /galaxy/scripts/common_startup.sh
 RUN . /galaxy/.venv/bin/activate \
+   && pip install --upgrade pip \
    && pip install python-ldap==3.4.8 rucio-clients==40.2.0 \
    && pip install -c lib/galaxy/dependencies/dev-requirements.txt ase pkce watchdog
 
@@ -37,6 +38,9 @@ RUN . /galaxy/.venv/bin/activate \
 FROM system
 
 WORKDIR /galaxy
+
+RUN curl -L https://github.com/galaxyproject/gxadmin/releases/latest/download/gxadmin > /usr/bin/gxadmin
+RUN chmod +x /usr/bin/gxadmin
 
 # Tools run in containers on k8s or Pulsar, so Galaxy needs no conda of its own. Without
 # this, run.sh and Galaxy would download Miniforge on every start.
